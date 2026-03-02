@@ -3,9 +3,10 @@ import type { NeuronScores } from '../types'
 const signals: { key: keyof Omit<NeuronScores, 'neuron_id'>; label: string; color: string }[] = [
   { key: 'burst', label: 'Burst', color: 'var(--burst)' },
   { key: 'impact', label: 'Impact', color: 'var(--impact)' },
-  { key: 'practice', label: 'Practice', color: 'var(--practice)' },
+  { key: 'precision', label: 'Precision', color: 'var(--precision)' },
   { key: 'novelty', label: 'Novelty', color: 'var(--novelty)' },
   { key: 'recency', label: 'Recency', color: 'var(--recency)' },
+  { key: 'relevance', label: 'Relevance', color: 'var(--relevance)' },
   { key: 'combined', label: 'Combined', color: 'var(--accent)' },
 ]
 

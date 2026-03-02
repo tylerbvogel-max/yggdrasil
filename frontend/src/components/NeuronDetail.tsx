@@ -35,7 +35,7 @@ export default function NeuronDetail({ neuronId }: { neuronId: number }) {
         <span className="meta-chip">{detail.node_type}</span>
         {detail.department && <span className="meta-chip">{detail.department}</span>}
         {detail.role_key && <span className="meta-chip">{detail.role_key}</span>}
-        <span className="meta-chip" style={{ color: detail.is_active ? 'var(--practice)' : 'var(--impact)' }}>
+        <span className="meta-chip" style={{ color: detail.is_active ? 'var(--precision)' : 'var(--impact)' }}>
           {detail.is_active ? 'Active' : 'Inactive'}
         </span>
       </div>

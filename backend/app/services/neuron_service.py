@@ -57,49 +57,66 @@ async def get_system_state(db: AsyncSession) -> SystemState:
 async def score_candidates(
     db: AsyncSession,
     candidates: list[Neuron],
-    global_token_counter: int,
+    total_queries: int,
+    keywords: list[str],
 ) -> list[NeuronScoreBreakdown]:
-    """Score all candidate neurons using 5 biomimetic signals."""
+    """Score all candidate neurons using 6 biomimetic signals."""
     scores = []
-    token_window = max(0, global_token_counter - settings.burst_window_tokens)
+    query_window = max(0, total_queries - settings.burst_window_queries)
 
     for neuron in candidates:
-        # Burst: count firings in recent token window
+        # Burst: count firings in recent query window
         burst_count_result = await db.execute(
             select(func.count(NeuronFiring.id)).where(
                 and_(
                     NeuronFiring.neuron_id == neuron.id,
-                    NeuronFiring.global_token_offset >= token_window,
+                    NeuronFiring.global_query_offset >= query_window,
                 )
             )
         )
         fires_in_window = burst_count_result.scalar() or 0
 
-        # Practice: get firing gap tokens
-        firings_result = await db.execute(
-            select(NeuronFiring.global_token_offset)
-            .where(NeuronFiring.neuron_id == neuron.id)
-            .order_by(NeuronFiring.global_token_offset)
+        # Precision: neuron's distinct query firings / department's total distinct query firings
+        dept_fires_result = await db.execute(
+            select(func.count(func.distinct(NeuronFiring.query_id))).where(
+                NeuronFiring.neuron_id == neuron.id
+            )
         )
-        offsets = [r[0] for r in firings_result.all()]
-        gaps = [offsets[i + 1] - offsets[i] for i in range(len(offsets) - 1)] if len(offsets) > 1 else []
+        dept_fires = dept_fires_result.scalar() or 0
 
-        # Novelty: age in tokens (approximate from created_at vs current counter)
-        # For neurons that have never fired, use a default age based on creation
-        age_tokens = global_token_counter  # max age for unfired neurons
+        dept_total_result = await db.execute(
+            select(func.count(func.distinct(NeuronFiring.query_id))).where(
+                NeuronFiring.neuron_id.in_(
+                    select(Neuron.id).where(Neuron.department == neuron.department)
+                )
+            )
+        )
+        dept_total_queries = dept_total_result.scalar() or 0
 
-        # Recency: tokens since last firing
-        if offsets:
-            tokens_since_last = global_token_counter - offsets[-1]
-        else:
-            tokens_since_last = global_token_counter  # never fired = maximally old
+        # Novelty: age in queries
+        age_queries = total_queries - (neuron.created_at_query_count or 0)
+
+        # Recency: queries since last firing
+        last_offset_result = await db.execute(
+            select(func.max(NeuronFiring.global_query_offset)).where(
+                NeuronFiring.neuron_id == neuron.id
+            )
+        )
+        last_offset = last_offset_result.scalar()
+        queries_since_last = total_queries - last_offset if last_offset is not None else total_queries
+
+        # Relevance: keyword overlap with neuron text
+        neuron_text = f"{neuron.label} {neuron.summary or ''} {neuron.content or ''}"
 
         score = compute_score(
             fires_in_window=fires_in_window,
             avg_utility=neuron.avg_utility,
-            firing_gap_tokens=gaps,
-            age_tokens=age_tokens,
-            tokens_since_last_fire=tokens_since_last,
+            dept_fires=dept_fires,
+            dept_total_queries=dept_total_queries,
+            age_queries=age_queries,
+            queries_since_last=queries_since_last,
+            keywords=keywords,
+            neuron_text=neuron_text,
             neuron_id=neuron.id,
         )
         scores.append(score)
@@ -114,6 +131,7 @@ async def record_firing(
     query_id: int,
     global_token_offset: int,
     context_type: str = "direct",
+    global_query_offset: int = 0,
 ) -> NeuronFiring:
     """Record a neuron firing event."""
     firing = NeuronFiring(
@@ -121,6 +139,7 @@ async def record_firing(
         query_id=query_id,
         context_type=context_type,
         global_token_offset=global_token_offset,
+        global_query_offset=global_query_offset,
     )
     db.add(firing)
 

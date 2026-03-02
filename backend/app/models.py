@@ -22,6 +22,7 @@ class Neuron(Base):
     invocations: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     avg_utility: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    created_at_query_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -39,6 +40,7 @@ class NeuronFiring(Base):
     context_type: Mapped[str] = mapped_column(String(50), default="direct")
     outcome: Mapped[str | None] = mapped_column(String(50), nullable=True)
     global_token_offset: Mapped[int] = mapped_column(Integer, default=0)
+    global_query_offset: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -122,6 +124,22 @@ class EvalScore(Base):
     faithfulness: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-5 (5 = no hallucinations)
     overall: Mapped[int] = mapped_column(Integer, nullable=False)       # 1-5
     verdict: Mapped[str | None] = mapped_column(Text, nullable=True)    # free-text verdict
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+
+class NeuronRefinement(Base):
+    __tablename__ = "neuron_refinements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    query_id: Mapped[int] = mapped_column(Integer, ForeignKey("queries.id"), nullable=False, index=True)
+    neuron_id: Mapped[int] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)  # "update" | "create"
+    field: Mapped[str | None] = mapped_column(String(50), nullable=True)  # for updates: content/summary/label/is_active
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()
     )

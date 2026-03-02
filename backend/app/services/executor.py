@@ -60,7 +60,7 @@ async def execute_query(db: AsyncSession, user_message: str, modes: list[str]) -
         candidates = await get_neurons_by_filter(db, departments, role_keys, keywords)
         if not candidates:
             candidates = await get_neurons_by_filter(db)
-        scored = await score_candidates(db, candidates, state.global_token_counter)
+        scored = await score_candidates(db, candidates, state.total_queries, keywords)
         top_k = scored[: settings.top_k_neurons]
 
         neuron_map: dict[int, Neuron] = {}
@@ -142,7 +142,7 @@ async def execute_query(db: AsyncSession, user_message: str, modes: list[str]) -
 
     if needs_neurons:
         for score in top_k:
-            await record_firing(db, score.neuron_id, query.id, state.global_token_counter)
+            await record_firing(db, score.neuron_id, query.id, state.global_token_counter, global_query_offset=state.total_queries)
             await propagate_activation(db, score.neuron_id, score.combined, query.id)
         for i, s1 in enumerate(top_k):
             for s2 in top_k[i + 1:]:
@@ -153,7 +153,8 @@ async def execute_query(db: AsyncSession, user_message: str, modes: list[str]) -
     # Build neuron scores for response
     neuron_scores = [
         {"neuron_id": s.neuron_id, "combined": s.combined, "burst": s.burst,
-         "impact": s.impact, "practice": s.practice, "novelty": s.novelty, "recency": s.recency}
+         "impact": s.impact, "precision": s.precision, "novelty": s.novelty, "recency": s.recency,
+         "relevance": s.relevance}
         for s in top_k[:10]
     ]
 

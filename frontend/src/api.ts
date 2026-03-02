@@ -11,6 +11,7 @@ import type {
   RatingResponse,
   RefineResponse,
   ApplyRefineResponse,
+  NeuronRefinementEntry,
 } from './types';
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
@@ -86,4 +87,8 @@ export function applyRefinements(queryId: number, updateIds: number[], newNeuron
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ update_ids: updateIds, new_neuron_ids: newNeuronIds }),
   });
+}
+
+export function fetchRefinementHistory(): Promise<NeuronRefinementEntry[]> {
+  return json<NeuronRefinementEntry[]>('/neurons/refinements');
 }

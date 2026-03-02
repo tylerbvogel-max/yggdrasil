@@ -20,7 +20,7 @@ def _make_neuron(id, label, content=None, summary=None, department="Engineering"
 def _make_score(neuron_id, combined=0.5):
     return NeuronScoreBreakdown(
         neuron_id=neuron_id, burst=0.5, impact=0.5,
-        practice=0.5, novelty=0.5, recency=0.5, combined=combined,
+        precision=0.5, novelty=0.5, recency=0.5, relevance=0.5, combined=combined,
     )
 
 

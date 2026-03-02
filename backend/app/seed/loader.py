@@ -30,6 +30,7 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
             label=dept_data["label"],
             department=dept_data["label"],
             summary=f"Department: {dept_data['label']}",
+            created_at_query_count=0,
         )
         db.add(dept)
         await db.flush()
@@ -44,6 +45,7 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
                 role_key=role_data.get("role_key"),
                 department=dept_data["label"],
                 summary=f"Role: {role_data['label']} in {dept_data['label']}",
+                created_at_query_count=0,
             )
             db.add(role)
             await db.flush()
@@ -58,6 +60,7 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
                     role_key=role_data.get("role_key"),
                     department=dept_data["label"],
                     summary=f"Task: {task_data['label']}",
+                    created_at_query_count=0,
                 )
                 db.add(task)
                 await db.flush()
@@ -72,6 +75,7 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
                         role_key=role_data.get("role_key"),
                         department=dept_data["label"],
                         summary=f"System: {sys_data['label']}",
+                        created_at_query_count=0,
                     )
                     db.add(system)
                     await db.flush()
@@ -86,6 +90,7 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
                             role_key=role_data.get("role_key"),
                             department=dept_data["label"],
                             summary=f"Decision: {dec_data['label']}",
+                            created_at_query_count=0,
                         )
                         db.add(decision)
                         await db.flush()
@@ -101,6 +106,7 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
                                 role_key=role_data.get("role_key"),
                                 department=dept_data["label"],
                                 summary=f"Output: {out_data['label']}",
+                                created_at_query_count=0,
                             )
                             db.add(output)
                             await db.flush()

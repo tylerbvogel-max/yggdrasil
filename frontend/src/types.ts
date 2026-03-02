@@ -29,9 +29,10 @@ export interface NeuronScores {
   neuron_id: number;
   burst: number;
   impact: number;
-  practice: number;
+  precision: number;
   novelty: number;
   recency: number;
+  relevance: number;
   combined: number;
 }
 
@@ -66,9 +67,10 @@ export interface NeuronScoreResponse {
   combined: number;
   burst: number;
   impact: number;
-  practice: number;
+  precision: number;
   novelty: number;
   recency: number;
+  relevance: number;
 }
 
 export interface QueryResponse {
@@ -104,9 +106,10 @@ export interface NeuronHit {
   combined: number;
   burst: number;
   impact: number;
-  practice: number;
+  precision: number;
   novelty: number;
   recency: number;
+  relevance: number;
 }
 
 export interface QueryDetail {
@@ -192,4 +195,18 @@ export interface RefineResponse {
 export interface ApplyRefineResponse {
   updated: number;
   created: number;
+}
+
+export interface NeuronRefinementEntry {
+  id: number;
+  query_id: number;
+  neuron_id: number;
+  action: string;
+  field: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  reason: string | null;
+  created_at: string | null;
+  neuron_label: string | null;
+  query_snippet: string | null;
 }

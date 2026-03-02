@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Neuron, NeuronFiring, SystemState
 
-# Retention: keep firings within 500K tokens
-FIRING_RETENTION_TOKENS = 500_000
+# Retention: keep firings within 2000 queries
+FIRING_RETENTION_QUERIES = 2000
 # Decay: reduce avg_utility by 5% per consolidation for unfired neurons
 DECAY_RATE = 0.95
 # Deactivation threshold: neurons with <0.05 utility after 10+ consolidations
@@ -26,24 +26,24 @@ async def run_consolidation(db: AsyncSession) -> dict:
     if not state:
         return {"status": "no_state"}
 
-    current_offset = state.global_token_counter
+    total_queries = state.total_queries
 
     # 1. Prune old firing records
-    cutoff = current_offset - FIRING_RETENTION_TOKENS
+    cutoff = total_queries - FIRING_RETENTION_QUERIES
     if cutoff > 0:
         prune_result = await db.execute(
-            delete(NeuronFiring).where(NeuronFiring.global_token_offset < cutoff)
+            delete(NeuronFiring).where(NeuronFiring.global_query_offset < cutoff)
         )
         pruned = prune_result.rowcount
     else:
         pruned = 0
 
     # 2. Decay utility on neurons that haven't fired recently
-    recent_window = max(0, current_offset - 50_000)
+    recent_window = max(0, total_queries - 200)
     # Get neurons that have fired recently
     recent_fired = await db.execute(
         select(NeuronFiring.neuron_id).where(
-            NeuronFiring.global_token_offset >= recent_window
+            NeuronFiring.global_query_offset >= recent_window
         ).distinct()
     )
     recently_active_ids = {r[0] for r in recent_fired.all()}
@@ -72,5 +72,5 @@ async def run_consolidation(db: AsyncSession) -> dict:
         "firings_pruned": pruned,
         "neurons_decayed": decayed,
         "neurons_deactivated": deactivated,
-        "global_token_counter": current_offset,
+        "total_queries": total_queries,
     }

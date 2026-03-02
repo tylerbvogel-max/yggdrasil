@@ -23,9 +23,10 @@ class NeuronScoreResponse(BaseModel):
     combined: float
     burst: float
     impact: float
-    practice: float
+    precision: float
     novelty: float
     recency: float
+    relevance: float
 
 
 class QueryResponse(BaseModel):
@@ -110,9 +111,10 @@ class NeuronScoreDetail(BaseModel):
     neuron_id: int
     burst: float
     impact: float
-    practice: float
+    precision: float
     novelty: float
     recency: float
+    relevance: float
     combined: float
 
 
@@ -151,9 +153,10 @@ class NeuronHit(BaseModel):
     combined: float
     burst: float
     impact: float
-    practice: float
+    precision: float
     novelty: float
     recency: float
+    relevance: float
 
 
 class QueryDetail(BaseModel):
@@ -222,6 +225,20 @@ class ApplyRefineRequest(BaseModel):
 class ApplyRefineResponse(BaseModel):
     updated: int
     created: int
+
+
+class NeuronRefinementOut(BaseModel):
+    id: int
+    query_id: int
+    neuron_id: int
+    action: str
+    field: str | None = None
+    old_value: str | None = None
+    new_value: str | None = None
+    reason: str | None = None
+    created_at: str | None = None
+    neuron_label: str | None = None
+    query_snippet: str | None = None
 
 
 class HealthResponse(BaseModel):

@@ -472,14 +472,14 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
         <Section title={`Top Neuron Activations (${result.neurons_activated} total)`} defaultOpen={false}>
           <table className="score-table">
             <thead>
-              <tr><th>ID</th><th>Combined</th><th>Burst</th><th>Impact</th><th>Practice</th><th>Novelty</th><th>Recency</th></tr>
+              <tr><th>ID</th><th>Combined</th><th>Burst</th><th>Impact</th><th>Precision</th><th>Novelty</th><th>Recency</th><th>Relevance</th></tr>
             </thead>
             <tbody>
               {result.neuron_scores.map(s => (
                 <tr key={s.neuron_id}>
                   <td>{s.neuron_id}</td><td>{s.combined.toFixed(3)}</td><td>{s.burst.toFixed(3)}</td>
-                  <td>{s.impact.toFixed(3)}</td><td>{s.practice.toFixed(3)}</td>
-                  <td>{s.novelty.toFixed(3)}</td><td>{s.recency.toFixed(3)}</td>
+                  <td>{s.impact.toFixed(3)}</td><td>{s.precision.toFixed(3)}</td>
+                  <td>{s.novelty.toFixed(3)}</td><td>{s.recency.toFixed(3)}</td><td>{s.relevance.toFixed(3)}</td>
                 </tr>
               ))}
             </tbody>
@@ -602,7 +602,7 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
         <Section title={`Neuron Hits (${query.neuron_hits.length} neurons activated)`} defaultOpen={false}>
           <table className="score-table">
             <thead>
-              <tr><th>ID</th><th>Neuron</th><th>Layer</th><th>Dept</th><th>Combined</th><th>Burst</th><th>Impact</th><th>Practice</th><th>Novelty</th><th>Recency</th></tr>
+              <tr><th>ID</th><th>Neuron</th><th>Layer</th><th>Dept</th><th>Combined</th><th>Burst</th><th>Impact</th><th>Precision</th><th>Novelty</th><th>Recency</th><th>Relevance</th></tr>
             </thead>
             <tbody>
               {query.neuron_hits.map(h => (
@@ -614,9 +614,10 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
                   <td><strong>{h.combined.toFixed(3)}</strong></td>
                   <td>{h.burst.toFixed(3)}</td>
                   <td>{h.impact.toFixed(3)}</td>
-                  <td>{h.practice.toFixed(3)}</td>
+                  <td>{h.precision.toFixed(3)}</td>
                   <td>{h.novelty.toFixed(3)}</td>
                   <td>{h.recency.toFixed(3)}</td>
+                  <td>{h.relevance.toFixed(3)}</td>
                 </tr>
               ))}
             </tbody>

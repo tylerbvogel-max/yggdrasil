@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { fetchTree } from '../api'
 import type { TreeNode } from '../types'
 import NeuronTree from './NeuronTree'
@@ -21,6 +21,35 @@ export default function Explorer() {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [error, setError] = useState('');
+  const [leftWidth, setLeftWidth] = useState(380);
+  const dragging = useRef(false);
+
+  const onMouseDown = useCallback(() => {
+    dragging.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragging.current) return;
+      const newWidth = Math.max(240, Math.min(e.clientX, 800));
+      setLeftWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      if (dragging.current) {
+        dragging.current = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
 
   useEffect(() => {
     fetchTree()
@@ -39,7 +68,7 @@ export default function Explorer() {
 
   return (
     <div className="explorer">
-      <div className="explorer-left">
+      <div className="explorer-left" style={{ width: leftWidth, minWidth: leftWidth }}>
         <div className="explorer-controls">
           <select value={deptFilter} onChange={e => setDeptFilter(e.target.value)}>
             <option value="">All Departments</option>
@@ -59,6 +88,7 @@ export default function Explorer() {
           onSelect={setSelectedId}
         />
       </div>
+      <div className="explorer-resize-handle" onMouseDown={onMouseDown} />
       <div className="explorer-right">
         {selectedId ? (
           <NeuronDetail neuronId={selectedId} />

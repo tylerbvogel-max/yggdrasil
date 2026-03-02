@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Query, NeuronFiring, Neuron, EvalScore
+from app.models import Query, NeuronFiring, Neuron, EvalScore, NeuronRefinement
 from app.schemas import (
     QueryRequest, QueryResponse, QuerySummary, QueryDetail, NeuronHit, SlotResult,
     EvalRequest, EvalResponse, EvalScoreOut, EvalScoreSummary,
@@ -99,7 +99,8 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
         if neuron:
             neurons.append(neuron)
 
-    scored = await score_candidates(db, neurons, state.global_token_counter) if neurons else []
+    keywords_list = json.loads(query.classified_keywords) if query.classified_keywords else []
+    scored = await score_candidates(db, neurons, state.total_queries, keywords_list) if neurons else []
     score_map = {s.neuron_id: s for s in scored}
 
     hits = []
@@ -109,8 +110,9 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
             neuron_id=neuron.id, label=neuron.label, layer=neuron.layer,
             department=neuron.department,
             combined=s.combined if s else 0, burst=s.burst if s else 0,
-            impact=s.impact if s else 0, practice=s.practice if s else 0,
+            impact=s.impact if s else 0, precision=s.precision if s else 0,
             novelty=s.novelty if s else 0, recency=s.recency if s else 0,
+            relevance=s.relevance if s else 0,
         ))
 
     slots = _parse_slots(query)
@@ -558,6 +560,7 @@ async def apply_refinements(
         if not neuron:
             continue
         field = u["field"]
+        old_val = u.get("old_value", "")
         new_val = u["new_value"]
         if field == "content":
             neuron.content = new_val
@@ -567,9 +570,19 @@ async def apply_refinements(
             neuron.label = new_val
         elif field == "is_active":
             neuron.is_active = new_val.lower() in ("true", "1", "yes")
+        db.add(NeuronRefinement(
+            query_id=query_id,
+            neuron_id=u["neuron_id"],
+            action="update",
+            field=field,
+            old_value=str(old_val),
+            new_value=str(new_val),
+            reason=u.get("reason", ""),
+        ))
         updated_count += 1
 
     created_count = 0
+    state = await get_system_state(db)
     for idx in req.new_neuron_ids:
         if idx < 0 or idx >= len(new_neurons_list):
             continue
@@ -584,8 +597,19 @@ async def apply_refinements(
             department=n.get("department"),
             role_key=n.get("role_key"),
             is_active=True,
+            created_at_query_count=state.total_queries,
         )
         db.add(neuron)
+        await db.flush()  # get neuron.id
+        db.add(NeuronRefinement(
+            query_id=query_id,
+            neuron_id=neuron.id,
+            action="create",
+            field=None,
+            old_value=None,
+            new_value=n.get("label", ""),
+            reason=n.get("reason", ""),
+        ))
         created_count += 1
 
     await db.commit()
