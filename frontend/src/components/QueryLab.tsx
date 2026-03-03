@@ -56,13 +56,13 @@ function scoreColor(val: number): string {
   return '#ef4444';
 }
 
-function Section({ title, children, defaultOpen = true, className, headerRight, titleStyle }: {
+function Section({ title, children, defaultOpen = true, className, headerRight, titleStyle, id }: {
   title: string; children: ReactNode; defaultOpen?: boolean; className?: string;
-  headerRight?: ReactNode; titleStyle?: React.CSSProperties;
+  headerRight?: ReactNode; titleStyle?: React.CSSProperties; id?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className={`result-card${className ? ' ' + className : ''}`}>
+    <div id={id} className={`result-card${className ? ' ' + className : ''}`}>
       <div className="section-header" onClick={() => setOpen(o => !o)}>
         <h3 style={titleStyle}>
           <span className={`section-chevron${open ? ' open' : ''}`} />
@@ -111,7 +111,12 @@ function EvalScoreTable({ scores, winner }: { scores: EvalScoreOut[]; winner: st
   );
 }
 
-function RefinePanel({ queryId, hasEval, hasNeurons }: { queryId: number; hasEval: boolean; hasNeurons: boolean }) {
+type RefinePhase = 'idle' | 'ready' | 'loading' | 'has-suggestions' | 'applying' | 'applied';
+
+function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }: {
+  queryId: number; hasEval: boolean; hasNeurons: boolean;
+  onRunAgain?: () => void; onPhaseChange?: (phase: RefinePhase) => void;
+}) {
   const [refineModel, setRefineModel] = useState<'haiku' | 'sonnet'>('haiku');
   const [refineLoading, setRefineLoading] = useState(false);
   const [refineResult, setRefineResult] = useState<RefineResponse | null>(null);
@@ -120,6 +125,16 @@ function RefinePanel({ queryId, hasEval, hasNeurons }: { queryId: number; hasEva
   const [checkedNewNeurons, setCheckedNewNeurons] = useState<Set<number>>(new Set());
   const [applyLoading, setApplyLoading] = useState(false);
   const [applyResult, setApplyResult] = useState<{ updated: number; created: number } | null>(null);
+
+  // Report phase changes to parent
+  useEffect(() => {
+    if (!onPhaseChange || !hasEval || !hasNeurons) return;
+    if (applyResult) onPhaseChange('applied');
+    else if (applyLoading) onPhaseChange('applying');
+    else if (refineResult && (refineResult.updates.length > 0 || refineResult.new_neurons.length > 0)) onPhaseChange('has-suggestions');
+    else if (refineLoading) onPhaseChange('loading');
+    else onPhaseChange('ready');
+  }, [hasEval, hasNeurons, refineLoading, refineResult, applyLoading, applyResult, onPhaseChange]);
 
   if (!hasEval || !hasNeurons) return null;
 
@@ -130,7 +145,6 @@ function RefinePanel({ queryId, hasEval, hasNeurons }: { queryId: number; hasEva
     try {
       const res = await refineQuery(queryId, refineModel);
       setRefineResult(res);
-      // Pre-check all suggestions
       setCheckedUpdates(new Set(res.updates.map((_, i) => i)));
       setCheckedNewNeurons(new Set(res.new_neurons.map((_, i) => i)));
     } catch (e) {
@@ -172,7 +186,7 @@ function RefinePanel({ queryId, hasEval, hasNeurons }: { queryId: number; hasEva
   const totalChecked = checkedUpdates.size + checkedNewNeurons.size;
 
   return (
-    <div className="result-card refine-card">
+    <div id="section-refine" className="result-card refine-card">
       <div className="eval-header">
         <h3>Refine Neurons</h3>
         <div className="eval-controls">
@@ -180,7 +194,7 @@ function RefinePanel({ queryId, hasEval, hasNeurons }: { queryId: number; hasEva
             <option value="haiku">Refine with Haiku</option>
             <option value="sonnet">Refine with Sonnet</option>
           </select>
-          <button className="btn btn-sm" onClick={handleRefine} disabled={refineLoading}>
+          <button id="btn-refine" className="btn btn-sm" onClick={handleRefine} disabled={refineLoading}>
             {refineLoading ? 'Analyzing...' : refineResult ? 'Re-analyze' : 'Refine Neurons'}
           </button>
         </div>
@@ -248,9 +262,14 @@ function RefinePanel({ queryId, hasEval, hasNeurons }: { queryId: number; hasEva
               {applyResult ? (
                 <div className="refine-apply-success">
                   Applied: {applyResult.updated} updated, {applyResult.created} created
+                  {onRunAgain && (
+                    <button className="btn btn-sm" style={{ marginLeft: 12 }} onClick={onRunAgain}>
+                      Run Again
+                    </button>
+                  )}
                 </div>
               ) : (
-                <button className="btn" onClick={handleApply} disabled={applyLoading || totalChecked === 0}>
+                <button id="btn-apply" className="btn" onClick={handleApply} disabled={applyLoading || totalChecked === 0}>
                   {applyLoading ? 'Applying...' : `Apply Selected (${totalChecked})`}
                 </button>
               )}
@@ -262,6 +281,94 @@ function RefinePanel({ queryId, hasEval, hasNeurons }: { queryId: number; hasEva
               No changes suggested — neurons look good for this query.
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActionRail({ hasResult, hasMultiSlot, hasNeurons, evalDone, evalLoading, refinePhase, loading, onEval, onSubmit }: {
+  hasResult: boolean; hasMultiSlot: boolean; hasNeurons: boolean;
+  evalDone: boolean; evalLoading: boolean; refinePhase: RefinePhase;
+  loading: boolean; onEval: () => void; onSubmit: () => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  function scrollAndClick(id: string) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.click();
+    }
+  }
+
+  // Determine which step is "current"
+  let currentStep = 0;
+  if (hasResult) currentStep = 1;
+  if (evalDone) currentStep = 2;
+  if (refinePhase === 'has-suggestions' || refinePhase === 'loading') currentStep = 3;
+  if (refinePhase === 'applied') currentStep = 4;
+
+  const steps = [
+    {
+      label: loading ? 'Running...' : 'Submit',
+      enabled: !loading,
+      active: currentStep === 0,
+      done: currentStep >= 1,
+      action: onSubmit,
+    },
+    {
+      label: evalLoading ? 'Evaluating...' : evalDone ? 'Evaluated' : 'Evaluate',
+      enabled: hasResult && hasMultiSlot && !evalLoading && !evalDone,
+      active: currentStep === 1 && hasMultiSlot,
+      done: evalDone,
+      action: () => {
+        document.getElementById('section-compare')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        onEval();
+      },
+    },
+    {
+      label: refinePhase === 'loading' ? 'Refining...' : refinePhase !== 'idle' && refinePhase !== 'ready' ? 'Refined' : 'Refine',
+      enabled: evalDone && hasNeurons && (refinePhase === 'ready' || refinePhase === 'has-suggestions' || refinePhase === 'applied'),
+      active: currentStep === 2,
+      done: refinePhase === 'has-suggestions' || refinePhase === 'applying' || refinePhase === 'applied',
+      action: () => scrollAndClick('btn-refine'),
+    },
+    {
+      label: refinePhase === 'applying' ? 'Applying...' : refinePhase === 'applied' ? 'Applied' : 'Apply',
+      enabled: refinePhase === 'has-suggestions',
+      active: refinePhase === 'has-suggestions',
+      done: refinePhase === 'applied',
+      action: () => scrollAndClick('btn-apply'),
+    },
+    {
+      label: 'Run Again',
+      enabled: refinePhase === 'applied',
+      active: refinePhase === 'applied',
+      done: false,
+      action: onSubmit,
+    },
+  ];
+
+  return (
+    <div className={`action-rail${collapsed ? ' collapsed' : ''}`}>
+      <div className="rail-header" onClick={() => setCollapsed(c => !c)}>
+        <span className={`section-chevron${!collapsed ? ' open' : ''}`} />
+        {!collapsed && <span>Actions</span>}
+      </div>
+      {!collapsed && (
+        <div className="rail-steps">
+          {steps.map((step, i) => (
+            <button
+              key={i}
+              className={`rail-step${step.active ? ' active' : ''}${step.done ? ' done' : ''}`}
+              disabled={!step.enabled && !step.done}
+              onClick={step.action}
+            >
+              <span className="rail-step-num">{step.done ? '\u2713' : i + 1}</span>
+              <span className="rail-step-label">{step.label}</span>
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -292,6 +399,9 @@ export default function QueryLab() {
   const [selectedQuery, setSelectedQuery] = useState<QueryDetail | null>(null);
   const [view, setView] = useState<'new' | 'history'>('new');
 
+  const [historyCollapsed, setHistoryCollapsed] = useState(false);
+  const [refinePhase, setRefinePhase] = useState<RefinePhase>('idle');
+
   useEffect(() => { loadHistory(); }, []);
 
   function loadHistory() {
@@ -317,6 +427,7 @@ export default function QueryLab() {
     setEvalScores([]);
     setEvalWinner(null);
     setRated(false);
+    setRefinePhase('idle');
     setView('new');
     setSelectedQuery(null);
     try {
@@ -365,35 +476,47 @@ export default function QueryLab() {
       setView('history');
       setResult(null);
       setEvalText(null);
+      setRefinePhase('idle');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load query');
     }
   }
 
+  const hasResult = !!result && view === 'new';
+  const hasNeurons = hasResult && result.neuron_scores.length > 0;
+  const hasMultiSlot = hasResult && result.slots.length >= 2;
+
   return (
     <div className="query-lab-layout">
-      <div className="query-history">
-        <h3>Query History</h3>
-        {history.length === 0 && <div className="history-empty">No queries yet</div>}
-        {history.map(q => (
-          <div
-            key={q.id}
-            className={`history-item${selectedQuery?.id === q.id ? ' selected' : ''}`}
-            onClick={() => selectHistoryItem(q.id)}
-          >
-            <div className="history-msg">{q.user_message}</div>
-            <div className="history-meta">
-              {q.classified_intent && <span className="tag intent">{q.classified_intent}</span>}
-              <span className="history-modes">
-                {q.modes.map(m => {
-                  const def = ALL_MODES.find(d => d.key === m);
-                  return <span key={m} className="mode-badge" style={{ background: (MODE_COLORS[m] ?? '#8892a8') + '33', color: MODE_COLORS[m] ?? '#8892a8' }}>{def?.short ?? m}</span>;
-                })}
-              </span>
-              {q.cost_usd != null && <span className="history-cost">${q.cost_usd.toFixed(4)}</span>}
-            </div>
-          </div>
-        ))}
+      <div className={`query-history${historyCollapsed ? ' collapsed' : ''}`}>
+        <h3 onClick={() => setHistoryCollapsed(c => !c)} style={{ cursor: 'pointer' }}>
+          <span className={`section-chevron${!historyCollapsed ? ' open' : ''}`} />
+          {!historyCollapsed ? 'Query History' : ''}
+        </h3>
+        {!historyCollapsed && (
+          <>
+            {history.length === 0 && <div className="history-empty">No queries yet</div>}
+            {history.map(q => (
+              <div
+                key={q.id}
+                className={`history-item${selectedQuery?.id === q.id ? ' selected' : ''}`}
+                onClick={() => selectHistoryItem(q.id)}
+              >
+                <div className="history-msg">{q.user_message}</div>
+                <div className="history-meta">
+                  {q.classified_intent && <span className="tag intent">{q.classified_intent}</span>}
+                  <span className="history-modes">
+                    {q.modes.map(m => {
+                      const def = ALL_MODES.find(d => d.key === m);
+                      return <span key={m} className="mode-badge" style={{ background: (MODE_COLORS[m] ?? '#8892a8') + '33', color: MODE_COLORS[m] ?? '#8892a8' }}>{def?.short ?? m}</span>;
+                    })}
+                  </span>
+                  {q.cost_usd != null && <span className="history-cost">${q.cost_usd.toFixed(4)}</span>}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
       </div>
 
       <div className="query-main">
@@ -435,23 +558,39 @@ export default function QueryLab() {
               evalScores={evalScores} evalWinner={evalWinner}
               evalModel={evalModel} setEvalModel={setEvalModel}
               evalLoading={evalLoading} onEval={handleEval}
+              onRunAgain={handleSubmit} onRefinePhaseChange={setRefinePhase}
             />
           </>
         )}
 
         {selectedQuery && view === 'history' && <HistoryDetail query={selectedQuery} baseline={baseline} />}
       </div>
+
+      {hasResult && (
+        <ActionRail
+          hasResult={hasResult}
+          hasMultiSlot={hasMultiSlot}
+          hasNeurons={hasNeurons}
+          evalDone={!!evalText}
+          evalLoading={evalLoading}
+          refinePhase={refinePhase}
+          loading={loading}
+          onEval={handleEval}
+          onSubmit={handleSubmit}
+        />
+      )}
     </div>
   );
 }
 
-function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalText, evalMdl, evalIn, evalOut, evalScores, evalWinner, evalModel, setEvalModel, evalLoading, onEval }: {
+function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalText, evalMdl, evalIn, evalOut, evalScores, evalWinner, evalModel, setEvalModel, evalLoading, onEval, onRunAgain, onRefinePhaseChange }: {
   result: QueryResponse; baseline: string;
   rating: number; setRating: (v: number) => void; rated: boolean; onRate: () => void;
   evalText: string | null; evalMdl: string | null; evalIn: number; evalOut: number;
   evalScores: EvalScoreOut[]; evalWinner: string | null;
   evalModel: 'haiku' | 'sonnet'; setEvalModel: (v: 'haiku' | 'sonnet') => void;
   evalLoading: boolean; onEval: () => void;
+  onRunAgain: () => void; onRefinePhaseChange: (phase: RefinePhase) => void;
 }) {
   const hasNeurons = result.neuron_scores.length > 0;
 
@@ -501,7 +640,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
 
       {/* Compare */}
       {result.slots.length >= 2 && (
-        <Section title="Compare Outputs" className="eval-card" headerRight={
+        <Section id="section-compare" title="Compare Outputs" className="eval-card" headerRight={
           <div className="eval-controls">
             <select value={evalModel} onChange={e => setEvalModel(e.target.value as 'haiku' | 'sonnet')}>
               <option value="haiku">Evaluate with Haiku</option>
@@ -526,7 +665,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
         </Section>
       )}
 
-      <RefinePanel queryId={result.query_id} hasEval={!!evalText} hasNeurons={hasNeurons} />
+      <RefinePanel queryId={result.query_id} hasEval={!!evalText} hasNeurons={hasNeurons} onRunAgain={onRunAgain} onPhaseChange={onRefinePhaseChange} />
 
       <Section title="Rate Response">
         <div className="rating-row">

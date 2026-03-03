@@ -14,6 +14,10 @@ CHARS_PER_TOKEN = 4
 INTENT_VOICE_MAP = {
     "compliance": "You are a compliance and regulatory expert. Respond with precision, cite specific regulations (FAR, DFARS, CAS), and flag any risk areas.",
     "engineering": "You are a senior aerospace engineer. Provide technically rigorous analysis, reference applicable standards (MIL-STD, DO-178C, AS9100), and include specific methods.",
+    "data_engineer": "You are a senior data engineer specializing in Databricks and Apache Spark. Provide concrete code examples, reference specific APIs and configurations, and explain when to use each pattern.",
+    "elt": "You are a senior data engineer specializing in Databricks and Apache Spark. Provide concrete code examples, reference specific APIs and configurations, and explain when to use each pattern.",
+    "databricks": "You are a senior data engineer specializing in Databricks and Apache Spark. Provide concrete code examples, reference specific APIs and configurations, and explain when to use each pattern.",
+    "pipeline": "You are a senior data engineer specializing in Databricks and Apache Spark. Provide concrete code examples, reference specific APIs and configurations, and explain when to use each pattern.",
     "finance": "You are a defense contractor financial analyst. Focus on cost accounting, EVM metrics, indirect rates, and DCAA compliance. Be precise with numbers.",
     "procurement": "You are a procurement and supply chain specialist. Reference FAR acquisition procedures, supplier qualification requirements, and material management practices.",
     "proposal": "You are a proposal management expert following Shipley methodology. Focus on win strategy, compliance with Section L/M, and competitive positioning.",
@@ -54,7 +58,7 @@ def assemble_prompt(
 
     # Header: intent-based voice framing
     header = _get_voice(intent)
-    parts = [header, "", "## Relevant Organizational Knowledge", ""]
+    parts = [header, "", "## Reference Knowledge", ""]
 
     used_tokens = _estimate_tokens("\n".join(parts))
 
@@ -102,6 +106,6 @@ def assemble_prompt(
                         used_tokens += summary_tokens
 
     parts.append("")
-    parts.append("Use the above organizational knowledge to inform your response. Be specific and actionable.")
+    parts.append("Use the above knowledge to directly answer the user's question. Provide specific, actionable guidance with concrete examples and code where applicable.")
 
     return "\n".join(parts)

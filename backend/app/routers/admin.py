@@ -189,6 +189,8 @@ async def bolster_neurons(req: BolsterRequest, db: AsyncSession = Depends(get_db
         "the old value, and the new value\n"
         "- For new neurons: specify parent_id (an existing neuron ID to attach under), "
         "layer (0-5), node_type, label, content, summary, and optionally department/role_key\n"
+        "- New neurons MUST have a valid parent_id from the neuron list below — do NOT create orphaned neurons with parent_id null\n"
+        "- Do NOT create new departments (L0) unless explicitly requested — attach under existing structure\n"
         "- Keep content concise and factual — neurons are context snippets, not essays\n"
         "- If the request is vague (e.g. 'review X'), identify concrete improvements\n"
         "- Don't trust that neurons are entirely accurate, you can double check their accuracy\n\n"
@@ -217,7 +219,7 @@ async def bolster_neurons(req: BolsterRequest, db: AsyncSession = Depends(get_db
         + "\n---\n".join(neuron_sections)
     )
 
-    result = await claude_chat(system_prompt, user_prompt, max_tokens=4096, model=req.model)
+    result = await claude_chat(system_prompt, user_prompt, max_tokens=8192, model=req.model)
 
     raw_text = result["text"].strip()
 

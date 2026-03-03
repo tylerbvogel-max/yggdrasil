@@ -8,7 +8,7 @@ Biomimetic neuron graph for prompt preparation. Two-stage Haiku pipeline: classi
 
 ## Dev Commands
 ```bash
-cd ~/Projects/aurora-neuron/backend
+cd ~/Projects/yggdrasil/backend
 source venv/bin/activate
 uvicorn app.main:app --port 8002 --reload
 ```

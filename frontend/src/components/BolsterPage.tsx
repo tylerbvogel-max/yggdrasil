@@ -1,12 +1,36 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { fetchStats, submitBolster, applyBolster } from '../api';
 import type { BolsterResponse, NeuronStats } from '../types';
+
+interface SpeechRecognitionEvent {
+  resultIndex: number;
+  results: { isFinal: boolean; [index: number]: { transcript: string }; length: number }[];
+}
+
+interface SpeechRecognitionInstance {
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition: new () => SpeechRecognitionInstance;
+    webkitSpeechRecognition: new () => SpeechRecognitionInstance;
+  }
+}
 
 export default function BolsterPage() {
   const [message, setMessage] = useState('');
   const [model, setModel] = useState<'haiku' | 'sonnet' | 'opus'>('haiku');
   const [department, setDepartment] = useState('');
   const [departments, setDepartments] = useState<string[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -71,6 +95,51 @@ export default function BolsterPage() {
     }
   }
 
+  function toggleMic() {
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      setIsRecording(false);
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setError('Speech recognition not supported in this browser');
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognitionRef.current = recognition;
+
+    recognition.onresult = (event) => {
+      let finalTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        }
+      }
+      if (finalTranscript) {
+        setMessage(prev => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + finalTranscript);
+      }
+    };
+
+    recognition.onerror = () => {
+      recognitionRef.current = null;
+      setIsRecording(false);
+    };
+
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      setIsRecording(false);
+    };
+
+    recognition.start();
+    setIsRecording(true);
+  }
+
   const totalChecked = checkedUpdates.size + checkedNewNeurons.size;
 
   return (
@@ -94,6 +163,14 @@ export default function BolsterPage() {
               <option value="opus">Opus</option>
             </select>
           </div>
+          <button
+            className={`mic-btn${isRecording ? ' recording' : ''}`}
+            onClick={toggleMic}
+            title={isRecording ? 'Stop recording' : 'Start voice input'}
+            type="button"
+          >
+            {isRecording ? '⏹' : '🎙'}
+          </button>
           <button className="btn" onClick={handleAnalyze} disabled={loading || !message.trim()}>
             {loading ? 'Analyzing...' : result ? 'Re-analyze' : 'Analyze'}
           </button>

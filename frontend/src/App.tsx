@@ -31,11 +31,11 @@ export default function App() {
       <main className="app-main">
         {tab === 'explorer' && <Explorer />}
         {tab === 'dashboard' && <Dashboard />}
-        {tab === 'query' && <QueryLab />}
+        <div style={{ display: tab === 'query' ? 'contents' : 'none' }}><QueryLab /></div>
         {tab === 'pipeline' && <PipelinePage />}
         {tab === 'evaluation' && <EvaluationPage />}
         {tab === 'refinements' && <RefinementHistory />}
-        {tab === 'bolster' && <BolsterPage />}
+        <div style={{ display: tab === 'bolster' ? 'contents' : 'none' }}><BolsterPage /></div>
         {tab === 'nextsteps' && <NextSteps />}
       </main>
     </div>

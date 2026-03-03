@@ -21,17 +21,19 @@ async def claude_chat(
     # Must unset CLAUDECODE to avoid nesting guard
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
-    cmd = [CLAUDE_BIN, "-p", prompt, "--output-format", "json"]
+    cmd = [CLAUDE_BIN, "-p", "--output-format", "json"]
     if model:
         cmd.extend(["--model", model])
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env,
+        cwd="/tmp",
     )
-    stdout, stderr = await proc.communicate()
+    stdout, stderr = await proc.communicate(input=prompt.encode())
 
     if proc.returncode != 0:
         raise RuntimeError(f"Claude CLI failed ({proc.returncode}): {stderr.decode()}")
