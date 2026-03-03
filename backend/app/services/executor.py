@@ -33,6 +33,8 @@ MODEL_MAP = {
 
 NEURON_MODES = {"haiku_neuron", "sonnet_neuron", "opus_neuron"}
 
+RAW_BASELINE_PROMPT = "I am an employee at an aerospace manufacturing and prototype design company."
+
 
 async def execute_query(db: AsyncSession, user_message: str, modes: list[str]) -> dict:
     """Run the pipeline for all requested modes."""
@@ -98,7 +100,7 @@ async def execute_query(db: AsyncSession, user_message: str, modes: list[str]) -
             )
         else:
             tasks[mode] = asyncio.create_task(
-                claude_chat("", user_message, max_tokens=4096, model=model)
+                claude_chat(RAW_BASELINE_PROMPT, user_message, max_tokens=4096, model=model)
             )
 
     # Collect results

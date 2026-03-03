@@ -229,7 +229,7 @@ class ApplyRefineResponse(BaseModel):
 
 class NeuronRefinementOut(BaseModel):
     id: int
-    query_id: int
+    query_id: int | None = None
     neuron_id: int
     action: str
     field: str | None = None
@@ -239,6 +239,36 @@ class NeuronRefinementOut(BaseModel):
     created_at: str | None = None
     neuron_label: str | None = None
     query_snippet: str | None = None
+
+
+class BolsterRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=5000)
+    model: str = Field("haiku", pattern="^(haiku|sonnet|opus)$")
+    department: str | None = None
+
+
+class BolsterResponse(BaseModel):
+    session_id: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    neurons_scanned: int
+    reasoning: str
+    updates: list[NeuronUpdateSuggestion] = []
+    new_neurons: list[NewNeuronSuggestion] = []
+
+
+class ApplyBolsterRequest(BaseModel):
+    session_id: str
+    update_ids: list[int] = []
+    new_neuron_ids: list[int] = []
+
+
+class CheckpointResponse(BaseModel):
+    status: str
+    filename: str
+    neuron_count: int
+    commit_sha: str
 
 
 class HealthResponse(BaseModel):

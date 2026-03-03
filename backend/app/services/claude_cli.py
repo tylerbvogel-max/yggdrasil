@@ -16,7 +16,7 @@ async def claude_chat(
     """Call the Claude CLI and return {"text": ..., "input_tokens": ..., "output_tokens": ...}."""
     prompt = user_message
     if system_prompt:
-        prompt = f"[System instructions — follow these exactly]\n{system_prompt}\n[End system instructions]\n\n{user_message}"
+        prompt = f"{system_prompt}\n\n---\n\n{user_message}"
 
     # Must unset CLAUDECODE to avoid nesting guard
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}

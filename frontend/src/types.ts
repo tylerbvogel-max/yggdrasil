@@ -197,6 +197,23 @@ export interface ApplyRefineResponse {
   created: number;
 }
 
+export interface BolsterResponse {
+  session_id: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  neurons_scanned: number;
+  reasoning: string;
+  updates: NeuronUpdateSuggestion[];
+  new_neurons: NewNeuronSuggestion[];
+}
+
+export interface ApplyBolsterRequest {
+  session_id: string;
+  update_ids: number[];
+  new_neuron_ids: number[];
+}
+
 export interface NeuronRefinementEntry {
   id: number;
   query_id: number;

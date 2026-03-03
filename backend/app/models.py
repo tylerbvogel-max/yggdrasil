@@ -133,7 +133,7 @@ class NeuronRefinement(Base):
     __tablename__ = "neuron_refinements"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    query_id: Mapped[int] = mapped_column(Integer, ForeignKey("queries.id"), nullable=False, index=True)
+    query_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("queries.id"), nullable=True, index=True)
     neuron_id: Mapped[int] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(20), nullable=False)  # "update" | "create"
     field: Mapped[str | None] = mapped_column(String(50), nullable=True)  # for updates: content/summary/label/is_active

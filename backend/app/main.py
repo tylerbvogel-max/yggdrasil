@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 
 from app.database import engine, async_session
 from app.models import Base, Neuron, SystemState
@@ -19,6 +19,41 @@ async def lifespan(app: FastAPI):
     # Create tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Migrate: make neuron_refinements.query_id nullable (SQLite workaround)
+    async with engine.begin() as conn:
+        try:
+            rows = await conn.execute(text("PRAGMA table_info(neuron_refinements)"))
+            for row in rows:
+                if row[1] == "query_id" and row[3] == 1:  # notnull == 1
+                    # Rebuild table with nullable query_id
+                    await conn.execute(text(
+                        "CREATE TABLE IF NOT EXISTS _nr_tmp AS SELECT * FROM neuron_refinements"
+                    ))
+                    await conn.execute(text("DROP TABLE neuron_refinements"))
+                    await conn.execute(text("""
+                        CREATE TABLE neuron_refinements (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            query_id INTEGER REFERENCES queries(id),
+                            neuron_id INTEGER NOT NULL REFERENCES neurons(id),
+                            action VARCHAR(20) NOT NULL,
+                            field VARCHAR(50),
+                            old_value TEXT,
+                            new_value TEXT,
+                            reason TEXT,
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                    await conn.execute(text("CREATE INDEX ix_neuron_refinements_query_id ON neuron_refinements(query_id)"))
+                    await conn.execute(text("CREATE INDEX ix_neuron_refinements_neuron_id ON neuron_refinements(neuron_id)"))
+                    await conn.execute(text(
+                        "INSERT INTO neuron_refinements SELECT * FROM _nr_tmp"
+                    ))
+                    await conn.execute(text("DROP TABLE _nr_tmp"))
+                    print("Migrated: neuron_refinements.query_id is now nullable")
+                    break
+        except Exception as e:
+            print(f"Migration check skipped: {e}")
 
     # Auto-seed on first run
     async with async_session() as db:

@@ -12,6 +12,7 @@ import type {
   RefineResponse,
   ApplyRefineResponse,
   NeuronRefinementEntry,
+  BolsterResponse,
 } from './types';
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
@@ -91,4 +92,33 @@ export function applyRefinements(queryId: number, updateIds: number[], newNeuron
 
 export function fetchRefinementHistory(): Promise<NeuronRefinementEntry[]> {
   return json<NeuronRefinementEntry[]>('/neurons/refinements');
+}
+
+export interface CheckpointResponse {
+  status: string;
+  filename: string;
+  neuron_count: number;
+  commit_sha: string;
+}
+
+export function createCheckpoint(): Promise<CheckpointResponse> {
+  return json<CheckpointResponse>('/admin/checkpoint', { method: 'POST' });
+}
+
+export function submitBolster(message: string, model: 'haiku' | 'sonnet' | 'opus', department?: string): Promise<BolsterResponse> {
+  const body: Record<string, string> = { message, model };
+  if (department) body.department = department;
+  return json<BolsterResponse>('/admin/bolster', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export function applyBolster(sessionId: string, updateIds: number[], newNeuronIds: number[]): Promise<ApplyRefineResponse> {
+  return json<ApplyRefineResponse>('/admin/bolster/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, update_ids: updateIds, new_neuron_ids: newNeuronIds }),
+  });
 }

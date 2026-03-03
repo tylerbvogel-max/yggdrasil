@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { fetchTree } from '../api'
+import { fetchTree, createCheckpoint } from '../api'
 import type { TreeNode } from '../types'
 import NeuronTree from './NeuronTree'
 import NeuronDetail from './NeuronDetail'
@@ -22,6 +22,8 @@ export default function Explorer() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [leftWidth, setLeftWidth] = useState(380);
+  const [checkpointing, setCheckpointing] = useState(false);
+  const [checkpointMsg, setCheckpointMsg] = useState('');
   const dragging = useRef(false);
 
   const onMouseDown = useCallback(() => {
@@ -64,6 +66,20 @@ export default function Explorer() {
       .catch(e => setError(e.message));
   }, [deptFilter]);
 
+  const handleCheckpoint = useCallback(async () => {
+    setCheckpointing(true);
+    setCheckpointMsg('');
+    try {
+      const res = await createCheckpoint();
+      setCheckpointMsg(`Saved ${res.neuron_count} neurons`);
+      setTimeout(() => setCheckpointMsg(''), 3000);
+    } catch (e: any) {
+      setCheckpointMsg(`Error: ${e.message}`);
+    } finally {
+      setCheckpointing(false);
+    }
+  }, []);
+
   if (error) return <div className="error-msg">{error}</div>;
 
   return (
@@ -80,6 +96,14 @@ export default function Explorer() {
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
+          <button
+            className="btn btn-sm"
+            onClick={handleCheckpoint}
+            disabled={checkpointing}
+          >
+            {checkpointing ? 'Saving...' : 'Checkpoint'}
+          </button>
+          {checkpointMsg && <span className="checkpoint-msg">{checkpointMsg}</span>}
         </div>
         <NeuronTree
           nodes={tree}
