@@ -1,6 +1,6 @@
 """Neuron CRUD, candidate pre-filtering, and firing record management."""
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -18,15 +18,25 @@ async def get_neurons_by_filter(
     role_keys: list[str] | None = None,
     keywords: list[str] | None = None,
 ) -> list[Neuron]:
-    """Pre-filter candidate neurons by classification results."""
-    conditions = [Neuron.is_active == True]
+    """Pre-filter candidate neurons by classification results.
 
+    Uses OR between department and role_key filters so that a neuron matching
+    either the classified departments or role_keys is included. This prevents
+    misclassified departments from excluding neurons with correct role_keys.
+    """
+    base = [Neuron.is_active == True]
+
+    # OR between dept and role_key: match either classification signal
+    match_conditions = []
     if departments:
-        conditions.append(Neuron.department.in_(departments))
+        match_conditions.append(Neuron.department.in_(departments))
     if role_keys:
-        conditions.append(Neuron.role_key.in_(role_keys))
+        match_conditions.append(Neuron.role_key.in_(role_keys))
 
-    stmt = select(Neuron).where(and_(*conditions))
+    if match_conditions:
+        base.append(or_(*match_conditions))
+
+    stmt = select(Neuron).where(and_(*base))
     result = await db.execute(stmt)
     neurons = list(result.scalars().all())
 
@@ -59,6 +69,8 @@ async def score_candidates(
     candidates: list[Neuron],
     total_queries: int,
     keywords: list[str],
+    classified_departments: list[str] | None = None,
+    classified_role_keys: list[str] | None = None,
 ) -> list[NeuronScoreBreakdown]:
     """Score all candidate neurons using 6 biomimetic signals."""
     scores = []
@@ -108,6 +120,10 @@ async def score_candidates(
         # Relevance: keyword overlap with neuron text
         neuron_text = f"{neuron.label} {neuron.summary or ''} {neuron.content or ''}"
 
+        # Classification match: does this neuron's dept/role match what the classifier said?
+        dept_match = bool(classified_departments and neuron.department in classified_departments)
+        role_match = bool(classified_role_keys and neuron.role_key in classified_role_keys)
+
         score = compute_score(
             fires_in_window=fires_in_window,
             avg_utility=neuron.avg_utility,
@@ -118,6 +134,8 @@ async def score_candidates(
             keywords=keywords,
             neuron_text=neuron_text,
             neuron_id=neuron.id,
+            dept_match=dept_match,
+            role_match=role_match,
         )
         scores.append(score)
 
@@ -217,12 +235,55 @@ async def get_graph_stats(db: AsyncSession) -> dict:
     )
     by_dept = {dept: count for dept, count in dept_result.all()}
 
+    # Per-department role breakdown: { dept: { role_label: count } }
+    # Get L1 role neurons and count all descendants per role
+    from sqlalchemy import text
+    role_breakdown_result = await db.execute(text("""
+        SELECT r.department, r.label, COUNT(n.id)
+        FROM neurons r
+        JOIN neurons n ON n.department = r.department
+            AND n.role_key = r.role_key
+        WHERE r.layer = 1
+            AND r.department IS NOT NULL
+        GROUP BY r.department, r.label
+        ORDER BY r.department, COUNT(n.id) DESC
+    """))
+    by_dept_roles: dict[str, dict[str, int]] = {}
+    for dept, role_label, count in role_breakdown_result.all():
+        by_dept_roles.setdefault(dept, {})[role_label] = count
+
     total_firings = (await db.execute(select(func.count(NeuronFiring.id)))).scalar() or 0
+
+    # Role bubble data: neuron_count, total_invocations, avg_utility per L1 role
+    bubble_result = await db.execute(text("""
+        SELECT r.label, r.department,
+               COUNT(n.id) AS neuron_count,
+               SUM(n.invocations) AS total_invocations,
+               AVG(n.avg_utility) AS avg_utility
+        FROM neurons r
+        JOIN neurons n ON n.department = r.department
+            AND n.role_key = r.role_key
+        WHERE r.layer = 1
+            AND r.department IS NOT NULL
+        GROUP BY r.label, r.department
+        ORDER BY COUNT(n.id) DESC
+    """))
+    role_bubbles = [
+        {
+            "role": role, "department": dept,
+            "neuron_count": count,
+            "total_invocations": int(invoc or 0),
+            "avg_utility": round(float(util or 0.5), 3),
+        }
+        for role, dept, count, invoc, util in bubble_result.all()
+    ]
 
     return {
         "total_neurons": total,
         "by_layer": by_layer,
         "by_type": by_type,
         "by_department": by_dept,
+        "by_department_roles": by_dept_roles,
+        "role_bubbles": role_bubbles,
         "total_firings": total_firings,
     }

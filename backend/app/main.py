@@ -11,7 +11,7 @@ from sqlalchemy import select, func, text
 
 from app.database import engine, async_session
 from app.models import Base, Neuron, SystemState
-from app.routers import query, neurons, admin
+from app.routers import query, neurons, admin, autopilot
 from app.seed.loader import load_seed
 
 
@@ -56,6 +56,25 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Migration check skipped: {e}")
 
+    # Migrate: add new columns to autopilot_config if missing
+    async with engine.begin() as conn:
+        try:
+            rows = await conn.execute(text("PRAGMA table_info(autopilot_config)"))
+            columns = {row[1] for row in rows}
+            if columns:  # table exists
+                if "eval_model" not in columns:
+                    await conn.execute(text(
+                        "ALTER TABLE autopilot_config ADD COLUMN eval_model VARCHAR(20) DEFAULT 'haiku'"
+                    ))
+                    print("Migrated: added autopilot_config.eval_model")
+                if "max_layer" not in columns:
+                    await conn.execute(text(
+                        "ALTER TABLE autopilot_config ADD COLUMN max_layer INTEGER DEFAULT 5"
+                    ))
+                    print("Migrated: added autopilot_config.max_layer")
+        except Exception as e:
+            print(f"Autopilot migration skipped: {e}")
+
     # Auto-seed on first run
     async with async_session() as db:
         count = (await db.execute(select(func.count(Neuron.id)))).scalar() or 0
@@ -83,6 +102,7 @@ app.add_middleware(
 app.include_router(query.router)
 app.include_router(neurons.router)
 app.include_router(admin.router)
+app.include_router(autopilot.router)
 
 
 @app.get("/health")

@@ -145,6 +145,41 @@ class NeuronRefinement(Base):
     )
 
 
+class AutopilotConfig(Base):
+    __tablename__ = "autopilot_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    directive: Mapped[str] = mapped_column(Text, default="", server_default="")
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
+    focus_neuron_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=True)
+    max_layer: Mapped[int] = mapped_column(Integer, default=5, server_default="5")
+    eval_model: Mapped[str] = mapped_column(String(20), default="haiku", server_default="haiku")
+    last_tick_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AutopilotRun(Base):
+    __tablename__ = "autopilot_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    query_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("queries.id"), nullable=True)
+    generated_query: Mapped[str] = mapped_column(Text, nullable=False)
+    directive: Mapped[str] = mapped_column(Text, nullable=False)
+    focus_neuron_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    neurons_activated: Mapped[int] = mapped_column(Integer, default=0)
+    updates_applied: Mapped[int] = mapped_column(Integer, default=0)
+    neurons_created: Mapped[int] = mapped_column(Integer, default=0)
+    eval_overall: Mapped[int] = mapped_column(Integer, default=3)
+    eval_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refine_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String(20), default="completed")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+
 class PropagationLog(Base):
     __tablename__ = "propagation_log"
 

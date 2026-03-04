@@ -62,7 +62,7 @@ async def execute_query(db: AsyncSession, user_message: str, modes: list[str]) -
         candidates = await get_neurons_by_filter(db, departments, role_keys, keywords)
         if not candidates:
             candidates = await get_neurons_by_filter(db)
-        scored = await score_candidates(db, candidates, state.total_queries, keywords)
+        scored = await score_candidates(db, candidates, state.total_queries, keywords, departments, role_keys)
         top_k = scored[: settings.top_k_neurons]
 
         neuron_map: dict[int, Neuron] = {}

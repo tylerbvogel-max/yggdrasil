@@ -66,8 +66,15 @@ def compute_score(
     keywords: list[str],
     neuron_text: str,
     neuron_id: int = 0,
+    dept_match: bool = False,
+    role_match: bool = False,
 ) -> NeuronScoreBreakdown:
-    """Compute combined activation score from 6 biomimetic signals."""
+    """Compute combined activation score from 6 biomimetic signals.
+
+    Neurons matching the classified department or role_key get a multiplicative
+    boost so that classification signals directly influence scoring, not just
+    pre-filtering.
+    """
     burst = calc_burst(fires_in_window)
     impact = calc_impact(avg_utility)
     precision = calc_precision(dept_fires, dept_total_queries)
@@ -83,6 +90,13 @@ def compute_score(
         + settings.weight_recency * recency
         + settings.weight_relevance * relevance
     )
+
+    # Classification match boost: role match is stronger than dept match
+    # since role_keys are more specific (e.g. "data_engineer" vs "Engineering")
+    if role_match:
+        combined *= 1.5
+    elif dept_match:
+        combined *= 1.25
 
     return NeuronScoreBreakdown(
         neuron_id=neuron_id,

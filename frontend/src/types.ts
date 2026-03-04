@@ -36,11 +36,21 @@ export interface NeuronScores {
   combined: number;
 }
 
+export interface RoleBubble {
+  role: string;
+  department: string;
+  neuron_count: number;
+  total_invocations: number;
+  avg_utility: number;
+}
+
 export interface NeuronStats {
   total_neurons: number;
   by_layer: Record<string, number>;
   by_type: Record<string, number>;
   by_department: Record<string, number>;
+  by_department_roles: Record<string, Record<string, number>>;
+  role_bubbles: RoleBubble[];
   total_firings: number;
 }
 
@@ -212,6 +222,60 @@ export interface ApplyBolsterRequest {
   session_id: string;
   update_ids: number[];
   new_neuron_ids: number[];
+}
+
+export interface AutopilotConfig {
+  enabled: boolean;
+  directive: string;
+  interval_minutes: number;
+  focus_neuron_id: number | null;
+  focus_neuron_label: string | null;
+  max_layer: number;
+  eval_model: string;
+  last_tick_at: string | null;
+}
+
+export interface AutopilotChange {
+  id: number;
+  neuron_id: number;
+  neuron_label: string;
+  action: string;
+  field: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  reason: string | null;
+  neuron_detail?: {
+    layer: number;
+    node_type: string;
+    department: string | null;
+    role_key: string | null;
+    summary: string | null;
+    content: string | null;
+  };
+}
+
+export interface AutopilotRun {
+  id: number;
+  query_id: number | null;
+  generated_query: string;
+  directive: string;
+  focus_neuron_label: string | null;
+  neurons_activated: number;
+  updates_applied: number;
+  neurons_created: number;
+  eval_overall: number;
+  eval_text: string | null;
+  refine_reasoning: string | null;
+  cost_usd: number;
+  status: string;
+  error_message: string | null;
+  created_at: string | null;
+}
+
+export interface AutopilotTickResponse {
+  status: string;
+  run_id: number | null;
+  message: string | null;
 }
 
 export interface NeuronRefinementEntry {

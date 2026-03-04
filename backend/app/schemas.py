@@ -275,3 +275,47 @@ class HealthResponse(BaseModel):
     status: str
     neuron_count: int
     total_queries: int
+
+
+class AutopilotConfigOut(BaseModel):
+    enabled: bool
+    directive: str
+    interval_minutes: int
+    focus_neuron_id: int | None = None
+    focus_neuron_label: str | None = None
+    max_layer: int = 5
+    eval_model: str = "haiku"
+    last_tick_at: str | None = None
+
+
+class AutopilotConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    directive: str | None = None
+    interval_minutes: int | None = None
+    focus_neuron_id: int | None = Field(None, description="Neuron ID to focus on (L0-L5). Set to 0 to clear.")
+    max_layer: int | None = Field(None, ge=0, le=5, description="Max layer depth for new neuron creation (0-5)")
+    eval_model: str | None = Field(None, pattern="^(haiku|sonnet|opus)$")
+
+
+class AutopilotRunOut(BaseModel):
+    id: int
+    query_id: int | None = None
+    generated_query: str
+    directive: str
+    focus_neuron_label: str | None = None
+    neurons_activated: int
+    updates_applied: int
+    neurons_created: int
+    eval_overall: int
+    eval_text: str | None = None
+    refine_reasoning: str | None = None
+    cost_usd: float
+    status: str
+    error_message: str | None = None
+    created_at: str | None = None
+
+
+class AutopilotTickResponse(BaseModel):
+    status: str
+    run_id: int | None = None
+    message: str | None = None

@@ -13,6 +13,10 @@ import type {
   ApplyRefineResponse,
   NeuronRefinementEntry,
   BolsterResponse,
+  AutopilotConfig,
+  AutopilotRun,
+  AutopilotTickResponse,
+  AutopilotChange,
 } from './types';
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
@@ -121,4 +125,41 @@ export function applyBolster(sessionId: string, updateIds: number[], newNeuronId
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId, update_ids: updateIds, new_neuron_ids: newNeuronIds }),
   });
+}
+
+// Autopilot
+export function fetchAutopilotConfig(): Promise<AutopilotConfig> {
+  return json<AutopilotConfig>('/admin/autopilot/config');
+}
+
+export function updateAutopilotConfig(update: Partial<AutopilotConfig>): Promise<AutopilotConfig> {
+  return json<AutopilotConfig>('/admin/autopilot/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(update),
+  });
+}
+
+export function triggerAutopilotTick(): Promise<AutopilotTickResponse> {
+  return json<AutopilotTickResponse>('/admin/autopilot/tick', { method: 'POST' });
+}
+
+export function triggerAutopilotRunNow(): Promise<AutopilotTickResponse> {
+  return json<AutopilotTickResponse>('/admin/autopilot/run-now', { method: 'POST' });
+}
+
+export function fetchAutopilotRuns(): Promise<AutopilotRun[]> {
+  return json<AutopilotRun[]>('/admin/autopilot/runs');
+}
+
+export function fetchAutopilotRunChanges(runId: number): Promise<AutopilotChange[]> {
+  return json<AutopilotChange[]>(`/admin/autopilot/runs/${runId}/changes`);
+}
+
+export function cancelAutopilotTick(): Promise<AutopilotTickResponse> {
+  return json<AutopilotTickResponse>('/admin/autopilot/cancel', { method: 'POST' });
+}
+
+export function fetchAutopilotStatus(): Promise<{ running: boolean; step: string }> {
+  return json<{ running: boolean; step: string }>('/admin/autopilot/status');
 }
