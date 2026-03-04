@@ -57,9 +57,10 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
                     layer=2,
                     node_type="task",
                     label=task_data["label"],
+                    content=(task_data.get("content", "") or "").strip() or None,
                     role_key=role_data.get("role_key"),
                     department=dept_data["label"],
-                    summary=f"Task: {task_data['label']}",
+                    summary=task_data.get("summary") or f"Task: {task_data['label']}",
                     created_at_query_count=0,
                 )
                 db.add(task)
@@ -72,9 +73,10 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
                         layer=3,
                         node_type="system",
                         label=sys_data["label"],
+                        content=(sys_data.get("content", "") or "").strip() or None,
                         role_key=role_data.get("role_key"),
                         department=dept_data["label"],
-                        summary=f"System: {sys_data['label']}",
+                        summary=sys_data.get("summary") or f"System: {sys_data['label']}",
                         created_at_query_count=0,
                     )
                     db.add(system)

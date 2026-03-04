@@ -483,6 +483,14 @@ async def refine_query(
     if neuron_response:
         user_prompt += f"\n\n## Neuron-Enhanced Response\n{neuron_response}"
 
+    if req.user_context and req.user_context.strip():
+        user_prompt += (
+            f"\n\n## Additional Context from User\n"
+            f"The user has provided the following information to help guide refinement. "
+            f"Use this to fill knowledge gaps, correct inaccuracies, or better define "
+            f"neuron content:\n\n{req.user_context.strip()}"
+        )
+
     result = await claude_chat(system_prompt, user_prompt, max_tokens=4096, model=req.model)
 
     raw_text = result["text"].strip()

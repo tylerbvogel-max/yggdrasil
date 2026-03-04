@@ -20,6 +20,7 @@ export default function AutopilotPage() {
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [runChanges, setRunChanges] = useState<Record<number, AutopilotChange[]>>({});
   const [runResult, setRunResult] = useState<string | null>(null);
+  const [stepDetail, setStepDetail] = useState('');
 
   // Draft config for editing
   const [directive, setDirective] = useState('');
@@ -64,22 +65,28 @@ export default function AutopilotPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Poll step progress while running
+  // Poll step progress — detect both manual and timer-triggered runs
   useEffect(() => {
-    if (!running) {
-      setCurrentStep('');
-      return;
-    }
     const poll = async () => {
       try {
         const status = await fetchAutopilotStatus();
-        if (status.running) setCurrentStep(status.step);
+        if (status.running) {
+          setRunning(true);
+          setCurrentStep(status.step);
+          setStepDetail(status.detail);
+        } else if (running && !status.running) {
+          // Run just finished (timer-triggered) — reload data
+          setRunning(false);
+          setCurrentStep('');
+          setStepDetail('');
+          loadData();
+        }
       } catch { /* ignore */ }
     };
     poll();
-    const id = window.setInterval(poll, 2000);
+    const id = window.setInterval(poll, running ? 1500 : 5000);
     return () => clearInterval(id);
-  }, [running]);
+  }, [running, loadData]);
 
   // Live countdown timer
   useEffect(() => {
@@ -312,7 +319,7 @@ export default function AutopilotPage() {
           </div>
 
           {running && (
-            <StepProgress currentStep={currentStep} />
+            <StepProgress currentStep={currentStep} detail={stepDetail} />
           )}
 
           {runResult && (
@@ -475,23 +482,28 @@ const STEPS = [
   { key: 'record', label: 'Record' },
 ];
 
-function StepProgress({ currentStep }: { currentStep: string }) {
+function StepProgress({ currentStep, detail }: { currentStep: string; detail?: string }) {
   const currentIdx = STEPS.findIndex(s => s.key === currentStep);
   return (
     <div className="step-progress">
-      {STEPS.map((step, i) => {
-        let cls = 'step-item';
-        if (i < currentIdx) cls += ' completed';
-        else if (i === currentIdx) cls += ' active';
-        else cls += ' pending';
-        return (
-          <div key={step.key} className={cls}>
-            <div className="step-dot" />
-            <span className="step-label">{step.label}</span>
-            {i < STEPS.length - 1 && <div className="step-line" />}
-          </div>
-        );
-      })}
+      <div className="step-progress-bar">
+        {STEPS.map((step, i) => {
+          let cls = 'step-item';
+          if (i < currentIdx) cls += ' completed';
+          else if (i === currentIdx) cls += ' active';
+          else cls += ' pending';
+          return (
+            <div key={step.key} className={cls}>
+              <div className="step-dot" />
+              <span className="step-label">{step.label}</span>
+              {i < STEPS.length - 1 && <div className="step-line" />}
+            </div>
+          );
+        })}
+      </div>
+      {detail && (
+        <div className="step-detail">{detail}</div>
+      )}
     </div>
   );
 }

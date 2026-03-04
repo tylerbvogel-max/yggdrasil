@@ -24,8 +24,8 @@ export default function Dashboard() {
   const [stats, setStats] = useState<NeuronStats | null>(null);
   const [cost, setCost] = useState<CostReport | null>(null);
   const [error, setError] = useState('');
-  const [bubbleLogX, setBubbleLogX] = useState(false);
-  const [bubbleLogY, setBubbleLogY] = useState(false);
+  const [bubbleLogX, setBubbleLogX] = useState(true);
+  const [bubbleLogY, setBubbleLogY] = useState(true);
   const layerRef = useRef<HTMLCanvasElement>(null);
   const deptRef = useRef<HTMLCanvasElement>(null);
   const bubbleRef = useRef<HTMLCanvasElement>(null);

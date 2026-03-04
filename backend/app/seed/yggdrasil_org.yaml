@@ -315,11 +315,335 @@ departments:
       - label: Manufacturing Engineer
         role_key: mfg_eng
         tasks:
-          - label: Process planning and work instruction development
+          # ── L2: Manufacturing Strategy & Planning ──
+          - label: Manufacturing Strategy & Planning
+            summary: >-
+              Strategic planning for manufacturing systems — aligning manufacturing capability
+              with business objectives, technology roadmaps, and capacity planning
             systems:
-              - label: Create manufacturing plans in MES per AS9100 Section 8.5
+              - label: Manufacturing Strategy Formulation
+                content: |
+                  Defining manufacturing mission and objectives; aligning mfg strategy with business
+                  strategy; functionality of manufacturing systems (cost, quality, flexibility, delivery);
+                  generic strategies and their impact on mfg structure.
+              - label: Planning Process & Methodology
+                content: |
+                  Defining the planning process; principles of planning; factors affecting planning needs;
+                  schools of thought (formal vs. incremental); alternative end states; paradoxes, pitfalls,
+                  and implementation difficulties.
+              - label: Manufacturing Systems Evolution
+                content: |
+                  Evolution from job shop to batch to mass to flexible manufacturing; system functionality
+                  tradeoffs; mapping current-state to future-state capability; qualitative decision analysis
+                  for system architecture choices.
+              - label: Operational & Capacity Planning
+                content: |
+                  Operational planning for manufacturing systems; rough-cut capacity estimation; linking
+                  strategic plans to tactical execution; planning time horizons.
+
+          # ── L2: Manufacturing Investment Analysis ──
+          - label: Manufacturing Investment Analysis
+            summary: >-
+              Economic evaluation, simulation modeling, and financial justification of
+              manufacturing systems, equipment, and automation investments
+            systems:
+              - label: Dynamic Modeling of Manufacturing Systems
+                content: |
+                  Rough-cut estimation of system performance; high-resolution simulation (discrete event,
+                  Monte Carlo); modeling throughput, utilization, WIP, and bottlenecks for proposed
+                  manufacturing configurations.
+              - label: Economic Translation & Financial Analysis
+                content: |
+                  Selection of benchmark alternatives; incremental comparison of alternatives; cash flow
+                  analysis; NPV, IRR, payback period; composite cost of capital; translating operational
+                  improvements to financial metrics.
+              - label: Decision Analysis Under Uncertainty
+                content: |
+                  Monte Carlo techniques for capturing deviation; game theory for risk; expected value
+                  calculations; decision trees for sequential investment decisions; sensitivity analysis
+                  for key assumptions.
+              - label: Capital Investment Justification
+                content: |
+                  Building the business case for manufacturing investments; justifying automation and CIM;
+                  quantifying intangible benefits (flexibility, quality, lead time); presenting to management
+                  with risk-adjusted projections.
+
+          # ── L2: Cost Estimating & Control ──
+          - label: Cost Estimating & Control
+            summary: >-
+              Manufacturing cost structures, estimating methods, learning curves, budgeting
+              for manufacturing operations, and cost forecasting
+            systems:
+              - label: Cost Structure & Recovery
+                content: |
+                  Types of costs (direct, indirect, fixed, variable); cost centers; components of
+                  labor/overhead rates; understanding cost allocation to manufactured products.
+              - label: Manufacturing Budgeting
+                content: |
+                  Direct labor determination; expense and hourly rate determination; indirect manufacturing
+                  costs; budgeting for indirect labor cost centers; budgeting on automated workcenters
+                  (machine-hour vs. labor-hour).
+              - label: Cost Estimating Process
+                content: |
+                  Required input data for estimates; estimating material costs; estimating labor costs;
+                  the cost estimate grid; types of costing systems (job order, process, standard,
+                  activity-based); cost review process.
+              - label: Learning Curves
+                content: |
+                  Curve parameters and types (Crawford unit, Wright cumulative average); curve construction
+                  procedure; integrating learning curves into cost estimates; realization factors; assumptions
+                  and effects of forgetting.
+              - label: Computer-Assisted Estimating & Forecasting
+                content: |
+                  Parametric cost models; feature-based estimating; computer-assisted cost estimating tools;
+                  cost forecasting methods; variance analysis and estimate-at-completion tracking.
+
+          # ── L2: Manufacturing Control Systems ──
+          - label: Manufacturing Control Systems
+            summary: >-
+              Conceptual framework for manufacturing management control — MRP, JIT, TQM,
+              and CIM as integrated control paradigms
+            systems:
+              - label: Manufacturing Control Process
+                content: |
+                  Organizational control process; the manufacturing control process
+                  (plan-execute-measure-correct); manufacturing management accounting as control feedback;
+                  levels of manufacturing control (strategic, tactical, operational).
+              - label: Manufacturing Resource Planning (MRP/MRPII)
+                content: |
+                  Evolution from MRP to MRPII; closed-loop MRP; bill of materials management; capacity
+                  requirements planning; MRP system architecture and integration points.
+              - label: Integrated Control Paradigms
+                content: |
+                  JIT as a control philosophy (pull vs. push); Total Quality as a control system; CIM
+                  as information integration; how these paradigms interact and complement each other
+                  in a manufacturing enterprise.
+              - label: Emerging Manufacturing Control Technologies
+                content: |
+                  Issues facing manufacturing enterprises; evolving control technologies; transition from
+                  islands of automation to integrated systems; role of real-time data in manufacturing
+                  control; evolution toward smart manufacturing.
+
+          # ── L2: Management of Manufacturing Technology ──
+          - label: Management of Manufacturing Technology
+            summary: >-
+              Technology lifecycle management — identifying, evaluating, selecting, and
+              deploying manufacturing technologies
+            systems:
+              - label: Technology Management Lifecycle
+                content: |
+                  Technology management lifecycle stages; technology selection model; management action
+                  model; linking technology decisions to manufacturing strategy.
+              - label: Technology Planning & Assessment
+                content: |
+                  Opportunity identification (technology scanning/scouting); opportunity assessment (TRL,
+                  manufacturing readiness); management planning tools for technology portfolios.
+              - label: Technology Selection & Specification
+                content: |
+                  System definition; technology review and benchmarking; system specification development;
+                  system verification methods; make/buy decision framework for manufacturing technology.
+              - label: Technology Implementation & Deployment
+                content: |
+                  Preliminary and detailed design of technology deployment; implementation planning;
+                  acceptance testing criteria; production support and sustainment; managing the technology
+                  transition to production.
+
+          # ── L2: Design for Manufacture ──
+          - label: Design for Manufacture
+            summary: >-
+              DFM methodologies, process-driven design, robust design, and quantitative
+              evaluation methods for manufacturing-conscious product design
+            systems:
+              - label: DFM Fundamentals & Design Process
+                content: |
+                  The design process from manufacturing perspective; governing characteristics (function,
+                  form, material, process); organizational and procedural issues; concurrent engineering
+                  approach.
+              - label: DFM Process & Imperatives
+                content: |
+                  A structured DFM process; imperatives for effective DFM (minimize part count,
+                  standardize, design for ease of fabrication); implementing the DFM imperatives;
+                  cross-functional design review.
+              - label: DFM Guidelines & Quantitative Methods
+                content: |
+                  DFM guidelines by process type; applying guidelines systematically; quantitative
+                  evaluation methods (Boothroyd-Dewhurst DFA analysis, assembly efficiency scores,
+                  manufacturability ratings).
+              - label: Robust Design (Taguchi Methods)
+                content: |
+                  Parameter design; tolerance design; signal-to-noise ratios; orthogonal arrays;
+                  reducing manufacturing variation through design; quality loss function.
+              - label: Computer-Aided & Process-Driven DFM
+                content: |
+                  Tools for process-driven design; computer-aided DFM software; traditional design
+                  methodologies (DFMA, value engineering, group technology); comparison of DFM
+                  methodologies and when to apply each.
+
+          # ── L2: Manufacturing Standards & Certification ──
+          - label: Manufacturing Standards & Certification
+            summary: >-
+              Standards development, international certification systems, and company
+              standards programs relevant to manufacturing engineering
+            systems:
+              - label: Standards Development & Framework
+                content: |
+                  Historical background of manufacturing standards; development process for standards
+                  (ANSI, ISO, ASTM, SAE); how standards are created, maintained, and revised; role of
+                  the manufacturing engineer in standards bodies.
+              - label: International Standards & Certification Systems
+                content: |
+                  ISO 9000 series; AS9100 (aerospace); IATF 16949 (automotive); international
+                  certification bodies; Nadcap special process accreditation; CE marking and global
+                  compliance.
+              - label: Company Standards Programs
+                content: |
+                  Establishing internal manufacturing standards; process specifications; material
+                  specifications; workmanship standards; maintaining company standards library;
+                  certification of manufacturing processes and personnel.
+
+          # ── L2: Just-in-Time Manufacturing ──
+          - label: Just-in-Time Manufacturing
+            summary: >-
+              JIT philosophy, implementation modules, pull systems, setup reduction, and
+              continuous improvement for manufacturing flow
+            systems:
+              - label: JIT Philosophy & Themes
+                content: |
+                  Core JIT themes (waste elimination, continuous improvement, respect for people);
+                  planning and assessment for JIT readiness; organizational prerequisites; awareness
+                  and education; housekeeping (5S).
+              - label: JIT Process Flow & Setup Reduction
+                content: |
+                  Process flow optimization; cellular manufacturing; setup and changeover reduction
+                  (SMED); uniform plant loading; leveled production scheduling; reducing batch sizes
+                  toward single-piece flow.
+              - label: Pull Systems & Kanban
+                content: |
+                  The pull system concept; kanban design and sizing; signal types (card, container,
+                  electronic); supplier network integration for JIT delivery; transitioning from
+                  push to pull.
+              - label: JIT Implementation & Continuous Improvement
+                content: |
+                  Diagnostic review; conceptual design activities; implementation planning and phasing;
+                  kaizen methodology; sustaining JIT gains; quality improvement as integral to JIT.
+
+          # ── L2: Computer-Integrated Manufacturing ──
+          - label: Computer-Integrated Manufacturing
+            summary: >-
+              CIM architecture, enabling technologies, integration strategies, and
+              planning/justification for manufacturing automation
+            systems:
+              - label: CIM Architecture & Definition
+                content: |
+                  Definition of CIM; driving forces (competition, quality, flexibility); CIM reference
+                  models; relationship between CAD, CAM, CAPP, and MES/ERP systems; the product data
+                  lifecycle.
+              - label: CIM Technologies — Product & Process
+                content: |
+                  Beginning the product cycle (CAD/CAE); manufacturing the product (CNC, robotics, FMS,
+                  AGVs); planning and controlling the manufacturing process (CAPP, MRP, shop floor
+                  control).
+              - label: Integration & Communication Protocols
+                content: |
+                  Connecting islands of automation; MAP (Manufacturing Automation Protocol) and TOP
+                  (Technical Office Protocol); data exchange standards (IGES, STEP); network architecture
+                  for manufacturing.
+              - label: CIM Planning & Justification
+                content: |
+                  Strategic planning for CIM implementation; phased approach to CIM; justifying CIM
+                  investments (tangible and intangible benefits); organizational change management for
+                  CIM deployment.
+
+          # ── L2: Facilities Planning & Plant Layout ──
+          - label: Facilities Planning & Plant Layout
+            summary: >-
+              Site selection, plant layout optimization, energy management, environmental
+              compliance, and disaster preparedness for manufacturing facilities
+            systems:
+              - label: Plant Layout Fundamentals
+                content: |
+                  Economic impact of layout decisions; facility arrangement types (process, product,
+                  fixed-position, cellular); layout fundamentals (flow patterns, space requirements,
+                  aisle design); systematic layout planning (SLP).
+              - label: Computerized Facilities Planning
+                content: |
+                  Computer-aided layout tools (CRAFT, ALDEP, CORELAP); simulation-based layout
+                  evaluation; material flow analysis; integration with process planning.
+              - label: Energy Management for Manufacturing
+                content: |
+                  Energy audits for manufacturing operations; energy conservation in manufacturing
+                  processes; cogeneration opportunities; energy-efficient equipment selection; utility
+                  cost impact on manufacturing costs.
+              - label: Environmental Compliance & Pollution Control
+                content: |
+                  Pollution abatement in manufacturing processes; environmental protection regulations
+                  affecting manufacturing; waste minimization at source; emissions control; environmental
+                  impact of manufacturing process selection.
+
+          # ── L2: Equipment Planning & Maintenance ──
+          - label: Equipment Planning & Maintenance
+            summary: >-
+              Equipment selection, material handling systems, installation, integration,
+              and maintenance strategies for manufacturing equipment
+            systems:
+              - label: Equipment Selection & Criteria
+                content: |
+                  Criteria development for equipment selection; the selection process (evaluation matrix,
+                  vendor assessment, runoff testing); equipment profile evolution; Manufacturing Automation
+                  Protocol (MAP) compliance.
+              - label: Group Technology & Equipment Strategy
+                content: |
+                  Group technology as a manufacturing strategy; part family formation; machine cell design;
+                  aligning equipment capability with product family requirements; flexible manufacturing
+                  systems.
+              - label: Material Handling Systems
+                content: |
+                  Material handling segmentation; flow development; performance evaluation; integration of
+                  subsystems (conveyors, AGVs, AS/RS, robots); material handling equipment selection
+                  criteria.
+              - label: Systems Integration & Installation
+                content: |
+                  Integrating equipment into manufacturing cells/lines; equipment installation planning;
+                  utility requirements; commissioning and qualification; IQ/OQ/PQ protocols.
+              - label: Maintenance Strategy & Implementation
+                content: |
+                  Maintenance principles (reactive, preventive, predictive, TPM); maintenance program
+                  development and implementation; MTBF/MTTR analysis; spare parts management; maintenance
+                  integration with production scheduling.
+
+          # ── L2: Production Planning & Control ──
+          # ★ Reparented: existing neuron 97 chain lives here as L3
+          - label: Production Planning & Control
+            summary: >-
+              Forecasting, master scheduling, MRP execution, capacity planning, and shop
+              floor control from the manufacturing engineering perspective
+            systems:
+              - label: Demand Forecasting for Manufacturing
+                content: |
+                  Forecasting theory and methods; seasonality adjustment; statistical forecasting;
+                  demand/orders management; spares and service parts forecasting; linking forecast
+                  accuracy to manufacturing planning.
+              - label: Aggregate Planning & Master Scheduling
+                content: |
+                  Sales plan to production plan translation; inventory planning; authorization of master
+                  schedule; rough-cut capacity planning; planning time fences; pull method differences
+                  from traditional master scheduling.
+              - label: Requirements & Capacity Planning
+                content: |
+                  Detail production planning; machine loading; bottleneck recognition (theory of
+                  constraints); capacity alternatives (overtime, subcontract, investment); purchased
+                  parts planning; MRP vs. JIT execution.
+              - label: Scheduling & Production Activity Control
+                content: |
+                  Priority rules and dispatching; work flow patterns (job shop, flow shop, project);
+                  simulation for schedule optimization; shop floor control; production reporting and
+                  feedback.
+              - label: Process Planning & Work Instruction Development
+                summary: >-
+                  Reparented from direct role child. Process planning for manufacturing operations
+                  including work instructions and AS9100 compliance.
                 decisions:
-                  - label: Select manufacturing methods and validate process capability
+                  - label: Create manufacturing plans in MES and validate process capability per AS9100 Section 8.5
                     outputs:
                       - label: Release manufacturing plan with process sheets and tooling list
                         content: |
@@ -329,11 +653,71 @@ departments:
                           (per NADCAP AC7004 welding, AC7101 NDT, AC7108 chemical processing), and material
                           handling requirements. Reference AS9145 APQP Phase 3 process design deliverables.
 
-          - label: Composite fabrication process development
+          # ── L2: Manufacturing Materials Management ──
+          - label: Manufacturing Materials Management
+            summary: >-
+              Inventory management, procurement coordination, receiving/inspection, and
+              repetitive manufacturing material flow — manufacturing floor perspective
             systems:
-              - label: Program autoclave/ATP machines per material specification cure cycles
+              - label: Inventory Management for Manufacturing
+                content: |
+                  Use of forecasting in inventory decisions; order points and order quantities (EOQ,
+                  safety stock); JIT inventory philosophy; inventory classification (ABC analysis);
+                  WIP management.
+              - label: Manufacturing Procurement Coordination
+                content: |
+                  Manufacturing engineer's role in vendor selection (process capability requirements);
+                  quality and certification requirements for purchased materials; offshore procurement
+                  considerations for manufacturing; supplier technical qualification.
+              - label: Receiving, Inspection & Storage
+                content: |
+                  Incoming material inspection methods; material identification and traceability; storage
+                  requirements (environmental control, shelf life, FIFO); material handling from receiving
+                  to point-of-use.
+              - label: Repetitive Manufacturing & Line Supply
+                content: |
+                  Dedicated facilities and fixed routings; line supply methods (kanban, kitting, bulk);
+                  labor reporting in repetitive environments; material presentation at workstation;
+                  supermarket concepts.
+
+          # ── L2: Manufacturing Process Quality ──
+          # ★ Reparented: existing neuron 101 chain lives here as L3
+          - label: Manufacturing Process Quality
+            summary: >-
+              Quality planning, process capability, FMEA, quality programs, and quality cost
+              analysis from the manufacturing process engineering perspective
+            systems:
+              - label: Quality Planning for Manufacturing
+                content: |
+                  Quality planning hierarchy; quality missions, policies, and plans; strategic quality
+                  planning; quality organization and inspection structure; monitoring quality outcomes;
+                  quality performance data and audits.
+              - label: Process Capability Analysis
+                content: |
+                  Conceptual and analytical definitions of process capability; Cp, Cpk, Pp, Ppk indices;
+                  process capability vs. specifications; gage and measurement system capability (GR&R);
+                  process capability studies methodology.
+              - label: FMEA, FTA & Quality Tools
+                content: |
+                  Failure Mode and Effects Analysis (process FMEA); fault tree analysis; Quality Function
+                  Deployment (QFD — manufacturing perspective); design review participation; reliability
+                  planning; Material Review Board (MRB) process.
+              - label: Quality Programs & Standards
+                content: |
+                  Crosby 14-step program; quality assurance teams; zero defects methodology; quality
+                  training programs; quality standards implementation; quality audit preparation and
+                  response.
+              - label: Quality Cost & Improvement
+                content: |
+                  Quality cost categories (prevention, appraisal, internal/external failure); strategic
+                  quality planning with cost data; baselines for analysis; product and departmental
+                  improvement; supplier quality costs; manufacturing focus on cost of quality.
+              - label: Composite Fabrication Process Development
+                summary: >-
+                  Reparented from direct role child. Composite fabrication process validation including
+                  cure parameter control and NDI requirements.
                 decisions:
-                  - label: Validate layup sequence and cure parameters against process spec
+                  - label: Program autoclave/ATP machines and validate cure parameters against process spec
                     outputs:
                       - label: Issue composite fabrication traveler with NDI requirements
                         content: |
@@ -342,6 +726,28 @@ departments:
                           autoclave cure cycle parameters per material spec (e.g., Hexcel 8552 or Toray T800),
                           NDI requirements per ASNT SNT-TC-1A (ultrasonic C-scan, thermography), and dimensional
                           inspection requirements. Reference NAS 410 for NDT personnel certification.
+
+          # ── L2: Manufacturing Safety & Hazard Analysis ──
+          - label: Manufacturing Safety & Hazard Analysis
+            summary: >-
+              Engineering perspective on occupational safety — hazard analysis, accident
+              prevention, and OSHA compliance for manufacturing processes
+            systems:
+              - label: Manufacturing Hazard Analysis
+                content: |
+                  Hazard analysis methods for manufacturing processes; job hazard analysis (JHA); process
+                  hazard analysis; identifying hazards in new equipment/process introduction; accident
+                  prevention programs; accident investigation methods.
+              - label: OSHA Compliance for Manufacturing
+                content: |
+                  OSHA standards relevant to manufacturing (machine guarding, lockout/tagout, confined
+                  space, PPE); Hazard Communication Standard (HazCom/GHS); recordkeeping requirements;
+                  workplace inspection preparation.
+              - label: Safety Integration in Manufacturing Engineering
+                content: |
+                  Safety considerations in process planning; designing safe manufacturing processes;
+                  ergonomic considerations in workstation design; management policy toward safety; health
+                  and safety program fundamentals.
 
       - label: Test Engineer
         role_key: test_eng

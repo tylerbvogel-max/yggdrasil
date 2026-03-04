@@ -125,6 +125,7 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }
   const [checkedNewNeurons, setCheckedNewNeurons] = useState<Set<number>>(new Set());
   const [applyLoading, setApplyLoading] = useState(false);
   const [applyResult, setApplyResult] = useState<{ updated: number; created: number } | null>(null);
+  const [userContext, setUserContext] = useState('');
 
   // Report phase changes to parent
   useEffect(() => {
@@ -143,7 +144,7 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }
     setRefineError('');
     setApplyResult(null);
     try {
-      const res = await refineQuery(queryId, refineModel);
+      const res = await refineQuery(queryId, refineModel, userContext || undefined);
       setRefineResult(res);
       setCheckedUpdates(new Set(res.updates.map((_, i) => i)));
       setCheckedNewNeurons(new Set(res.new_neurons.map((_, i) => i)));
@@ -199,6 +200,28 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }
           </button>
         </div>
       </div>
+
+      <textarea
+        className="refine-user-context"
+        placeholder="Add your own context to guide refinement (e.g., specific standards, corrections, domain knowledge)..."
+        value={userContext}
+        onChange={e => setUserContext(e.target.value)}
+        rows={3}
+        style={{
+          width: '100%',
+          marginTop: 10,
+          marginBottom: 10,
+          resize: 'vertical',
+          fontFamily: 'inherit',
+          fontSize: '0.85rem',
+          padding: '8px 10px',
+          borderRadius: 6,
+          border: '1px solid var(--border)',
+          background: 'var(--bg-input, var(--bg-card))',
+          color: 'var(--text)',
+        }}
+        maxLength={4000}
+      />
 
       {refineError && <div className="error-msg" style={{ marginBottom: 12 }}>{refineError}</div>}
 

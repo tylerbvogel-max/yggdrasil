@@ -185,6 +185,7 @@ class QueryDetail(BaseModel):
 
 class RefineRequest(BaseModel):
     model: str = Field("haiku", pattern="^(haiku|sonnet)$")
+    user_context: str | None = Field(None, max_length=4000)
 
 
 class NeuronUpdateSuggestion(BaseModel):

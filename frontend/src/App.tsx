@@ -9,8 +9,9 @@ import BolsterPage from './components/BolsterPage'
 import NextSteps from './components/NextSteps'
 import AutopilotPage from './components/AutopilotPage'
 import CirclePacking from './components/CirclePacking'
+import AboutPage from './components/AboutPage'
 
-type Tab = 'explorer' | 'graph' | 'dashboard' | 'query' | 'pipeline' | 'evaluation' | 'refinements' | 'bolster' | 'autopilot' | 'nextsteps';
+type Tab = 'explorer' | 'graph' | 'dashboard' | 'query' | 'pipeline' | 'evaluation' | 'refinements' | 'bolster' | 'autopilot' | 'nextsteps' | 'about';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('explorer');
@@ -30,6 +31,7 @@ export default function App() {
           <button className={tab === 'bolster' ? 'active' : ''} onClick={() => setTab('bolster')}>Bolster</button>
           <button className={tab === 'autopilot' ? 'active' : ''} onClick={() => setTab('autopilot')}>Autopilot</button>
           <button className={tab === 'nextsteps' ? 'active' : ''} onClick={() => setTab('nextsteps')}>Next Steps</button>
+          <button className={tab === 'about' ? 'active' : ''} onClick={() => setTab('about')}>About</button>
         </nav>
       </header>
       <main className="app-main">
@@ -43,6 +45,7 @@ export default function App() {
         <div style={{ display: tab === 'bolster' ? 'contents' : 'none' }}><BolsterPage /></div>
         {tab === 'autopilot' && <AutopilotPage />}
         {tab === 'nextsteps' && <NextSteps />}
+        {tab === 'about' && <AboutPage />}
       </main>
     </div>
   )

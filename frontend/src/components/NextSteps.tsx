@@ -7,6 +7,108 @@ export default function NextSteps() {
         types to system capabilities.
       </p>
 
+      <section className="next-steps-section urgent">
+        <h3>Performance — Database &amp; Scoring Pipeline</h3>
+        <span className="status-badge planned">Urgent</span>
+        <p>Critical performance issues identified in the scoring pipeline and SQLite configuration.</p>
+
+        <h4>Quick Wins</h4>
+        <ul>
+          <li>
+            <strong>Add missing indexes on <code>NeuronFiring</code></strong> —{' '}
+            <code>query_id</code>, <code>global_query_offset</code>, and composite{' '}
+            <code>(neuron_id, global_query_offset)</code>. Burst/precision calculations currently do
+            full table scans. 5 min fix, 5-10x improvement.
+          </li>
+          <li>
+            <strong>Enable SQLite WAL mode</strong> — Add <code>PRAGMA journal_mode=WAL</code> to
+            engine initialization. Concurrent reads currently block on writes. 2 min fix.
+          </li>
+          <li>
+            <strong>Change <code>firings</code> relationship to <code>lazy="select"</code></strong> —{' '}
+            Current <code>selectin</code> auto-loads ALL firing records for every neuron fetch. A neuron
+            with 500 firings loads 500 rows you don't need when assembling prompts. 5 min fix, 20-30%
+            memory reduction.
+          </li>
+        </ul>
+
+        <h4>Refactor: N+1 Scoring Queries</h4>
+        <p>
+          <code>score_candidates()</code> executes <strong>4 sequential DB queries per candidate neuron</strong>{' '}
+          (burst count, dept fires, dept total, last offset). With <code>top_k=30</code>, that's ~120
+          serialized queries per request. aiosqlite is single-writer, so these stack up.
+        </p>
+        <p>
+          Fix: batch into 1-2 grouped queries using <code>GROUP BY neuron_id</code> with window functions.
+          Estimated 10-100x improvement. Medium effort (2-4 hours).
+        </p>
+
+        <h4>Lower Priority</h4>
+        <ul>
+          <li>
+            Keyword filtering in <code>get_neurons_by_filter()</code> loads full content blobs into Python
+            for string matching — should use SQL <code>LIKE</code>/<code>GLOB</code> instead.
+          </li>
+          <li>
+            <code>GET /queries/{'{id}'}</code> re-scores neurons on every call — should cache or use
+            stored results from the original query.
+          </li>
+        </ul>
+      </section>
+
+      <section className="next-steps-section urgent">
+        <h3>Cross-Hierarchy Neuron Activation</h3>
+        <span className="status-badge planned">Important</span>
+        <p>
+          Many standards, regulations, and processes span multiple departments and roles simultaneously.
+          For example, an SAE standard may invoke requirements for Manufacturing Engineering (process controls),
+          Contracts &amp; Compliance (flowdown clauses), HR (training/certification), and Quality (audit criteria)
+          — all from a single query. Currently, the scoring pipeline may over-index on the strongest-matching
+          department and miss critical neurons in adjacent hierarchies.
+        </p>
+
+        <h4>Problem</h4>
+        <p>
+          The classification stage identifies departments and roles, but the top-K selection can crowd out
+          weaker-scoring neurons from secondary departments even when they hold directly applicable content.
+          A query about "AS9100 Rev D clause 8.5 production controls" should activate neurons under
+          Manufacturing Engineer, Quality Manager, Contract Analyst, <em>and</em> Safety Officer — not just
+          whichever branch has the highest burst score.
+        </p>
+
+        <h4>Proposed Solutions</h4>
+        <ul>
+          <li>
+            <strong>Cross-reference tagging</strong> — Add a <code>related_standards</code> or{' '}
+            <code>cross_ref</code> field to neurons that links to standard identifiers (e.g., "AS9100D-8.5",
+            "SAE-AS6500", "NADCAP-AC7004"). When any neuron with a given standard fires, boost all neurons
+            sharing that standard tag across all departments.
+          </li>
+          <li>
+            <strong>Department diversity floor</strong> — Guarantee that when the classifier identifies N
+            departments as relevant, at least M neurons from each department survive into the final top-K
+            selection, preventing single-department domination.
+          </li>
+          <li>
+            <strong>Lateral activation signal</strong> — A 6th scoring signal ("Synapse") that fires when
+            a neuron in one hierarchy is co-invoked with neurons in other hierarchies on the same standard
+            or process. Builds over time as queries naturally exercise cross-department patterns.
+          </li>
+          <li>
+            <strong>Standards graph overlay</strong> — A lightweight secondary graph linking standard
+            identifiers to all neurons that reference them, independent of the org hierarchy. Query-time
+            lookup: "this query mentions AS9100 → here are all 14 neurons across 5 roles that reference it."
+          </li>
+        </ul>
+
+        <h4>Priority</h4>
+        <p>
+          This is critical for real-world accuracy. Aerospace standards are inherently cross-functional —
+          a single NADCAP audit touches manufacturing processes, quality systems, supplier management, and
+          contract compliance simultaneously. Losing any of those perspectives produces an incomplete answer.
+        </p>
+      </section>
+
       <section className="next-steps-section">
         <h3>Deterministic Process Neurons</h3>
         <p>

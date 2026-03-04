@@ -78,11 +78,13 @@ export function submitRating(queryId: number, utility: number): Promise<RatingRe
   });
 }
 
-export function refineQuery(queryId: number, model: 'haiku' | 'sonnet'): Promise<RefineResponse> {
+export function refineQuery(queryId: number, model: 'haiku' | 'sonnet', userContext?: string): Promise<RefineResponse> {
+  const body: Record<string, string> = { model };
+  if (userContext?.trim()) body.user_context = userContext.trim();
   return json<RefineResponse>(`/query/${queryId}/refine`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -160,6 +162,6 @@ export function cancelAutopilotTick(): Promise<AutopilotTickResponse> {
   return json<AutopilotTickResponse>('/admin/autopilot/cancel', { method: 'POST' });
 }
 
-export function fetchAutopilotStatus(): Promise<{ running: boolean; step: string }> {
-  return json<{ running: boolean; step: string }>('/admin/autopilot/status');
+export function fetchAutopilotStatus(): Promise<{ running: boolean; step: string; detail: string }> {
+  return json<{ running: boolean; step: string; detail: string }>('/admin/autopilot/status');
 }

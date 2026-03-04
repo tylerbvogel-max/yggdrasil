@@ -30,8 +30,15 @@ router = APIRouter(prefix="/admin/autopilot", tags=["autopilot"])
 _cancel_requested = False
 _tick_running = False
 _current_step = ""  # Current step label for progress tracking
+_current_detail = ""  # Substep detail message for UI
 
 TICK_STEPS = ["generate", "execute", "evaluate", "refine", "apply", "record"]
+
+
+def _set_step(step: str, detail: str = ""):
+    global _current_step, _current_detail
+    _current_step = step
+    _current_detail = detail
 
 
 async def _get_or_create_config(db: AsyncSession) -> AutopilotConfig:
@@ -145,7 +152,11 @@ async def update_config(req: AutopilotConfigUpdate, db: AsyncSession = Depends(g
 
 @router.get("/status")
 async def get_status():
-    return {"running": _tick_running, "step": _current_step if _tick_running else ""}
+    return {
+        "running": _tick_running,
+        "step": _current_step if _tick_running else "",
+        "detail": _current_detail if _tick_running else "",
+    }
 
 
 @router.post("/cancel", response_model=AutopilotTickResponse)
@@ -284,6 +295,7 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
 
     try:
         # Step 0: Read-only — gather context, then release DB
+        _set_step("generate", "Loading focus context and recent queries...")
         async with async_session() as s0:
             if focus_neuron_id:
                 focus_label, focus_context = await _get_subtree_context(s0, focus_neuron_id)
@@ -297,7 +309,7 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
         _check_cancel()
 
         # Step 1: Generate query (Haiku call — no DB needed)
-        _current_step = "generate"
+        _set_step("generate", "Calling Haiku to generate test query...")
         generated_query, gen_cost = await _generate_query(
             directive, recent_queries, focus_context
         )
@@ -306,7 +318,7 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
         _check_cancel()
 
         # Step 2: Execute through pipeline (owns its own session/commit)
-        _current_step = "execute"
+        _set_step("execute", "Scoring and selecting candidate neurons...")
         async with async_session() as s2:
             exec_result = await execute_query(s2, generated_query, modes=["haiku_neuron"])
             query_id = exec_result["query_id"]
@@ -316,7 +328,7 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
         _check_cancel()
 
         # Step 3: Self-evaluate (Haiku/Sonnet/Opus call + short DB write)
-        _current_step = "evaluate"
+        _set_step("evaluate", f"Calling {eval_model} to evaluate response quality...")
         async with async_session() as s3:
             query = await s3.get(Query, query_id)
             eval_overall, eval_text, eval_cost = await _self_evaluate(s3, query, model=eval_model)
@@ -326,7 +338,7 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
         _check_cancel()
 
         # Step 4: Refine (Haiku/Sonnet/Opus call + short DB write)
-        _current_step = "refine"
+        _set_step("refine", f"Calling {eval_model} to analyze gaps and suggest improvements...")
         async with async_session() as s4:
             query = await s4.get(Query, query_id)
             reasoning, updates, new_neurons, refine_cost = await _refine(
@@ -339,14 +351,16 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
         _check_cancel()
 
         # Step 5: Apply all suggestions (short DB writes)
-        _current_step = "apply"
+        n_updates = len(updates) if updates else 0
+        n_new = len(new_neurons) if new_neurons else 0
+        _set_step("apply", f"Applying {n_updates} updates and {n_new} new neurons...")
         async with async_session() as s5:
             query = await s5.get(Query, query_id)
             updates_applied, neurons_created = await _apply_all(s5, query, updates, new_neurons)
             await s5.commit()
 
         # Step 6: Record run + update last_tick_at
-        _current_step = "record"
+        _set_step("record", "Saving run metrics...")
         async with async_session() as s6:
             cfg = await _get_or_create_config(s6)
             cfg.last_tick_at = func.now()
@@ -369,11 +383,13 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
 
         _tick_running = False
         _current_step = ""
+        _current_detail = ""
         return AutopilotTickResponse(status="completed", run_id=run.id)
 
     except _CancelledError:
         _tick_running = False
         _current_step = ""
+        _current_detail = ""
         # Record partial run as cancelled
         try:
             async with async_session() as sc:
@@ -400,6 +416,7 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
     except Exception as e:
         _tick_running = False
         _current_step = ""
+        _current_detail = ""
         # Record error in a fresh session
         try:
             async with async_session() as se:
