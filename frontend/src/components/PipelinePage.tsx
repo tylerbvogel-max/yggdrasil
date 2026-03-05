@@ -53,6 +53,23 @@ export default function PipelinePage() {
           <div className="flow-step substep">
             <span className="flow-number">2c</span>
             <div className="flow-step-content">
+              <div className="flow-step-label">Spreading Activation</div>
+              <div className="flow-step-desc">
+                Single-hop spread through the Hebbian co-firing edge graph. Top-K neurons'
+                associative neighbors are scored via{' '}
+                <code>activation = source_score × edge_weight × 0.5</code>.
+                High-activation neighbors displace the lowest top-K neurons —
+                biological associative recall that pulls in contextually-linked knowledge
+                the classifier may have missed.
+              </div>
+            </div>
+          </div>
+
+          <div className="flow-arrow short" />
+
+          <div className="flow-step substep">
+            <span className="flow-number">2d</span>
+            <div className="flow-step-content">
               <div className="flow-step-label">Prompt Assembly</div>
               <div className="flow-step-desc">
                 Selected neuron content is assembled into a ~4000-token system prompt.
@@ -89,9 +106,10 @@ export default function PipelinePage() {
         </div>
       </div>
 
-      <h3 className="info-section-title">6 Scoring Signals</h3>
+      <h3 className="info-section-title">Scoring Signals</h3>
       <p className="info-section-desc">
-        Each neuron receives a composite score from these six signals, weighted and summed.
+        Each neuron receives a composite score from six weighted signals, plus an optional
+        spreading activation boost from the Hebbian edge graph.
         All time-based signals use query counts instead of tokens for stability.
       </p>
 
@@ -169,6 +187,20 @@ export default function PipelinePage() {
             <strong>Content match.</strong> Counts how many classified keywords appear
             in the neuron's label, summary, and content. Ensures neurons are topically
             relevant to the current query.
+          </div>
+        </div>
+
+        <div className="signal-card">
+          <div className="signal-header">
+            <span className="signal-dot spread" />
+            <span className="signal-name">Spread</span>
+          </div>
+          <code className="signal-formula">src × edge_w × 0.5</code>
+          <div className="signal-desc">
+            <strong>Associative recall.</strong> After initial scoring, neurons with strong
+            Hebbian co-firing edges to top-K neurons receive a spreading activation boost.
+            Max (not sum) across paths prevents hub bias. Only edges with weight ≥ 0.15
+            (~3+ co-firings) qualify. Up to 10 neighbors can be promoted per query.
           </div>
         </div>
       </div>

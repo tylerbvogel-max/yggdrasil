@@ -1,10 +1,12 @@
 """Neuron CRUD, candidate pre-filtering, and firing record management."""
 
+import json
+
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import Neuron, NeuronFiring, SystemState
+from app.models import Neuron, NeuronEdge, NeuronFiring, SystemState
 from app.services.scoring_engine import compute_score, NeuronScoreBreakdown
 
 
@@ -36,22 +38,29 @@ async def get_neurons_by_filter(
     if match_conditions:
         base.append(or_(*match_conditions))
 
+    # Keyword filtering via SQL LIKE — avoids loading full content blobs into Python
+    if keywords:
+        keyword_conditions = []
+        for kw in keywords:
+            pattern = f"%{kw.lower()}%"
+            keyword_conditions.append(
+                or_(
+                    func.lower(Neuron.label).like(pattern),
+                    func.lower(Neuron.content).like(pattern),
+                    func.lower(Neuron.summary).like(pattern),
+                )
+            )
+        # Try with keyword filter first
+        stmt_filtered = select(Neuron).where(and_(*base, or_(*keyword_conditions)))
+        result_filtered = await db.execute(stmt_filtered)
+        filtered = list(result_filtered.scalars().all())
+        if filtered:
+            return filtered
+
+    # Fall back to all candidates (no keywords, or keyword filter too aggressive)
     stmt = select(Neuron).where(and_(*base))
     result = await db.execute(stmt)
-    neurons = list(result.scalars().all())
-
-    if keywords:
-        keyword_lower = [k.lower() for k in keywords]
-        filtered = []
-        for n in neurons:
-            text = f"{n.label} {n.content or ''} {n.summary or ''}".lower()
-            if any(kw in text for kw in keyword_lower):
-                filtered.append(n)
-        # If keyword filter is too aggressive, fall back to all candidates
-        if filtered:
-            neurons = filtered
-
-    return neurons
+    return list(result.scalars().all())
 
 
 async def get_system_state(db: AsyncSession) -> SystemState:
@@ -72,55 +81,75 @@ async def score_candidates(
     classified_departments: list[str] | None = None,
     classified_role_keys: list[str] | None = None,
 ) -> list[NeuronScoreBreakdown]:
-    """Score all candidate neurons using 6 biomimetic signals."""
-    scores = []
+    """Score all candidate neurons using 6 biomimetic signals.
+
+    Batches all DB lookups into 3 aggregate queries instead of 4 per candidate.
+    """
+    if not candidates:
+        return []
+
+    candidate_ids = [n.id for n in candidates]
     query_window = max(0, total_queries - settings.burst_window_queries)
 
-    for neuron in candidates:
-        # Burst: count firings in recent query window
-        burst_count_result = await db.execute(
-            select(func.count(NeuronFiring.id)).where(
-                and_(
-                    NeuronFiring.neuron_id == neuron.id,
-                    NeuronFiring.global_query_offset >= query_window,
-                )
+    # --- Batch query 1: burst counts (firings in recent window, per neuron) ---
+    burst_result = await db.execute(
+        select(
+            NeuronFiring.neuron_id,
+            func.count(NeuronFiring.id),
+        )
+        .where(
+            and_(
+                NeuronFiring.neuron_id.in_(candidate_ids),
+                NeuronFiring.global_query_offset >= query_window,
             )
         )
-        fires_in_window = burst_count_result.scalar() or 0
+        .group_by(NeuronFiring.neuron_id)
+    )
+    burst_map = dict(burst_result.all())  # {neuron_id: count}
 
-        # Precision: neuron's distinct query firings / department's total distinct query firings
-        dept_fires_result = await db.execute(
-            select(func.count(func.distinct(NeuronFiring.query_id))).where(
-                NeuronFiring.neuron_id == neuron.id
-            )
+    # --- Batch query 2: per-neuron distinct query fires + last offset ---
+    neuron_stats_result = await db.execute(
+        select(
+            NeuronFiring.neuron_id,
+            func.count(func.distinct(NeuronFiring.query_id)),
+            func.max(NeuronFiring.global_query_offset),
         )
-        dept_fires = dept_fires_result.scalar() or 0
+        .where(NeuronFiring.neuron_id.in_(candidate_ids))
+        .group_by(NeuronFiring.neuron_id)
+    )
+    neuron_fires_map = {}  # {neuron_id: distinct_query_count}
+    last_offset_map = {}   # {neuron_id: max_global_query_offset}
+    for nid, fires, last_off in neuron_stats_result.all():
+        neuron_fires_map[nid] = fires
+        last_offset_map[nid] = last_off
 
+    # --- Batch query 3: dept-level total distinct query fires ---
+    candidate_depts = list({n.department for n in candidates if n.department})
+    dept_total_map = {}  # {department: distinct_query_count}
+    if candidate_depts:
         dept_total_result = await db.execute(
-            select(func.count(func.distinct(NeuronFiring.query_id))).where(
-                NeuronFiring.neuron_id.in_(
-                    select(Neuron.id).where(Neuron.department == neuron.department)
-                )
+            select(
+                Neuron.department,
+                func.count(func.distinct(NeuronFiring.query_id)),
             )
+            .join(NeuronFiring, NeuronFiring.neuron_id == Neuron.id)
+            .where(Neuron.department.in_(candidate_depts))
+            .group_by(Neuron.department)
         )
-        dept_total_queries = dept_total_result.scalar() or 0
+        dept_total_map = dict(dept_total_result.all())
 
-        # Novelty: age in queries
+    # --- Score each candidate using pre-fetched data ---
+    scores = []
+    for neuron in candidates:
+        fires_in_window = burst_map.get(neuron.id, 0)
+        dept_fires = neuron_fires_map.get(neuron.id, 0)
+        dept_total = dept_total_map.get(neuron.department, 0)
         age_queries = total_queries - (neuron.created_at_query_count or 0)
 
-        # Recency: queries since last firing
-        last_offset_result = await db.execute(
-            select(func.max(NeuronFiring.global_query_offset)).where(
-                NeuronFiring.neuron_id == neuron.id
-            )
-        )
-        last_offset = last_offset_result.scalar()
+        last_offset = last_offset_map.get(neuron.id)
         queries_since_last = total_queries - last_offset if last_offset is not None else total_queries
 
-        # Relevance: keyword overlap with neuron text
         neuron_text = f"{neuron.label} {neuron.summary or ''} {neuron.content or ''}"
-
-        # Classification match: does this neuron's dept/role match what the classifier said?
         dept_match = bool(classified_departments and neuron.department in classified_departments)
         role_match = bool(classified_role_keys and neuron.role_key in classified_role_keys)
 
@@ -128,7 +157,7 @@ async def score_candidates(
             fires_in_window=fires_in_window,
             avg_utility=neuron.avg_utility,
             dept_fires=dept_fires,
-            dept_total_queries=dept_total_queries,
+            dept_total_queries=dept_total,
             age_queries=age_queries,
             queries_since_last=queries_since_last,
             keywords=keywords,
@@ -141,6 +170,255 @@ async def score_candidates(
 
     scores.sort(key=lambda s: s.combined, reverse=True)
     return scores
+
+
+async def spread_activation(
+    db: AsyncSession,
+    scored: list[NeuronScoreBreakdown],
+    top_k_count: int,
+) -> list[NeuronScoreBreakdown]:
+    """Spread activation through NeuronEdge graph to pull in associatively-linked neurons.
+
+    After initial scoring, does a single-hop spread through high-weight edges to
+    promote neighbors with strong connections into the top-K.
+    """
+    if not settings.spread_enabled or not scored:
+        return scored
+
+    top_k = scored[:top_k_count]
+    below_cutoff = scored[top_k_count:]
+    top_k_ids = {s.neuron_id for s in top_k}
+    score_by_id = {s.neuron_id: s for s in scored}
+
+    # Fetch all qualifying edges where at least one endpoint is in top-K
+    edge_result = await db.execute(
+        select(NeuronEdge).where(
+            and_(
+                NeuronEdge.weight >= settings.spread_min_edge_weight,
+                or_(
+                    NeuronEdge.source_id.in_(top_k_ids),
+                    NeuronEdge.target_id.in_(top_k_ids),
+                ),
+            )
+        )
+    )
+    edges = list(edge_result.scalars().all())
+
+    if not edges:
+        return scored
+
+    # Calculate activation for each neighbor
+    neighbor_activation: dict[int, float] = {}  # neighbor_id → max activation
+    for edge in edges:
+        # Skip if both endpoints already in top-K
+        if edge.source_id in top_k_ids and edge.target_id in top_k_ids:
+            continue
+
+        # Determine which is the source (in top-K) and which is the neighbor
+        if edge.source_id in top_k_ids:
+            source_id, neighbor_id = edge.source_id, edge.target_id
+        else:
+            source_id, neighbor_id = edge.target_id, edge.source_id
+
+        source_score = score_by_id[source_id].combined
+        activation = source_score * edge.weight * settings.spread_decay
+
+        if activation < settings.spread_min_activation:
+            continue
+
+        # Max (not sum) across paths to prevent hub bias
+        if neighbor_id not in neighbor_activation or activation > neighbor_activation[neighbor_id]:
+            neighbor_activation[neighbor_id] = activation
+
+    if not neighbor_activation:
+        return scored
+
+    # Check which neighbors are active neurons
+    neighbor_ids = list(neighbor_activation.keys())
+    active_result = await db.execute(
+        select(Neuron.id).where(
+            and_(
+                Neuron.id.in_(neighbor_ids),
+                Neuron.is_active == True,
+            )
+        )
+    )
+    active_ids = {row[0] for row in active_result.all()}
+
+    # Build list of neurons to promote, sorted by activation
+    promotions: list[tuple[int, float]] = []
+    for nid, activation in sorted(neighbor_activation.items(), key=lambda x: x[1], reverse=True):
+        if nid not in active_ids:
+            continue
+        promotions.append((nid, activation))
+        if len(promotions) >= settings.spread_max_neurons:
+            break
+
+    if not promotions:
+        return scored
+
+    # Apply boosts and create entries for unscored neighbors
+    promoted_scores: list[NeuronScoreBreakdown] = []
+    for nid, activation in promotions:
+        if nid in score_by_id:
+            # Already scored (below cutoff) — additive boost
+            existing = score_by_id[nid]
+            existing.spread_boost = round(activation, 4)
+            existing.combined = round(existing.combined + activation, 4)
+            promoted_scores.append(existing)
+        else:
+            # Never in candidate pool — create entry with pure activation
+            promoted_scores.append(NeuronScoreBreakdown(
+                neuron_id=nid,
+                burst=0.0,
+                impact=0.0,
+                precision=0.0,
+                novelty=0.0,
+                recency=0.0,
+                relevance=0.0,
+                combined=round(activation, 4),
+                spread_boost=round(activation, 4),
+            ))
+
+    # Displace lowest-scoring top-K neurons with promoted ones
+    # Sort promoted by combined descending
+    promoted_scores.sort(key=lambda s: s.combined, reverse=True)
+    displace_count = min(len(promoted_scores), len(top_k))
+
+    # Remove promoted neurons from below_cutoff if they were there
+    promoted_ids = {s.neuron_id for s in promoted_scores}
+    below_cutoff = [s for s in below_cutoff if s.neuron_id not in promoted_ids]
+
+    # Merge: top-K + promotions, re-sort, take top_k_count
+    merged = list(top_k) + promoted_scores
+    merged.sort(key=lambda s: s.combined, reverse=True)
+    new_top_k = merged[:top_k_count]
+
+    # Displaced neurons go back to below_cutoff
+    displaced = merged[top_k_count:]
+    result = new_top_k + displaced + below_cutoff
+    return result
+
+
+async def apply_diversity_floor(
+    db: AsyncSession,
+    all_scored: list[NeuronScoreBreakdown],
+    top_k_count: int,
+) -> list[NeuronScoreBreakdown]:
+    """Ensure department diversity when regulatory neurons with cross_ref_departments fire.
+
+    1. Take top-K from scored list
+    2. Check which top-K neurons have cross_ref_departments set
+    3. If none, return top-K unchanged
+    4. Collect union of cross-referenced department names
+    5. For underrepresented departments, pull in highest-scoring candidates from full list
+    6. Displace lowest-scoring non-regulatory, non-underrepresented neurons
+    """
+    top_k = all_scored[:top_k_count]
+    if not top_k:
+        return top_k
+
+    # Gather neuron IDs in top-K that have cross_ref_departments
+    top_k_ids = [s.neuron_id for s in top_k]
+    result = await db.execute(
+        select(Neuron.id, Neuron.cross_ref_departments)
+        .where(
+            Neuron.id.in_(top_k_ids),
+            Neuron.cross_ref_departments.isnot(None),
+        )
+    )
+    cross_ref_rows = result.all()
+    if not cross_ref_rows:
+        return top_k
+
+    # Collect union of all cross-referenced departments
+    cross_ref_depts: set[str] = set()
+    for _, cross_ref_json in cross_ref_rows:
+        try:
+            depts = json.loads(cross_ref_json)
+            cross_ref_depts.update(depts)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    if not cross_ref_depts:
+        return top_k
+
+    # Build department→neuron_ids map for current top-K
+    top_k_neuron_ids = set(top_k_ids)
+    dept_result = await db.execute(
+        select(Neuron.id, Neuron.department).where(Neuron.id.in_(top_k_ids))
+    )
+    neuron_dept_map: dict[int, str] = {}
+    dept_counts: dict[str, int] = {}
+    for nid, dept in dept_result.all():
+        neuron_dept_map[nid] = dept or ""
+        dept_counts[dept or ""] = dept_counts.get(dept or "", 0) + 1
+
+    # Calculate floor per cross-referenced department
+    floor = max(settings.diversity_floor_min, top_k_count // len(cross_ref_depts))
+
+    # Find underrepresented departments
+    underrepresented: dict[str, int] = {}  # dept → how many more needed
+    for dept in cross_ref_depts:
+        current = dept_counts.get(dept, 0)
+        if current < floor:
+            underrepresented[dept] = floor - current
+
+    if not underrepresented:
+        return top_k
+
+    # Build score lookup and department lookup for ALL scored neurons
+    all_neuron_ids = [s.neuron_id for s in all_scored]
+    all_dept_result = await db.execute(
+        select(Neuron.id, Neuron.department).where(Neuron.id.in_(all_neuron_ids))
+    )
+    all_neuron_dept: dict[int, str] = {nid: (dept or "") for nid, dept in all_dept_result.all()}
+
+    # Collect candidates from underrepresented depts (not already in top-K)
+    candidates_to_add: list[NeuronScoreBreakdown] = []
+    for score in all_scored:
+        if score.neuron_id in top_k_neuron_ids:
+            continue
+        dept = all_neuron_dept.get(score.neuron_id, "")
+        if dept in underrepresented and underrepresented[dept] > 0:
+            candidates_to_add.append(score)
+            underrepresented[dept] -= 1
+
+    if not candidates_to_add:
+        return top_k
+
+    # Regulatory neuron IDs (don't displace these)
+    regulatory_ids = {nid for nid, _ in cross_ref_rows}
+
+    # Departments we're boosting (don't displace neurons from these depts)
+    boosted_depts = set(cross_ref_depts)
+
+    # Find displacement targets: lowest-scoring neurons that aren't regulatory or from boosted depts
+    displacement_candidates = []
+    for s in reversed(top_k):
+        dept = neuron_dept_map.get(s.neuron_id, "")
+        if s.neuron_id not in regulatory_ids and dept not in boosted_depts:
+            displacement_candidates.append(s)
+        if len(displacement_candidates) >= len(candidates_to_add):
+            break
+
+    # If not enough displacement targets, displace any non-regulatory lowest scorers
+    if len(displacement_candidates) < len(candidates_to_add):
+        for s in reversed(top_k):
+            if s in displacement_candidates:
+                continue
+            if s.neuron_id not in regulatory_ids:
+                displacement_candidates.append(s)
+            if len(displacement_candidates) >= len(candidates_to_add):
+                break
+
+    # Perform displacement
+    displace_ids = {s.neuron_id for s in displacement_candidates[:len(candidates_to_add)]}
+    result_list = [s for s in top_k if s.neuron_id not in displace_ids]
+    result_list.extend(candidates_to_add)
+    result_list.sort(key=lambda s: s.combined, reverse=True)
+
+    return result_list
 
 
 async def record_firing(

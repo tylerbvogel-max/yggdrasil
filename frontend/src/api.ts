@@ -17,6 +17,9 @@ import type {
   AutopilotRun,
   AutopilotTickResponse,
   AutopilotChange,
+  DeptChordEntry,
+  EgoGraphResponse,
+  SpreadTrailResponse,
 } from './types';
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
@@ -94,6 +97,18 @@ export function applyRefinements(queryId: number, updateIds: number[], newNeuron
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ update_ids: updateIds, new_neuron_ids: newNeuronIds }),
   });
+}
+
+export function fetchDeptChord(layer = 1, minWeight = 0.15): Promise<DeptChordEntry[]> {
+  return json<DeptChordEntry[]>(`/neurons/edges/department-chord?layer=${layer}&min_weight=${minWeight}`);
+}
+
+export function fetchNeuronEdges(id: number, limit = 15): Promise<EgoGraphResponse> {
+  return json<EgoGraphResponse>(`/neurons/${id}/edges?limit=${limit}`);
+}
+
+export function fetchSpreadTrail(queryId: number): Promise<SpreadTrailResponse> {
+  return json<SpreadTrailResponse>(`/neurons/edges/spread-trail?query_id=${queryId}`);
 }
 
 export function fetchRefinementHistory(): Promise<NeuronRefinementEntry[]> {

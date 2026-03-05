@@ -13,7 +13,9 @@ from app.services.neuron_service import (
     get_neurons_by_filter,
     get_system_state,
     score_candidates,
+    spread_activation,
     record_firing,
+    apply_diversity_floor,
 )
 from app.services.prompt_assembler import assemble_prompt
 from app.services.propagation import propagate_activation
@@ -34,6 +36,8 @@ MODEL_MAP = {
 NEURON_MODES = {"haiku_neuron", "sonnet_neuron", "opus_neuron"}
 
 RAW_BASELINE_PROMPT = "I am an employee at an aerospace manufacturing and prototype design company."
+
+SONNET_EFFICIENCY_PREFIX = "Be precise and concise. Prioritize accuracy over elaboration. Do not repeat the question or restate what is already known — lead with the answer.\n\n"
 
 
 async def execute_query(db: AsyncSession, user_message: str, modes: list[str]) -> dict:
@@ -63,7 +67,8 @@ async def execute_query(db: AsyncSession, user_message: str, modes: list[str]) -
         if not candidates:
             candidates = await get_neurons_by_filter(db)
         scored = await score_candidates(db, candidates, state.total_queries, keywords, departments, role_keys)
-        top_k = scored[: settings.top_k_neurons]
+        scored = await spread_activation(db, scored, settings.top_k_neurons)
+        top_k = await apply_diversity_floor(db, scored, settings.top_k_neurons)
 
         neuron_map: dict[int, Neuron] = {}
         for s in top_k:
@@ -94,13 +99,16 @@ async def execute_query(db: AsyncSession, user_message: str, modes: list[str]) -
     tasks: dict[str, asyncio.Task] = {}
     for mode in modes:
         model = MODEL_MAP.get(mode)
+        is_sonnet = model == "sonnet"
         if mode in NEURON_MODES:
+            prompt = (SONNET_EFFICIENCY_PREFIX + system_prompt) if is_sonnet else system_prompt
             tasks[mode] = asyncio.create_task(
-                claude_chat(system_prompt, user_message, max_tokens=2048, model=model)
+                claude_chat(prompt, user_message, max_tokens=2048, model=model)
             )
         else:
+            prompt = (SONNET_EFFICIENCY_PREFIX + RAW_BASELINE_PROMPT) if is_sonnet else RAW_BASELINE_PROMPT
             tasks[mode] = asyncio.create_task(
-                claude_chat(RAW_BASELINE_PROMPT, user_message, max_tokens=4096, model=model)
+                claude_chat(prompt, user_message, max_tokens=4096, model=model)
             )
 
     # Collect results
@@ -118,6 +126,13 @@ async def execute_query(db: AsyncSession, user_message: str, modes: list[str]) -
         })
 
     query.results_json = json.dumps(slot_results)
+    if top_k:
+        query.neuron_scores_json = json.dumps([
+            {"neuron_id": s.neuron_id, "combined": s.combined, "burst": s.burst,
+             "impact": s.impact, "precision": s.precision, "novelty": s.novelty,
+             "recency": s.recency, "relevance": s.relevance, "spread_boost": s.spread_boost}
+            for s in top_k
+        ])
 
     # Back-compat: populate legacy columns from first neuron and opus slots
     for slot in slot_results:
@@ -156,7 +171,7 @@ async def execute_query(db: AsyncSession, user_message: str, modes: list[str]) -
     neuron_scores = [
         {"neuron_id": s.neuron_id, "combined": s.combined, "burst": s.burst,
          "impact": s.impact, "precision": s.precision, "novelty": s.novelty, "recency": s.recency,
-         "relevance": s.relevance}
+         "relevance": s.relevance, "spread_boost": s.spread_boost}
         for s in top_k[:10]
     ]
 

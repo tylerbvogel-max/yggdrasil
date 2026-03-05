@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { submitQuery, submitRating, fetchQueryHistory, fetchQueryDetail, evaluateQuery, refineQuery, applyRefinements } from '../api'
 import type { QueryResponse, QuerySummary, QueryDetail, SlotResult, EvalScoreOut, RefineResponse } from '../types'
 import TokenCharts from './TokenCharts'
+import SpreadTrail from './SpreadTrail'
 
 const layerColors = ['var(--layer0)', 'var(--layer1)', 'var(--layer2)', 'var(--layer3)', 'var(--layer4)', 'var(--layer5)'];
 
@@ -634,12 +635,14 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
         <Section title={`Top Neuron Activations (${result.neurons_activated} total)`} defaultOpen={false}>
           <table className="score-table">
             <thead>
-              <tr><th>ID</th><th>Combined</th><th>Burst</th><th>Impact</th><th>Precision</th><th>Novelty</th><th>Recency</th><th>Relevance</th></tr>
+              <tr><th>ID</th><th>Combined</th><th>Spread</th><th>Burst</th><th>Impact</th><th>Precision</th><th>Novelty</th><th>Recency</th><th>Relevance</th></tr>
             </thead>
             <tbody>
               {result.neuron_scores.map(s => (
                 <tr key={s.neuron_id}>
-                  <td>{s.neuron_id}</td><td>{s.combined.toFixed(3)}</td><td>{s.burst.toFixed(3)}</td>
+                  <td>{s.neuron_id}</td><td>{s.combined.toFixed(3)}</td>
+                  <td style={s.spread_boost > 0 ? { color: '#e8a735', fontWeight: 600 } : undefined}>{s.spread_boost > 0 ? s.spread_boost.toFixed(3) : '—'}</td>
+                  <td>{s.burst.toFixed(3)}</td>
                   <td>{s.impact.toFixed(3)}</td><td>{s.precision.toFixed(3)}</td>
                   <td>{s.novelty.toFixed(3)}</td><td>{s.recency.toFixed(3)}</td><td>{s.relevance.toFixed(3)}</td>
                 </tr>
@@ -648,6 +651,8 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
           </table>
         </Section>
       )}
+
+      <SpreadTrail queryId={result.query_id} />
 
       {/* Responses */}
       {result.slots.map(slot => (
@@ -764,7 +769,7 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
         <Section title={`Neuron Hits (${query.neuron_hits.length} neurons activated)`} defaultOpen={false}>
           <table className="score-table">
             <thead>
-              <tr><th>ID</th><th>Neuron</th><th>Layer</th><th>Dept</th><th>Combined</th><th>Burst</th><th>Impact</th><th>Precision</th><th>Novelty</th><th>Recency</th><th>Relevance</th></tr>
+              <tr><th>ID</th><th>Neuron</th><th>Layer</th><th>Dept</th><th>Combined</th><th>Spread</th><th>Burst</th><th>Impact</th><th>Precision</th><th>Novelty</th><th>Recency</th><th>Relevance</th></tr>
             </thead>
             <tbody>
               {query.neuron_hits.map(h => (
@@ -774,6 +779,7 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
                   <td><span style={{ color: layerColors[h.layer] }}>L{h.layer}</span></td>
                   <td style={{ fontSize: '0.75rem' }}>{h.department ?? '—'}</td>
                   <td><strong>{h.combined.toFixed(3)}</strong></td>
+                  <td style={h.spread_boost > 0 ? { color: '#e8a735', fontWeight: 600 } : undefined}>{h.spread_boost > 0 ? h.spread_boost.toFixed(3) : '—'}</td>
                   <td>{h.burst.toFixed(3)}</td>
                   <td>{h.impact.toFixed(3)}</td>
                   <td>{h.precision.toFixed(3)}</td>
@@ -786,6 +792,8 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
           </table>
         </Section>
       )}
+
+      <SpreadTrail queryId={query.id} />
 
       {/* Responses */}
       {query.slots.map(slot => (

@@ -92,27 +92,35 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
 
     neuron_ids = json.loads(query.selected_neuron_ids) if query.selected_neuron_ids else []
 
-    state = await get_system_state(db)
     neurons = []
     for nid in neuron_ids:
         neuron = await db.get(Neuron, nid)
         if neuron:
             neurons.append(neuron)
 
-    keywords_list = json.loads(query.classified_keywords) if query.classified_keywords else []
-    scored = await score_candidates(db, neurons, state.total_queries, keywords_list) if neurons else []
-    score_map = {s.neuron_id: s for s in scored}
+    # Use cached scores from execution time; fall back to re-scoring for old queries
+    score_map: dict[int, dict] = {}
+    if query.neuron_scores_json:
+        for s in json.loads(query.neuron_scores_json):
+            score_map[s["neuron_id"]] = s
+    elif neurons:
+        state = await get_system_state(db)
+        keywords_list = json.loads(query.classified_keywords) if query.classified_keywords else []
+        scored = await score_candidates(db, neurons, state.total_queries, keywords_list)
+        score_map = {s.neuron_id: {"combined": s.combined, "burst": s.burst,
+                     "impact": s.impact, "precision": s.precision, "novelty": s.novelty,
+                     "recency": s.recency, "relevance": s.relevance} for s in scored}
 
     hits = []
     for neuron in neurons:
-        s = score_map.get(neuron.id)
+        s = score_map.get(neuron.id, {})
         hits.append(NeuronHit(
             neuron_id=neuron.id, label=neuron.label, layer=neuron.layer,
             department=neuron.department,
-            combined=s.combined if s else 0, burst=s.burst if s else 0,
-            impact=s.impact if s else 0, precision=s.precision if s else 0,
-            novelty=s.novelty if s else 0, recency=s.recency if s else 0,
-            relevance=s.relevance if s else 0,
+            combined=s.get("combined", 0), burst=s.get("burst", 0),
+            impact=s.get("impact", 0), precision=s.get("precision", 0),
+            novelty=s.get("novelty", 0), recency=s.get("recency", 0),
+            relevance=s.get("relevance", 0), spread_boost=s.get("spread_boost", 0),
         ))
 
     slots = _parse_slots(query)

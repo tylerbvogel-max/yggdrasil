@@ -115,7 +115,7 @@ export default function Explorer() {
       <div className="explorer-resize-handle" onMouseDown={onMouseDown} />
       <div className="explorer-right">
         {selectedId ? (
-          <NeuronDetail neuronId={selectedId} />
+          <NeuronDetail neuronId={selectedId} onSelectNeuron={setSelectedId} />
         ) : (
           <div className="detail-empty">Select a neuron to view details</div>
         )}

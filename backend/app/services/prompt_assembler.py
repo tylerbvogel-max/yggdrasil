@@ -26,6 +26,7 @@ INTENT_VOICE_MAP = {
     "safety": "You are a system safety engineer. Apply MIL-STD-882E hazard analysis framework. Focus on risk classification and mitigation.",
     "it_security": "You are a cybersecurity specialist focused on CMMC/NIST 800-171 compliance. Reference specific control families and implementation guidance.",
     "executive": "You are a senior aerospace executive. Provide strategic analysis with actionable recommendations, balancing program priorities, risk, and resource constraints.",
+    "regulatory": "You are an aerospace regulatory compliance expert. Reference specific standard clauses, cite exact requirements, and explain applicability across affected departments.",
     "general_query": "You are a knowledgeable aerospace defense contractor expert. Provide clear, actionable guidance drawing on organizational expertise.",
 }
 
@@ -62,17 +63,26 @@ def assemble_prompt(
 
     used_tokens = _estimate_tokens("\n".join(parts))
 
-    # Group scored neurons by department > role_key
-    grouped: dict[str, dict[str, list[tuple[NeuronScoreBreakdown, Neuron]]]] = {}
+    # Partition neurons into functional vs regulatory
+    functional: list[tuple[NeuronScoreBreakdown, Neuron]] = []
+    regulatory: list[tuple[NeuronScoreBreakdown, Neuron]] = []
     for score in scored_neurons:
         neuron = neuron_map.get(score.neuron_id)
         if not neuron:
             continue
+        if neuron.department == "Regulatory":
+            regulatory.append((score, neuron))
+        else:
+            functional.append((score, neuron))
+
+    # Group functional neurons by department > role_key
+    grouped: dict[str, dict[str, list[tuple[NeuronScoreBreakdown, Neuron]]]] = {}
+    for score, neuron in functional:
         dept = neuron.department or "General"
         role = neuron.role_key or "general"
         grouped.setdefault(dept, {}).setdefault(role, []).append((score, neuron))
 
-    # Pack neurons score-ordered within groups
+    # Pack functional neurons score-ordered within groups
     for dept, roles in grouped.items():
         dept_header = f"### {dept}"
         dept_tokens = _estimate_tokens(dept_header)
@@ -86,26 +96,53 @@ def assemble_prompt(
             items.sort(key=lambda x: x[0].combined, reverse=True)
 
             for score, neuron in items:
-                # Try full content first
-                if neuron.content:
-                    full_entry = f"**{neuron.label}** (L{neuron.layer}, score: {score.combined:.2f})\n{neuron.content}"
-                    full_tokens = _estimate_tokens(full_entry)
+                used_tokens = _pack_neuron(parts, score, neuron, used_tokens, budget)
 
-                    if used_tokens + full_tokens <= budget:
-                        parts.append(full_entry)
-                        used_tokens += full_tokens
-                        continue
+    # Pack regulatory neurons in separate section
+    if regulatory:
+        reg_header = "\n## Regulatory Context"
+        reg_tokens = _estimate_tokens(reg_header)
+        if used_tokens + reg_tokens <= budget:
+            parts.append(reg_header)
+            used_tokens += reg_tokens
 
-                # Fallback to summary
-                if neuron.summary:
-                    summary_entry = f"- {neuron.summary} (score: {score.combined:.2f})"
-                    summary_tokens = _estimate_tokens(summary_entry)
+            # Group regulatory by role_key (standard family)
+            reg_grouped: dict[str, list[tuple[NeuronScoreBreakdown, Neuron]]] = {}
+            for score, neuron in regulatory:
+                rk = neuron.role_key or "general"
+                reg_grouped.setdefault(rk, []).append((score, neuron))
 
-                    if used_tokens + summary_tokens <= budget:
-                        parts.append(summary_entry)
-                        used_tokens += summary_tokens
+            for role_key, items in reg_grouped.items():
+                items.sort(key=lambda x: x[0].combined, reverse=True)
+                for score, neuron in items:
+                    used_tokens = _pack_neuron(parts, score, neuron, used_tokens, budget)
 
     parts.append("")
     parts.append("Use the above knowledge to directly answer the user's question. Provide specific, actionable guidance with concrete examples and code where applicable.")
 
     return "\n".join(parts)
+
+
+def _pack_neuron(
+    parts: list[str],
+    score: NeuronScoreBreakdown,
+    neuron: Neuron,
+    used_tokens: int,
+    budget: int,
+) -> int:
+    """Try to pack a neuron into parts. Returns updated used_tokens."""
+    if neuron.content:
+        full_entry = f"**{neuron.label}** (L{neuron.layer}, score: {score.combined:.2f})\n{neuron.content}"
+        full_tokens = _estimate_tokens(full_entry)
+        if used_tokens + full_tokens <= budget:
+            parts.append(full_entry)
+            return used_tokens + full_tokens
+
+    if neuron.summary:
+        summary_entry = f"- {neuron.summary} (score: {score.combined:.2f})"
+        summary_tokens = _estimate_tokens(summary_entry)
+        if used_tokens + summary_tokens <= budget:
+            parts.append(summary_entry)
+            return used_tokens + summary_tokens
+
+    return used_tokens

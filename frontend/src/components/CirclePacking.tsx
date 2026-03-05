@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import { fetchTree } from '../api'
 import type { TreeNode } from '../types'
+import { DEPT_COLORS } from '../constants'
 
 interface HierNode {
   name: string
@@ -45,16 +46,7 @@ function treeToHier(nodes: TreeNode[]): HierNode {
   }
 }
 
-const DEPT_COLORS: Record<string, string> = {
-  'Engineering': '#60a5fa',
-  'Manufacturing & Operations': '#2dd4bf',
-  'Executive Leadership': '#a78bfa',
-  'Contracts & Compliance': '#f472b6',
-  'Business Development': '#fb923c',
-  'Administrative & Support': '#facc15',
-  'Program Management': '#22c55e',
-  'Finance': '#ef4444',
-}
+// DEPT_COLORS imported from constants.ts
 
 type TreemapNode = d3.HierarchyRectangularNode<HierNode>
 

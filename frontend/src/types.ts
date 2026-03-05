@@ -23,6 +23,8 @@ export interface NeuronDetail {
   invocations: number;
   avg_utility: number;
   is_active: boolean;
+  cross_ref_departments: string[] | null;
+  standard_date: string | null;
 }
 
 export interface NeuronScores {
@@ -81,6 +83,7 @@ export interface NeuronScoreResponse {
   novelty: number;
   recency: number;
   relevance: number;
+  spread_boost: number;
 }
 
 export interface QueryResponse {
@@ -120,6 +123,7 @@ export interface NeuronHit {
   novelty: number;
   recency: number;
   relevance: number;
+  spread_boost: number;
 }
 
 export interface QueryDetail {
@@ -276,6 +280,50 @@ export interface AutopilotTickResponse {
   status: string;
   run_id: number | null;
   message: string | null;
+}
+
+export interface DeptChordEntry {
+  source_dept: string;
+  target_dept: string;
+  source_department?: string;
+  target_department?: string;
+  total_weight: number;
+  edge_count: number;
+}
+
+export interface EgoNeighbor {
+  id: number;
+  label: string;
+  department: string | null;
+  layer: number;
+  node_type: string;
+  weight: number;
+  co_fire_count: number;
+}
+
+export interface EgoGraphResponse {
+  center: { id: number; label: string; department: string | null; layer: number };
+  neighbors: EgoNeighbor[];
+}
+
+export interface SpreadTrailNode {
+  id: number;
+  label: string;
+  department: string | null;
+  layer: number;
+  combined: number;
+  spread_boost: number;
+}
+
+export interface SpreadTrailEdge {
+  source_id: number;
+  target_id: number;
+  weight: number;
+}
+
+export interface SpreadTrailResponse {
+  nodes: SpreadTrailNode[];
+  edges: SpreadTrailEdge[];
 }
 
 export interface NeuronRefinementEntry {

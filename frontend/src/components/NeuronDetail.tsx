@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { fetchNeuron, fetchScores } from '../api'
 import type { NeuronDetail as NeuronDetailType, NeuronScores } from '../types'
 import ScoreBars from './ScoreBars'
+import NeuronEgoGraph from './NeuronEgoGraph'
 
 const layerNames = ['Department', 'Role', 'Task', 'System', 'Decision', 'Output'];
 const layerColors = [
@@ -9,7 +10,7 @@ const layerColors = [
   'var(--layer3)', 'var(--layer4)', 'var(--layer5)',
 ];
 
-export default function NeuronDetail({ neuronId }: { neuronId: number }) {
+export default function NeuronDetail({ neuronId, onSelectNeuron }: { neuronId: number; onSelectNeuron?: (id: number) => void }) {
   const [detail, setDetail] = useState<NeuronDetailType | null>(null);
   const [scores, setScores] = useState<NeuronScores | null>(null);
   const [error, setError] = useState('');
@@ -59,6 +60,8 @@ export default function NeuronDetail({ neuronId }: { neuronId: number }) {
         <h3>Signal Scores</h3>
         <ScoreBars scores={scores} />
       </div>
+
+      <NeuronEgoGraph neuronId={neuronId} onSelectNeuron={onSelectNeuron} />
 
       {detail.content && (
         <div className="detail-section">

@@ -27,6 +27,7 @@ class NeuronScoreResponse(BaseModel):
     novelty: float
     recency: float
     relevance: float
+    spread_boost: float = 0
 
 
 class QueryResponse(BaseModel):
@@ -105,6 +106,8 @@ class NeuronDetail(BaseModel):
     invocations: int
     avg_utility: float
     is_active: bool
+    cross_ref_departments: list[str] | None = None
+    standard_date: str | None = None
 
 
 class NeuronScoreDetail(BaseModel):
@@ -157,6 +160,7 @@ class NeuronHit(BaseModel):
     novelty: float
     recency: float
     relevance: float
+    spread_boost: float = 0
 
 
 class QueryDetail(BaseModel):

@@ -4,109 +4,129 @@ export default function NextSteps() {
       <h2>Next Steps</h2>
       <p className="next-steps-intro">
         Extending the neuron graph beyond non-deterministic knowledge — mapping biological glial cell
-        types to system capabilities.
+        types to system capabilities, and closing the quality gap between haiku+neurons and raw opus.
       </p>
 
       <section className="next-steps-section urgent">
-        <h3>Performance — Database &amp; Scoring Pipeline</h3>
-        <span className="status-badge planned">Urgent</span>
-        <p>Critical performance issues identified in the scoring pipeline and SQLite configuration.</p>
+        <h3>Tier 1 — High Impact, Low Cost</h3>
+        <span className="status-badge planned">Priority</span>
+        <p>
+          Improvements that close the haiku+neurons vs opus quality gap with minimal cost increase.
+          Estimated gap closure: <strong>60-70% → 80%</strong> of opus quality at ~1x current cost.
+        </p>
 
-        <h4>Quick Wins</h4>
+        <h4>RAG Layer (Semantic Retrieval)</h4>
         <ul>
           <li>
-            <strong>Add missing indexes on <code>NeuronFiring</code></strong> —{' '}
-            <code>query_id</code>, <code>global_query_offset</code>, and composite{' '}
-            <code>(neuron_id, global_query_offset)</code>. Burst/precision calculations currently do
-            full table scans. 5 min fix, 5-10x improvement.
+            <strong>Embed neuron content into vector store</strong> — Embed all neuron{' '}
+            <code>content</code> + <code>summary</code> fields (Chroma, FAISS, or sqlite-vss).
+            Fixes cold-neuron problem where critical but rarely-invoked neurons get underscored
+            by Burst/Recency signals.
           </li>
           <li>
-            <strong>Enable SQLite WAL mode</strong> — Add <code>PRAGMA journal_mode=WAL</code> to
-            engine initialization. Concurrent reads currently block on writes. 2 min fix.
+            <strong>Dual retrieval at query time</strong> — Run both neuron scoring pipeline and
+            semantic similarity search. Merge results — neurons surfaced by RAG but missed by scoring
+            get a "semantic relevance boost" in the final top-K selection.
           </li>
           <li>
-            <strong>Change <code>firings</code> relationship to <code>lazy="select"</code></strong> —{' '}
-            Current <code>selectin</code> auto-loads ALL firing records for every neuron fetch. A neuron
-            with 500 firings loads 500 rows you don't need when assembling prompts. 5 min fix, 20-30%
-            memory reduction.
+            <strong>Embedding maintenance</strong> — Re-embed on neuron create/update (autopilot,
+            bolster, manual edits). Incremental, not full rebuild.
           </li>
         </ul>
 
-        <h4>Refactor: N+1 Scoring Queries</h4>
-        <p>
-          <code>score_candidates()</code> executes <strong>4 sequential DB queries per candidate neuron</strong>{' '}
-          (burst count, dept fires, dept total, last offset). With <code>top_k=30</code>, that's ~120
-          serialized queries per request. aiosqlite is single-writer, so these stack up.
-        </p>
-        <p>
-          Fix: batch into 1-2 grouped queries using <code>GROUP BY neuron_id</code> with window functions.
-          Estimated 10-100x improvement. Medium effort (2-4 hours).
-        </p>
-
-        <h4>Lower Priority</h4>
+        <h4>Prompt Assembly Structure</h4>
         <ul>
           <li>
-            Keyword filtering in <code>get_neurons_by_filter()</code> loads full content blobs into Python
-            for string matching — should use SQL <code>LIKE</code>/<code>GLOB</code> instead.
+            <strong>Structured sections</strong> — Replace flat text assembly with clear
+            hierarchy: <code>## Relevant Standards</code>, <code>## Cross-References</code>,{' '}
+            <code>## Domain Context</code>. Helps Haiku extract more from the same token budget.
           </li>
           <li>
-            <code>GET /queries/{'{id}'}</code> re-scores neurons on every call — should cache or use
-            stored results from the original query.
+            <strong>Priority ordering</strong> — Highest-scored neurons first within each section.
+            If Haiku truncates attention, critical content is already consumed.
+          </li>
+        </ul>
+
+        <h4>Query Decomposition</h4>
+        <ul>
+          <li>
+            <strong>Multi-query splitting</strong> — Complex queries get decomposed by Haiku into
+            2-3 sub-queries, each scored/assembled independently. Final Haiku pass synthesizes
+            sub-answers. Adds 2-3x cost but still 20x cheaper than opus.
+          </li>
+          <li>
+            <strong>Cross-domain detection</strong> — Classifier flags queries spanning multiple
+            departments (e.g., "how does ITAR affect NADCAP audit scope for a foreign subsidiary?")
+            for decomposition rather than single-pass retrieval.
           </li>
         </ul>
       </section>
 
-      <section className="next-steps-section urgent">
-        <h3>Cross-Hierarchy Neuron Activation</h3>
-        <span className="status-badge planned">Important</span>
+      <section className="next-steps-section">
+        <h3>Tier 2 — Medium Impact, Still Cheap</h3>
+        <span className="status-badge planned">Planned</span>
         <p>
-          Many standards, regulations, and processes span multiple departments and roles simultaneously.
-          For example, an SAE standard may invoke requirements for Manufacturing Engineering (process controls),
-          Contracts &amp; Compliance (flowdown clauses), HR (training/certification), and Quality (audit criteria)
-          — all from a single query. Currently, the scoring pipeline may over-index on the strongest-matching
-          department and miss critical neurons in adjacent hierarchies.
+          Estimated gap closure: <strong>80% → 90%</strong> of opus quality at 3-5x current cost
+          (still 12-20x cheaper than raw opus).
         </p>
 
-        <h4>Problem</h4>
-        <p>
-          The classification stage identifies departments and roles, but the top-K selection can crowd out
-          weaker-scoring neurons from secondary departments even when they hold directly applicable content.
-          A query about "AS9100 Rev D clause 8.5 production controls" should activate neurons under
-          Manufacturing Engineer, Quality Manager, Contract Analyst, <em>and</em> Safety Officer — not just
-          whichever branch has the highest burst score.
-        </p>
-
-        <h4>Proposed Solutions</h4>
+        <h4>Sonnet as Middle Tier</h4>
         <ul>
           <li>
-            <strong>Cross-reference tagging</strong> — Add a <code>related_standards</code> or{' '}
-            <code>cross_ref</code> field to neurons that links to standard identifiers (e.g., "AS9100D-8.5",
-            "SAE-AS6500", "NADCAP-AC7004"). When any neuron with a given standard fires, boost all neurons
-            sharing that standard tag across all departments.
+            <strong>Synthesis routing</strong> — Haiku classifier flags queries requiring judgment,
+            cross-domain synthesis, or tradeoff analysis. These route to Sonnet instead of Haiku
+            for execution. Sonnet is ~6x cheaper than Opus but far more capable than Haiku for
+            reasoning tasks.
           </li>
           <li>
-            <strong>Department diversity floor</strong> — Guarantee that when the classifier identifies N
-            departments as relevant, at least M neurons from each department survive into the final top-K
-            selection, preventing single-department domination.
+            <strong>Cost-conscious prompting</strong> — Sonnet system prompt includes
+            "Be precise and concise. Prioritize accuracy over elaboration." to reduce output tokens
+            (the expensive side at $15/M) without sacrificing reasoning depth.
           </li>
           <li>
-            <strong>Lateral activation signal</strong> — A 6th scoring signal ("Synapse") that fires when
-            a neuron in one hierarchy is co-invoked with neurons in other hierarchies on the same standard
-            or process. Builds over time as queries naturally exercise cross-department patterns.
-          </li>
-          <li>
-            <strong>Standards graph overlay</strong> — A lightweight secondary graph linking standard
-            identifiers to all neurons that reference them, independent of the org hierarchy. Query-time
-            lookup: "this query mentions AS9100 → here are all 14 neurons across 5 roles that reference it."
+            <strong>Routing criteria</strong> — Multi-department queries, comparative/evaluative
+            intent, risk assessment, anything the classifier tags as "needs synthesis."
           </li>
         </ul>
 
-        <h4>Priority</h4>
+        <h4>Cross-Reference Chasing</h4>
+        <ul>
+          <li>
+            <strong>Follow <code>cross_ref_departments</code> links</strong> — When neurons fire,
+            pull related neurons from cross-referenced departments. The field exists but scoring
+            doesn't currently traverse these links.
+          </li>
+          <li>
+            <strong>Two-pass retrieval</strong> — First pass gets top-K neurons. Second pass uses
+            those neurons' cross-references and parent chains to re-score and pull related neurons
+            missed in the first pass. Catches cross-domain connections that single-pass misses.
+          </li>
+        </ul>
+      </section>
+
+      <section className="next-steps-section">
+        <h3>Tier 3 — Structural Improvements</h3>
+        <span className="status-badge planned">Planned</span>
         <p>
-          This is critical for real-world accuracy. Aerospace standards are inherently cross-functional —
-          a single NADCAP audit touches manufacturing processes, quality systems, supplier management, and
-          contract compliance simultaneously. Losing any of those perspectives produces an incomplete answer.
+          Deeper graph-level changes for long-term quality gains.
         </p>
+        <ul>
+          <li>
+            <strong>Neuron relationship fields</strong> — Add explicit "see also" /
+            "related" links between neurons across departments. Makes the graph function as
+            a true graph rather than a forest of trees. Populated via autopilot or manual curation.
+          </li>
+          <li>
+            <strong>Answer caching</strong> — Cache assembled prompt + response for common query
+            patterns. Regulatory queries tend to be repetitive. Cache key on classified intent +
+            top-K neuron IDs.
+          </li>
+          <li>
+            <strong>Neuron content enrichment</strong> — Add structured metadata: applicability
+            conditions, common misconceptions, related standards, decision criteria. Goes beyond
+            prose content to give Haiku more structured reasoning material.
+          </li>
+        </ul>
       </section>
 
       <section className="next-steps-section">
@@ -117,25 +137,6 @@ export default function NextSteps() {
           pipeline selects a connector neuron, the execution stage calls the external system (Databricks,
           SQL, APIs) rather than passing content to the LLM. The neuron graph remains the single routing
           layer — it just dispatches differently based on type.
-        </p>
-      </section>
-
-      <section className="next-steps-section">
-        <h3>Astrocytes — Feedback Loop</h3>
-        <span className="status-badge built">Built</span>
-        <p>
-          The existing utility rating + score propagation system fills this role. High-utility neurons
-          get "fed" (boosted scores), starved ones atrophy — matching how astrocytes provide nutrients
-          to active neurons.
-        </p>
-      </section>
-
-      <section className="next-steps-section">
-        <h3>Oligodendrocytes — Structural Integrity</h3>
-        <span className="status-badge built">Built</span>
-        <p>
-          SQLite persistence + the Knowledge Checkpoint system covers structural integrity. Like myelin
-          sheaths protecting signal fidelity, the DB ensures neurons don't degrade in transit.
         </p>
       </section>
 
@@ -162,11 +163,6 @@ export default function NextSteps() {
             but declining utility are prime candidates.
           </li>
         </ul>
-        <p>
-          Implementation: <code>POST /admin/scan</code> endpoint producing a <code>ScanReport</code>{' '}
-          (neuron_id, threat_type, confidence, details). Findings go to a <code>neuron_quarantine</code>{' '}
-          table for human-in-the-loop review.
-        </p>
       </section>
 
       <section className="next-steps-section">
@@ -223,15 +219,19 @@ export default function NextSteps() {
         <table className="next-steps-table">
           <thead>
             <tr>
-              <th>Brain Cell</th>
+              <th>Component</th>
               <th>System Analog</th>
               <th>Status</th>
             </tr>
           </thead>
           <tbody>
-            <tr><td>Neurons</td><td>Neuron graph</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>Neurons</td><td>Neuron graph + 5-signal scoring</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>Astrocytes</td><td>Utility feedback loop</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>Oligodendrocytes</td><td>SQLite + checkpoints</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>RAG Layer</td><td>Semantic retrieval complement</td><td><span className="status-badge planned">Tier 1</span></td></tr>
+            <tr><td>Query Decomposition</td><td>Multi-pass retrieval</td><td><span className="status-badge planned">Tier 1</span></td></tr>
+            <tr><td>Sonnet Routing</td><td>Tiered model escalation</td><td><span className="status-badge planned">Tier 2</span></td></tr>
+            <tr><td>Cross-Ref Chasing</td><td>Graph traversal at query time</td><td><span className="status-badge planned">Tier 2</span></td></tr>
             <tr><td>Microglia</td><td>Quality scanner + quarantine</td><td><span className="status-badge planned">Planned</span></td></tr>
             <tr><td>Ependymal</td><td>Graph hygiene / reorg</td><td><span className="status-badge planned">Planned</span></td></tr>
           </tbody>

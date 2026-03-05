@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchStats, fetchCostReport } from '../api'
 import type { NeuronStats, CostReport } from '../types'
 import { Chart, BarController, BarElement, BubbleController, PointElement, CategoryScale, LinearScale, LogarithmicScale, Tooltip, Legend } from 'chart.js'
+import DeptChordDiagram from './DeptChordDiagram'
 
 Chart.register(BarController, BarElement, BubbleController, PointElement, CategoryScale, LinearScale, LogarithmicScale, Tooltip, Legend);
 
@@ -203,6 +204,11 @@ export default function Dashboard() {
           <h3>Neurons by Department</h3>
           <canvas ref={deptRef} />
         </div>
+      </div>
+
+      <div className="chart-card" style={{ marginBottom: '24px' }}>
+        <h3>Department Co-Firing (Chord Diagram)</h3>
+        <DeptChordDiagram />
       </div>
 
       <div className="chart-card" style={{ marginBottom: '24px' }}>

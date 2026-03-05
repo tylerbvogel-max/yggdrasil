@@ -16,6 +16,7 @@ class NeuronScoreBreakdown:
     recency: float
     relevance: float
     combined: float
+    spread_boost: float = 0.0
 
 
 def calc_burst(fires_in_window: int) -> float:

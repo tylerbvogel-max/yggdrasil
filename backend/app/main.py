@@ -13,6 +13,7 @@ from app.database import engine, async_session
 from app.models import Base, Neuron, SystemState
 from app.routers import query, neurons, admin, autopilot
 from app.seed.loader import load_seed
+from app.seed.regulatory_seed import seed_regulatory
 
 
 @asynccontextmanager
@@ -75,12 +76,45 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Autopilot migration skipped: {e}")
 
+    # Migrate: add cross_ref_departments and standard_date columns to neurons if missing
+    async with engine.begin() as conn:
+        try:
+            rows = await conn.execute(text("PRAGMA table_info(neurons)"))
+            columns = {row[1] for row in rows}
+            if "cross_ref_departments" not in columns:
+                await conn.execute(text(
+                    "ALTER TABLE neurons ADD COLUMN cross_ref_departments TEXT"
+                ))
+                print("Migrated: added neurons.cross_ref_departments")
+            if "standard_date" not in columns:
+                await conn.execute(text(
+                    "ALTER TABLE neurons ADD COLUMN standard_date VARCHAR(20)"
+                ))
+                print("Migrated: added neurons.standard_date")
+        except Exception as e:
+            print(f"Neurons migration skipped: {e}")
+
     # Auto-seed on first run
     async with async_session() as db:
         count = (await db.execute(select(func.count(Neuron.id)))).scalar() or 0
         if count == 0:
             result = await load_seed(db)
             print(f"Auto-seeded: {result}")
+
+    # Seed regulatory department — force re-seed if neuron count below v2 threshold
+    import asyncio
+    import sqlite3 as _sqlite3
+    _reg_db = Path(__file__).parent.parent / "yggdrasil.db"
+    _force_reseed = False
+    if _reg_db.exists():
+        _rconn = _sqlite3.connect(str(_reg_db))
+        _rcount = _rconn.execute("SELECT COUNT(*) FROM neurons WHERE department = 'Regulatory'").fetchone()[0]
+        _rconn.close()
+        if _rcount < 150:
+            _force_reseed = True
+            print(f"Regulatory neuron count ({_rcount}) below v2 threshold — will force re-seed")
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, lambda: seed_regulatory(force=_force_reseed))
 
     yield
 

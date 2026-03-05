@@ -1,3 +1,4 @@
+import json
 import yaml
 from pathlib import Path
 from sqlalchemy import select, func
@@ -37,6 +38,7 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
         created += 1
 
         for role_data in dept_data.get("roles", []):
+            cross_ref = role_data.get("cross_ref_departments")
             role = Neuron(
                 parent_id=dept.id,
                 layer=1,
@@ -45,6 +47,7 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
                 role_key=role_data.get("role_key"),
                 department=dept_data["label"],
                 summary=f"Role: {role_data['label']} in {dept_data['label']}",
+                cross_ref_departments=json.dumps(cross_ref) if cross_ref else None,
                 created_at_query_count=0,
             )
             db.add(role)
@@ -52,6 +55,7 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
             created += 1
 
             for task_data in role_data.get("tasks", []):
+                task_cross_ref = task_data.get("cross_ref_departments")
                 task = Neuron(
                     parent_id=role.id,
                     layer=2,
@@ -61,6 +65,7 @@ async def load_seed(db: AsyncSession, force: bool = False) -> dict:
                     role_key=role_data.get("role_key"),
                     department=dept_data["label"],
                     summary=task_data.get("summary") or f"Task: {task_data['label']}",
+                    cross_ref_departments=json.dumps(task_cross_ref) if task_cross_ref else None,
                     created_at_query_count=0,
                 )
                 db.add(task)

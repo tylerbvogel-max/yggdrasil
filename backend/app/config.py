@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     novelty_halflife_queries: int = 200
     recency_decay_queries: int = 500
     impact_ema_alpha: float = 0.3
+    # Diversity floor: minimum neurons per cross-referenced department
+    diversity_floor_min: int = 2
+    # Spreading activation via NeuronEdge graph
+    spread_enabled: bool = True
+    spread_max_neurons: int = 10
+    spread_min_edge_weight: float = 0.15
+    spread_decay: float = 0.5
+    spread_min_activation: float = 0.15
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

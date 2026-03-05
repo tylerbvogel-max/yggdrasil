@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -22,25 +22,30 @@ class Neuron(Base):
     invocations: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     avg_utility: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    cross_ref_departments: Mapped[str | None] = mapped_column(Text, nullable=True)
+    standard_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at_query_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
 
     parent: Mapped["Neuron | None"] = relationship("Neuron", remote_side=[id], lazy="selectin")
-    firings: Mapped[list["NeuronFiring"]] = relationship("NeuronFiring", back_populates="neuron", lazy="selectin")
+    firings: Mapped[list["NeuronFiring"]] = relationship("NeuronFiring", back_populates="neuron", lazy="select")
 
 
 class NeuronFiring(Base):
     __tablename__ = "neuron_firings"
+    __table_args__ = (
+        Index("ix_neuron_firings_neuron_offset", "neuron_id", "global_query_offset"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     neuron_id: Mapped[int] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=False, index=True)
-    query_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("queries.id"), nullable=True)
+    query_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("queries.id"), nullable=True, index=True)
     context_type: Mapped[str] = mapped_column(String(50), default="direct")
     outcome: Mapped[str | None] = mapped_column(String(50), nullable=True)
     global_token_offset: Mapped[int] = mapped_column(Integer, default=0)
-    global_query_offset: Mapped[int] = mapped_column(Integer, default=0)
+    global_query_offset: Mapped[int] = mapped_column(Integer, default=0, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -85,6 +90,7 @@ class Query(Base):
     execute_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     execute_output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     refine_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    neuron_scores_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()
