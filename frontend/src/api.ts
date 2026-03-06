@@ -57,15 +57,33 @@ export function fetchQueryDetail(id: number): Promise<QueryDetail> {
   return json<QueryDetail>(`/queries/${id}`);
 }
 
-export function submitQuery(message: string, modes: string[]): Promise<QueryResponse> {
+export interface SlotSpec {
+  mode: string;
+  token_budget: number;
+  top_k: number;
+  label?: string;
+}
+
+export interface GraphCapacity {
+  active_neurons: number;
+  total_content_tokens: number;
+  total_summary_tokens: number;
+  total_tokens: number;
+}
+
+export function fetchGraphCapacity(): Promise<GraphCapacity> {
+  return json<GraphCapacity>('/neurons/capacity');
+}
+
+export function submitQuery(message: string, slots: SlotSpec[]): Promise<QueryResponse> {
   return json<QueryResponse>('/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, modes }),
+    body: JSON.stringify({ message, slots_v2: slots }),
   });
 }
 
-export function evaluateQuery(queryId: number, model: 'haiku' | 'sonnet'): Promise<EvalResponse> {
+export function evaluateQuery(queryId: number, model: 'haiku' | 'sonnet' | 'opus'): Promise<EvalResponse> {
   return json<EvalResponse>(`/query/${queryId}/evaluate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

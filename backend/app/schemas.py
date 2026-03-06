@@ -3,9 +3,18 @@
 from pydantic import BaseModel, Field
 
 
+class QuerySlotRequest(BaseModel):
+    mode: str
+    token_budget: int = Field(4000, ge=1000, le=32000)
+    top_k: int = Field(30, ge=1, le=500)
+    label: str | None = None
+
+
 class QueryRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000)
     modes: list[str] = ["haiku_neuron"]
+    token_budget: int | None = Field(None, ge=1000, le=32000)
+    slots_v2: list[QuerySlotRequest] | None = None
 
 
 class SlotResult(BaseModel):
@@ -16,6 +25,9 @@ class SlotResult(BaseModel):
     input_tokens: int
     output_tokens: int
     cost_usd: float
+    token_budget: int | None = None
+    top_k: int | None = None
+    label: str | None = None
 
 
 class NeuronScoreResponse(BaseModel):
@@ -46,7 +58,7 @@ class QueryResponse(BaseModel):
 
 
 class EvalRequest(BaseModel):
-    model: str = Field("haiku", pattern="^(haiku|sonnet)$")
+    model: str = Field("haiku", pattern="^(haiku|sonnet|opus)$")
 
 
 class EvalScoreOut(BaseModel):
@@ -250,6 +262,7 @@ class BolsterRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000)
     model: str = Field("haiku", pattern="^(haiku|sonnet|opus)$")
     department: str | None = None
+    role_key: str | None = None
 
 
 class BolsterResponse(BaseModel):

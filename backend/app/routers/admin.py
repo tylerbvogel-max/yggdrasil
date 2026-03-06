@@ -155,9 +155,11 @@ async def cost_report(db: AsyncSession = Depends(get_db)):
 @router.post("/bolster", response_model=BolsterResponse)
 async def bolster_neurons(req: BolsterRequest, db: AsyncSession = Depends(get_db)):
     """Standalone neuron editor: analyze neurons and suggest changes based on a natural language request."""
-    # Load active neurons, optionally filtered by department
+    # Load active neurons, optionally filtered by department and/or role_key
     stmt = select(Neuron).where(Neuron.is_active == True)
-    if req.department:
+    if req.role_key:
+        stmt = stmt.where(Neuron.role_key == req.role_key)
+    elif req.department:
         stmt = stmt.where(Neuron.department == req.department)
     result = await db.execute(stmt.order_by(Neuron.layer, Neuron.id))
     neurons = result.scalars().all()
@@ -219,7 +221,12 @@ async def bolster_neurons(req: BolsterRequest, db: AsyncSession = Depends(get_db
         + "\n---\n".join(neuron_sections)
     )
 
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning(f"BOLSTER: {len(neurons)} neurons, prompt chars: {len(system_prompt) + len(user_prompt)}, model: {req.model}")
+
     result = await claude_chat(system_prompt, user_prompt, max_tokens=8192, model=req.model)
+    logger.warning(f"BOLSTER: claude_chat returned, tokens in={result['input_tokens']} out={result['output_tokens']}")
 
     raw_text = result["text"].strip()
 

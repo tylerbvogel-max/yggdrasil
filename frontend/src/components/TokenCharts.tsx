@@ -11,6 +11,7 @@ interface ModelTokens {
   outputTokens: number;
   cost: number;
   neurons: boolean;
+  tokenBudget: number | null;
 }
 
 export default function TokenCharts({ models, baseline }: { models: ModelTokens[]; baseline: string }) {
@@ -57,7 +58,7 @@ export default function TokenCharts({ models, baseline }: { models: ModelTokens[
               grid: { color: '#1e2d4a' },
             },
             x: {
-              ticks: { color: '#e2e8f0', font: { weight: 'bold' } },
+              ticks: { color: '#e2e8f0', font: { weight: 'bold' }, maxRotation: 45, minRotation: 0 },
               grid: { display: false },
             },
           },
@@ -99,7 +100,7 @@ export default function TokenCharts({ models, baseline }: { models: ModelTokens[
               grid: { color: '#1e2d4a' },
             },
             x: {
-              ticks: { color: '#e2e8f0', font: { weight: 'bold' } },
+              ticks: { color: '#e2e8f0', font: { weight: 'bold' }, maxRotation: 45, minRotation: 0 },
               grid: { display: false },
             },
           },
@@ -118,12 +119,19 @@ export default function TokenCharts({ models, baseline }: { models: ModelTokens[
   // Baseline comparison: find baseline slot, compare all others against it
   const baselineSlot = models.find(m => m.mode === baseline);
   const comparisons = baselineSlot && models.length >= 2
-    ? models.filter(m => m.mode !== baseline).map(m => {
+    ? models.filter(m => m !== baselineSlot).map(m => {
         const diff = m.cost - baselineSlot.cost;
         const pct = baselineSlot.cost > 0 ? (diff / baselineSlot.cost) * 100 : 0;
-        return { label: m.label, color: m.color, cost: m.cost, baselineCost: baselineSlot.cost, diff, pct };
+        const totalTokens = m.inputTokens + m.outputTokens;
+        const tokensPerDollar = m.cost > 0 ? totalTokens / m.cost : 0;
+        return { label: m.label, color: m.color, cost: m.cost, baselineCost: baselineSlot.cost, diff, pct, tokensPerDollar };
       })
     : [];
+
+  // Baseline tokens/$
+  const baselineTokensPerDollar = baselineSlot && baselineSlot.cost > 0
+    ? (baselineSlot.inputTokens + baselineSlot.outputTokens) / baselineSlot.cost
+    : 0;
 
   return (
     <div className="token-charts">
@@ -138,16 +146,21 @@ export default function TokenCharts({ models, baseline }: { models: ModelTokens[
         </div>
       </div>
       <div className="token-cost-row">
-        {models.map(m => (
-          <div key={m.label} className="token-cost-item">
-            <div className="token-cost-color" style={{ background: m.color }} />
-            <div className="token-cost-info">
-              <div className="token-cost-label">{m.label}</div>
-              <div className="token-cost-value">${m.cost.toFixed(6)}</div>
-              <div className="token-cost-detail">{m.inputTokens.toLocaleString()} in / {m.outputTokens.toLocaleString()} out</div>
+        {models.map((m, i) => {
+          const totalTokens = m.inputTokens + m.outputTokens;
+          const tokensPerDollar = m.cost > 0 ? totalTokens / m.cost : 0;
+          return (
+            <div key={i} className="token-cost-item">
+              <div className="token-cost-color" style={{ background: m.color }} />
+              <div className="token-cost-info">
+                <div className="token-cost-label">{m.label}</div>
+                <div className="token-cost-value">${m.cost.toFixed(6)}</div>
+                <div className="token-cost-detail">{m.inputTokens.toLocaleString()} in / {m.outputTokens.toLocaleString()} out</div>
+                <div className="token-cost-efficiency">{formatTokensPerDollar(tokensPerDollar)} tokens/$</div>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         <div className="token-cost-item token-cost-total">
           <div className="token-cost-info">
             <div className="token-cost-label">Total</div>
@@ -159,10 +172,10 @@ export default function TokenCharts({ models, baseline }: { models: ModelTokens[
         <div className="cost-savings">
           <div className="cost-savings-title">Cost vs {baselineSlot!.label}</div>
           <div className="cost-savings-rows">
-            {comparisons.map(c => {
+            {comparisons.map((c, i) => {
               const cheaper = c.diff < 0;
               return (
-                <div key={c.label} className="cost-savings-row">
+                <div key={i} className="cost-savings-row">
                   <div className="cost-savings-color" style={{ background: c.color }} />
                   <div className="cost-savings-label">{c.label}</div>
                   <div className="cost-savings-detail">
@@ -178,6 +191,15 @@ export default function TokenCharts({ models, baseline }: { models: ModelTokens[
                       ({Math.abs(c.pct).toFixed(0)}% {cheaper ? 'cheaper' : 'more'})
                     </span>
                   </div>
+                  <div className="cost-savings-tpd">
+                    <span className="cost-savings-tpd-value">{formatTokensPerDollar(c.tokensPerDollar)}</span>
+                    <span className="cost-savings-tpd-label"> tokens/$</span>
+                    {baselineTokensPerDollar > 0 && (
+                      <span className="cost-savings-tpd-ratio" style={{ color: c.tokensPerDollar > baselineTokensPerDollar ? '#22c55e' : '#fb923c' }}>
+                        {' '}({(c.tokensPerDollar / baselineTokensPerDollar).toFixed(1)}x)
+                      </span>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -186,4 +208,10 @@ export default function TokenCharts({ models, baseline }: { models: ModelTokens[
       )}
     </div>
   );
+}
+
+function formatTokensPerDollar(val: number): string {
+  if (val >= 1_000_000) return (val / 1_000_000).toFixed(1) + 'M';
+  if (val >= 1_000) return (val / 1_000).toFixed(0) + 'K';
+  return val.toFixed(0);
 }

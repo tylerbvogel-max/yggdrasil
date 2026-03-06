@@ -176,14 +176,21 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("/query", response_model=QueryResponse)
 async def post_query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
-    # Validate modes
-    for m in req.modes:
-        if m not in VALID_MODES:
-            raise HTTPException(status_code=400, detail=f"Invalid mode: {m}")
-    if not req.modes:
-        raise HTTPException(status_code=400, detail="At least one mode required")
-
-    result = await execute_query(db, req.message, modes=req.modes)
+    if req.slots_v2:
+        # v2: per-slot budgets
+        for s in req.slots_v2:
+            if s.mode not in VALID_MODES:
+                raise HTTPException(status_code=400, detail=f"Invalid mode: {s.mode}")
+        slots_v2 = [s.model_dump() for s in req.slots_v2]
+        result = await execute_query(db, req.message, modes=[], slots_v2=slots_v2)
+    else:
+        # Legacy: shared budget
+        for m in req.modes:
+            if m not in VALID_MODES:
+                raise HTTPException(status_code=400, detail=f"Invalid mode: {m}")
+        if not req.modes:
+            raise HTTPException(status_code=400, detail="At least one mode required")
+        result = await execute_query(db, req.message, modes=req.modes, token_budget=req.token_budget)
     return QueryResponse(**result)
 
 
@@ -200,13 +207,20 @@ async def evaluate_query(
         raise HTTPException(status_code=400, detail="Need at least two responses to compare")
 
     # Build answer labels
+    def _slot_label(slot: SlotResult) -> str:
+        if slot.label:
+            return slot.label
+        parts = [slot.model.title()]
+        if slot.neurons:
+            parts.append("+ Neurons")
+        if slot.token_budget is not None and slot.neurons:
+            parts.append(f"@ {slot.token_budget // 1000}K")
+        return " ".join(parts)
+
     answer_map: list[tuple[str, SlotResult]] = []  # (letter, slot)
     sections = [f"User's question:\n{query.user_message}"]
     for i, slot in enumerate(slots):
-        label_parts = [slot.model.title()]
-        if slot.neurons:
-            label_parts.append("+ Neurons")
-        label = " ".join(label_parts)
+        label = _slot_label(slot)
         letter = chr(65 + i)
         answer_map.append((letter, slot))
         sections.append(f"Answer {letter} ({label}):\n{slot.response}")
@@ -214,11 +228,9 @@ async def evaluate_query(
     # Build the answer keys for the JSON template
     score_template = []
     for letter, slot in answer_map:
-        label_parts = [slot.model.title()]
-        if slot.neurons:
-            label_parts.append("+ Neurons")
+        label = _slot_label(slot)
         score_template.append(
-            f'  {{"answer": "{letter}", "label": "{" ".join(label_parts)}", '
+            f'  {{"answer": "{letter}", "label": "{label}", '
             f'"accuracy": <1-5>, "completeness": <1-5>, "clarity": <1-5>, '
             f'"faithfulness": <1-5>, "overall": <1-5>}}'
         )

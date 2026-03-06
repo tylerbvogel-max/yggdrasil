@@ -636,39 +636,224 @@ body {
 .error-msg { color: #ef4444; padding: 12px; background: var(--bg-card); border-radius: 8px; }
 .loading { color: var(--text-dim); text-align: center; padding: 40px; }
 
-/* Mode toggles */
+/* Query Controls */
 .query-controls {
   display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.mode-toggles {
-  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
-.toggle-label {
+.query-controls-bottom {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Slot Builder */
+.slot-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.slot-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.slot-mode-select {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.8125rem;
+  min-width: 160px;
+}
+
+.slot-budget {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.8125rem;
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  transition: all 0.15s;
+  flex: 1;
 }
 
-.toggle-label.active {
-  color: var(--text);
-  border-color: var(--accent);
-  background: rgba(56, 189, 248, 0.08);
-}
-
-.toggle-label input[type="checkbox"] {
+.slot-budget-slider {
+  flex: 1;
   accent-color: var(--accent);
+  cursor: pointer;
+  height: 4px;
+  min-width: 100px;
+}
+
+.slot-budget-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 32px;
+  text-align: right;
+}
+
+.slot-remove-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.slot-remove-btn:hover:not(:disabled) {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.slot-remove-btn:disabled {
+  opacity: 0.2;
+  cursor: default;
+}
+
+.slot-param-icon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: var(--bg);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.slot-topk .slot-budget-label {
+  color: #a78bfa;
+}
+
+.slot-add-btn {
+  align-self: flex-start;
+  font-size: 0.75rem !important;
+  padding: 3px 10px !important;
+}
+
+/* Graph capacity bar */
+.graph-capacity-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.75rem;
+}
+
+.capacity-label {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.capacity-value {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.capacity-sep {
+  color: var(--text-dim);
+  opacity: 0.4;
+}
+
+/* Per-slot loading spinners */
+.slot-loading-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 16px;
+  background: var(--bg-card);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.slot-loading-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--bg-input);
+  border-radius: 6px;
+  font-size: 0.8125rem;
+}
+
+.slot-loading-item.done {
+  opacity: 0.6;
+}
+
+.slot-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: slot-spin 0.8s linear infinite;
+}
+
+@keyframes slot-spin {
+  to { transform: rotate(360deg); }
+}
+
+.slot-check {
+  color: #22c55e;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.slot-loading-label {
+  font-weight: 600;
+}
+
+/* Cost efficiency in TokenCharts */
+.token-cost-efficiency {
+  font-size: 0.7rem;
+  color: var(--accent);
+  opacity: 0.8;
+  margin-top: 1px;
+}
+
+.cost-savings-tpd {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.cost-savings-tpd-value {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cost-savings-tpd-label {
+  color: var(--text-dim);
+}
+
+.cost-savings-tpd-ratio {
+  font-weight: 600;
+  font-size: 0.7rem;
 }
 
 .baseline-select {

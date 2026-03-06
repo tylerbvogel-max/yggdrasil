@@ -35,6 +35,30 @@ async def neurons_stats(db: AsyncSession = Depends(get_db)):
     return await get_graph_stats(db)
 
 
+@router.get("/capacity")
+async def neurons_capacity(db: AsyncSession = Depends(get_db)):
+    """Total token capacity of the active neuron graph."""
+    # Total chars of content in active neurons (content + summary)
+    content_chars = (await db.execute(
+        select(sa_func.coalesce(sa_func.sum(sa_func.length(Neuron.content)), 0))
+        .where(Neuron.is_active == True, Neuron.content.isnot(None))
+    )).scalar()
+    summary_chars = (await db.execute(
+        select(sa_func.coalesce(sa_func.sum(sa_func.length(Neuron.summary)), 0))
+        .where(Neuron.is_active == True, Neuron.summary.isnot(None))
+    )).scalar()
+    active_count = (await db.execute(
+        select(sa_func.count(Neuron.id)).where(Neuron.is_active == True)
+    )).scalar()
+    # ~4 chars per token
+    return {
+        "active_neurons": active_count,
+        "total_content_tokens": content_chars // 4,
+        "total_summary_tokens": summary_chars // 4,
+        "total_tokens": (content_chars + summary_chars) // 4,
+    }
+
+
 @router.get("/refinements", response_model=list[NeuronRefinementOut])
 async def list_refinements(db: AsyncSession = Depends(get_db)):
     result = await db.execute(

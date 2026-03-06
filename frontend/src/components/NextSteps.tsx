@@ -8,6 +8,71 @@ export default function NextSteps() {
       </p>
 
       <section className="next-steps-section urgent">
+        <h3>Role Bolstering — In Progress</h3>
+        <span className="status-badge planned">Active</span>
+        <p>
+          Expanding all 51 roles from skeletal (5-15 neurons) to full L2→L5 depth (60-100+ neurons each),
+          using defense/aerospace reference standards as source material. Current total: <strong>1,769 neurons</strong> (up from 1,336).
+          Target: <strong>~3,000+ neurons</strong>.
+        </p>
+
+        <h4>Completed Roles (at or near target depth)</h4>
+        <ul>
+          <li><strong>VP Strategy</strong> — 97 neurons, full L1→L5 (reference quality bar)</li>
+          <li><strong>CEO</strong> — 74 neurons, 12 L2 / 18 L3 / 14 L4 / 29 L5</li>
+          <li><strong>BD Director</strong> — 73 neurons, full depth with Shipley BD lifecycle</li>
+          <li><strong>Capture Manager</strong> — 64 neurons, full depth with gate reviews</li>
+          <li><strong>Quality Manager</strong> — 62 neurons (needs more L4/L5)</li>
+          <li><strong>Production Manager</strong> — 60 neurons, full depth</li>
+          <li><strong>Facilities Manager</strong> — 49 neurons, full depth</li>
+          <li><strong>Data Engineer</strong> — 251 neurons (Databricks ELT subtree)</li>
+          <li><strong>Manufacturing Engineer</strong> — 124 neurons</li>
+          <li><strong>Industrial Engineer</strong> — 167 neurons</li>
+          <li><strong>Program Manager</strong> — 78 neurons (needs more L5 outputs)</li>
+        </ul>
+
+        <h4>Partially Bolstered (L2 skeleton in place, need L3/L4/L5 depth)</h4>
+        <ul>
+          <li><strong>CFO</strong> — 39 neurons (12 L2 tasks done, 7 new ones need L3/L4/L5)</li>
+          <li><strong>CTO</strong> — 17 neurons (10 L2 tasks done, 8 new ones need depth)</li>
+          <li><strong>VP BD</strong> — 36 neurons (11 L2 / 19 L3, needs more L4/L5)</li>
+          <li><strong>VP Engineering</strong> — 15 neurons (11 L2 tasks done, need L3/L4/L5)</li>
+          <li><strong>VP Operations</strong> — 21 neurons (needs L3/L4/L5 expansion)</li>
+          <li><strong>COO</strong> — 15 neurons (needs more L2 tasks and depth)</li>
+          <li><strong>Contracts Manager</strong> — 16 neurons (10 L2, needs L3/L4/L5)</li>
+          <li><strong>Export Control Officer</strong> — 18 neurons (11 L2, needs depth)</li>
+          <li><strong>Proposal Manager</strong> — 18 neurons (11 L2, needs depth)</li>
+          <li><strong>Cost Estimator</strong> — 39 neurons (31 L3s but no L4/L5)</li>
+          <li><strong>Financial Analyst</strong> — 30 neurons (needs more L4/L5)</li>
+          <li><strong>FAR/DFARS</strong> — 27 neurons (needs L4/L5)</li>
+          <li><strong>AS9100 Rev D</strong> — 39 neurons (needs more L4/L5)</li>
+          <li><strong>ASME Y14.5</strong> — 24 neurons (needs more depth)</li>
+          <li><strong>MIL-STD Series</strong> — 23 neurons (needs depth)</li>
+          <li><strong>DO Standards</strong> — 20 neurons (needs depth)</li>
+        </ul>
+
+        <h4>Still Skeletal (need full buildout from L2 through L5)</h4>
+        <ul>
+          <li><strong>Engineering:</strong> Electrical (9), Mechanical (12), Software (9), Systems (9), Test (9)</li>
+          <li><strong>Contracts:</strong> Contract Analyst (19), FAR Specialist (10), Quality Auditor (14), Safety Officer (14)</li>
+          <li><strong>Finance:</strong> Cost Accountant (23)</li>
+          <li><strong>Admin:</strong> HR Generalist (9), IT Support (9), Payroll (5), Procurement (5)</li>
+          <li><strong>Supply Chain Manager</strong> — 15 neurons</li>
+          <li><strong>Program Control Analyst</strong> — 12 neurons (9 L3s but no L4/L5)</li>
+          <li><strong>Regulatory:</strong> NADCAP (12), NAS 410 (6), NIST/CMMC (7), OSHA (8), ISO (6), SAE AS6500 (7), ITAR/EAR (16), ASTM (8)</li>
+        </ul>
+
+        <h4>Bolster Process</h4>
+        <p>
+          Each role is bolstered using the <code>POST /admin/bolster</code> API with Sonnet, referencing
+          government publications (DoD, NASA, FAA, NIST), professional standards (PMI, ASQ, INCOSE, SAE),
+          and defense-specific regulations (FAR/DFARS, MIL-STDs, ITAR, CMMC). Source material compiled in{' '}
+          <code>readables/defense-aerospace-role-resources.md</code>. Process documented in{' '}
+          <code>BOLSTER_GUIDE.md</code>.
+        </p>
+      </section>
+
+      <section className="next-steps-section urgent">
         <h3>Tier 1 — High Impact, Low Cost</h3>
         <span className="status-badge planned">Priority</span>
         <p>
@@ -215,6 +280,70 @@ export default function NextSteps() {
       </section>
 
       <section className="next-steps-section">
+        <h3>Scaling — SQLite to PostgreSQL Migration</h3>
+        <span className="status-badge planned">When Needed</span>
+        <p>
+          SQLite is the correct choice for single-user development and demonstration. The migration
+          trigger is either: (a) multiple concurrent users needing write access, or (b) deployment
+          to shared infrastructure. The migration is low-risk because the application uses async
+          SQLAlchemy throughout — the ORM layer is already database-agnostic.
+        </p>
+
+        <h4>Migration Steps</h4>
+        <ol>
+          <li>
+            <strong>Swap driver</strong> — Change connection string in <code>config.py</code> from{' '}
+            <code>sqlite+aiosqlite:///yggdrasil.db</code> to{' '}
+            <code>postgresql+asyncpg://user:pass@host/yggdrasil</code>.
+            Install <code>asyncpg</code> to replace <code>aiosqlite</code>.
+          </li>
+          <li>
+            <strong>Generate schema</strong> — Run SQLAlchemy models through Alembic to create
+            the PostgreSQL schema. ORM model definitions are unchanged.
+          </li>
+          <li>
+            <strong>Migrate data</strong> — One-time dump from SQLite, load into Postgres.
+          </li>
+          <li>
+            <strong>Audit for raw SQL</strong> — Grep codebase for any raw <code>sqlite3.connect()</code>{' '}
+            or direct SQL calls bypassing SQLAlchemy. Fix SQLite-specific syntax: implicit type coercion,
+            <code>PRAGMA</code> calls (WAL mode — Postgres uses MVCC natively), boolean-as-integer patterns,
+            and auto-increment behavior differences.
+          </li>
+          <li>
+            <strong>Test full pipeline</strong> — Query, score, bolster, apply, autopilot against Postgres.
+          </li>
+        </ol>
+
+        <h4>What Postgres Enables</h4>
+        <ul>
+          <li>
+            <strong>Concurrent writes</strong> — Multiple users querying, firing neurons, and running
+            bolsters simultaneously without SQLite's single-writer lock.
+          </li>
+          <li>
+            <strong>ACID transactions with row-level locking</strong> — Content versioning and provenance
+            updates become transactionally safe (neuron update + version record commit atomically).
+          </li>
+          <li>
+            <strong>Native JSONB</strong> — Scoring signal breakdowns, provenance metadata, and
+            regulatory citations stored as queryable JSONB rather than serialized text.
+          </li>
+          <li>
+            <strong>Production backup/restore</strong> — <code>pg_dump</code>, point-in-time recovery,
+            WAL archiving replace file-copy SQLite backups.
+          </li>
+        </ul>
+
+        <h4>Preparation (Do Now)</h4>
+        <p>
+          Keep all new queries in the SQLAlchemy ORM layer. Every raw <code>sqlite3</code> call
+          avoided today is one fewer thing to fix on migration day. Verification scripts and batch
+          tools should use the API endpoints rather than direct database access.
+        </p>
+      </section>
+
+      <section className="next-steps-section">
         <h3>Summary</h3>
         <table className="next-steps-table">
           <thead>
@@ -234,6 +363,7 @@ export default function NextSteps() {
             <tr><td>Cross-Ref Chasing</td><td>Graph traversal at query time</td><td><span className="status-badge planned">Tier 2</span></td></tr>
             <tr><td>Microglia</td><td>Quality scanner + quarantine</td><td><span className="status-badge planned">Planned</span></td></tr>
             <tr><td>Ependymal</td><td>Graph hygiene / reorg</td><td><span className="status-badge planned">Planned</span></td></tr>
+            <tr><td>PostgreSQL Migration</td><td>Multi-user scaling (SQLAlchemy swap)</td><td><span className="status-badge planned">When Needed</span></td></tr>
           </tbody>
         </table>
       </section>

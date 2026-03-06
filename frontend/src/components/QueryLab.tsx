@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { submitQuery, submitRating, fetchQueryHistory, fetchQueryDetail, evaluateQuery, refineQuery, applyRefinements } from '../api'
+import { submitQuery, submitRating, fetchQueryHistory, fetchQueryDetail, evaluateQuery, refineQuery, applyRefinements, fetchGraphCapacity } from '../api'
+import type { SlotSpec, GraphCapacity } from '../api'
 import type { QueryResponse, QuerySummary, QueryDetail, SlotResult, EvalScoreOut, RefineResponse } from '../types'
 import TokenCharts from './TokenCharts'
 import SpreadTrail from './SpreadTrail'
@@ -15,6 +16,8 @@ const ALL_MODES = [
   { key: 'opus_raw', label: 'Opus Raw', short: 'O' },
 ] as const;
 
+const NEURON_MODES = new Set(['haiku_neuron', 'sonnet_neuron', 'opus_neuron']);
+
 const MODE_COLORS: Record<string, string> = {
   haiku_neuron: '#60a5fa',
   haiku_raw: '#38bdf8',
@@ -24,23 +27,51 @@ const MODE_COLORS: Record<string, string> = {
   opus_raw: '#f472b6',
 };
 
-function slotLabel(slot: SlotResult): string {
+// Generate distinct hex colors for same-mode slots at different budgets
+// Must produce valid hex for Chart.js canvas (CSS color-mix doesn't work in canvas)
+function slotColor(mode: string, index: number, total: number): string {
+  const base = MODE_COLORS[mode] ?? '#8892a8';
+  if (total <= 1) return base;
+  // Parse hex to RGB, shift lightness per index
+  const r = parseInt(base.slice(1, 3), 16);
+  const g = parseInt(base.slice(3, 5), 16);
+  const b = parseInt(base.slice(5, 7), 16);
+  const shift = -30 + (index * 30);
+  const clamp = (v: number) => Math.max(0, Math.min(255, v + shift));
+  return `#${clamp(r).toString(16).padStart(2, '0')}${clamp(g).toString(16).padStart(2, '0')}${clamp(b).toString(16).padStart(2, '0')}`;
+}
+
+function slotDisplayLabel(slot: SlotResult): string {
+  if (slot.label) return slot.label;
   const m = ALL_MODES.find(m => m.key === slot.mode);
-  return m?.label ?? slot.mode;
+  const base = m?.label ?? slot.mode;
+  if (slot.token_budget != null && NEURON_MODES.has(slot.mode)) {
+    const budgetStr = `${(slot.token_budget / 1000).toFixed(0)}K`;
+    const topKStr = slot.top_k != null && slot.top_k !== 30 ? ` / K=${slot.top_k}` : '';
+    return `${base} @ ${budgetStr}${topKStr}`;
+  }
+  return base;
 }
 
 function slotsToChartModels(slots: SlotResult[], classifyCost: number, baseline: string) {
   const models = [];
-  for (const slot of slots) {
-    const isFirstNeuron = slot.neurons && slots.filter(s => s.neurons).indexOf(slot) === 0;
+  let firstNeuronDone = false;
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    const isFirstNeuron = slot.neurons && !firstNeuronDone;
+    if (isFirstNeuron) firstNeuronDone = true;
+    // Count how many of this mode we've seen so far for color shifting
+    const sameModeBefore = slots.slice(0, i).filter(s => s.mode === slot.mode).length;
+    const sameModeTotal = slots.filter(s => s.mode === slot.mode).length;
     models.push({
-      label: slotLabel(slot),
+      label: slotDisplayLabel(slot),
       mode: slot.mode,
-      color: MODE_COLORS[slot.mode] ?? '#8892a8',
+      color: sameModeTotal > 1 ? slotColor(slot.mode, sameModeBefore, sameModeTotal) : (MODE_COLORS[slot.mode] ?? '#8892a8'),
       inputTokens: slot.input_tokens,
       outputTokens: slot.output_tokens,
       cost: slot.cost_usd + (isFirstNeuron ? classifyCost : 0),
       neurons: slot.neurons,
+      tokenBudget: slot.token_budget,
     });
   }
   return { models, baseline };
@@ -76,7 +107,7 @@ function Section({ title, children, defaultOpen = true, className, headerRight, 
   );
 }
 
-function EvalScoreTable({ scores, winner }: { scores: EvalScoreOut[]; winner: string | null }) {
+function EvalScoreTable({ scores, winner, slots }: { scores: EvalScoreOut[]; winner: string | null; slots?: SlotResult[] }) {
   if (scores.length === 0) return null;
   return (
     <div className="eval-score-table">
@@ -84,12 +115,18 @@ function EvalScoreTable({ scores, winner }: { scores: EvalScoreOut[]; winner: st
         <thead>
           <tr>
             <th>Dimension</th>
-            {scores.map(s => (
-              <th key={s.answer_label} style={{ borderBottom: `2px solid ${MODE_COLORS[s.answer_mode] ?? '#8892a8'}` }}>
-                {s.answer_label} — {ALL_MODES.find(m => m.key === s.answer_mode)?.label ?? s.answer_mode}
-                {winner === s.answer_label && <span style={{ marginLeft: 6, fontSize: '0.7rem', color: '#22c55e' }}>★ Winner</span>}
-              </th>
-            ))}
+            {scores.map(s => {
+              // Match by position (A=0, B=1, ...) not by mode, since multiple slots can share a mode
+              const slotIndex = s.answer_label.charCodeAt(0) - 65;
+              const matchedSlot = slots?.[slotIndex];
+              const displayLabel = matchedSlot ? slotDisplayLabel(matchedSlot) : (ALL_MODES.find(m => m.key === s.answer_mode)?.label ?? s.answer_mode);
+              return (
+                <th key={s.answer_label} style={{ borderBottom: `2px solid ${MODE_COLORS[s.answer_mode] ?? '#8892a8'}` }}>
+                  {s.answer_label} — {displayLabel}
+                  {winner === s.answer_label && <span style={{ marginLeft: 6, fontSize: '0.7rem', color: '#22c55e' }}>&#9733; Winner</span>}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
@@ -128,7 +165,6 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }
   const [applyResult, setApplyResult] = useState<{ updated: number; created: number } | null>(null);
   const [userContext, setUserContext] = useState('');
 
-  // Report phase changes to parent
   useEffect(() => {
     if (!onPhaseChange || !hasEval || !hasNeurons) return;
     if (applyResult) onPhaseChange('applied');
@@ -250,7 +286,7 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }
                     </div>
                     <div className="refine-diff">
                       <div className="refine-old">{u.old_value}</div>
-                      <div className="refine-arrow">→</div>
+                      <div className="refine-arrow">&rarr;</div>
                       <div className="refine-new">{u.new_value}</div>
                     </div>
                     <div className="refine-reason">{u.reason}</div>
@@ -311,6 +347,111 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }
   );
 }
 
+// ────────── Slot Builder ──────────
+
+interface SlotConfig {
+  id: number;
+  mode: string;
+  tokenBudget: number;
+  topK: number;
+}
+
+let nextSlotId = 1;
+
+function SlotBuilder({ slots, onChange, capacity }: {
+  slots: SlotConfig[];
+  onChange: (slots: SlotConfig[]) => void;
+  capacity: GraphCapacity | null;
+}) {
+  function addSlot() {
+    onChange([...slots, { id: nextSlotId++, mode: 'haiku_neuron', tokenBudget: 4000, topK: 30 }]);
+  }
+
+  function removeSlot(id: number) {
+    onChange(slots.filter(s => s.id !== id));
+  }
+
+  function updateSlot(id: number, patch: Partial<SlotConfig>) {
+    onChange(slots.map(s => s.id === id ? { ...s, ...patch } : s));
+  }
+
+  const maxNeurons = capacity?.active_neurons ?? 500;
+
+  return (
+    <div className="slot-builder">
+      {capacity && (
+        <div className="graph-capacity-bar">
+          <span className="capacity-label">Graph Capacity:</span>
+          <span className="capacity-value">{capacity.active_neurons.toLocaleString()} neurons</span>
+          <span className="capacity-sep">&middot;</span>
+          <span className="capacity-value">{capacity.total_content_tokens.toLocaleString()} content tokens</span>
+          <span className="capacity-sep">&middot;</span>
+          <span className="capacity-value">{capacity.total_tokens.toLocaleString()} total tokens</span>
+        </div>
+      )}
+      <div className="slot-list">
+        {slots.map(slot => {
+          const isNeuron = NEURON_MODES.has(slot.mode);
+          return (
+            <div key={slot.id} className="slot-item">
+              <select
+                className="slot-mode-select"
+                value={slot.mode}
+                onChange={e => updateSlot(slot.id, { mode: e.target.value })}
+              >
+                {ALL_MODES.map(m => (
+                  <option key={m.key} value={m.key}>{m.label}</option>
+                ))}
+              </select>
+              {isNeuron && (
+                <>
+                  <div className="slot-budget">
+                    <span className="slot-param-icon" title="Token budget">T</span>
+                    <input
+                      type="range"
+                      min={1000}
+                      max={32000}
+                      step={1000}
+                      value={slot.tokenBudget}
+                      onChange={e => updateSlot(slot.id, { tokenBudget: Number(e.target.value) })}
+                      className="slot-budget-slider"
+                    />
+                    <span className="slot-budget-label">{(slot.tokenBudget / 1000).toFixed(0)}K</span>
+                  </div>
+                  <div className="slot-budget slot-topk">
+                    <span className="slot-param-icon" title="Top-K neurons">K</span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={Math.min(maxNeurons, 500)}
+                      step={1}
+                      value={slot.topK}
+                      onChange={e => updateSlot(slot.id, { topK: Number(e.target.value) })}
+                      className="slot-budget-slider"
+                    />
+                    <span className="slot-budget-label">{slot.topK}</span>
+                  </div>
+                </>
+              )}
+              <button
+                className="slot-remove-btn"
+                onClick={() => removeSlot(slot.id)}
+                title="Remove slot"
+                disabled={slots.length <= 1}
+              >
+                &times;
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <button className="btn btn-sm slot-add-btn" onClick={addSlot}>+ Add Slot</button>
+    </div>
+  );
+}
+
+// ────────── Action Rail ──────────
+
 function ActionRail({ hasResult, hasMultiSlot, hasNeurons, evalDone, evalLoading, refinePhase, loading, onEval, onSubmit }: {
   hasResult: boolean; hasMultiSlot: boolean; hasNeurons: boolean;
   evalDone: boolean; evalLoading: boolean; refinePhase: RefinePhase;
@@ -326,7 +467,6 @@ function ActionRail({ hasResult, hasMultiSlot, hasNeurons, evalDone, evalLoading
     }
   }
 
-  // Determine which step is "current"
   let currentStep = 0;
   if (hasResult) currentStep = 1;
   if (evalDone) currentStep = 2;
@@ -399,6 +539,8 @@ function ActionRail({ hasResult, hasMultiSlot, hasNeurons, evalDone, evalLoading
   );
 }
 
+// ────────── Main Component ──────────
+
 export default function QueryLab() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -407,11 +549,16 @@ export default function QueryLab() {
   const [rating, setRating] = useState(0.5);
   const [rated, setRated] = useState(false);
 
-  const [enabledModes, setEnabledModes] = useState<Set<string>>(new Set(['haiku_neuron']));
+  const [slotConfigs, setSlotConfigs] = useState<SlotConfig[]>([
+    { id: nextSlotId++, mode: 'haiku_neuron', tokenBudget: 4000, topK: 30 },
+  ]);
   const [baseline, setBaseline] = useState('opus_raw');
+  const [graphCapacity, setGraphCapacity] = useState<GraphCapacity | null>(null);
+  // Track which slot indices are still loading (for per-slot spinners)
+  const [slotLoadingSet, setSlotLoadingSet] = useState<Set<number>>(new Set());
 
   const [evalLoading, setEvalLoading] = useState(false);
-  const [evalModel, setEvalModel] = useState<'haiku' | 'sonnet'>('haiku');
+  const [evalModel, setEvalModel] = useState<'haiku' | 'sonnet' | 'opus'>('haiku');
   const [evalText, setEvalText] = useState<string | null>(null);
   const [evalMdl, setEvalMdl] = useState<string | null>(null);
   const [evalIn, setEvalIn] = useState(0);
@@ -426,24 +573,34 @@ export default function QueryLab() {
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [refinePhase, setRefinePhase] = useState<RefinePhase>('idle');
 
-  useEffect(() => { loadHistory(); }, []);
+  useEffect(() => {
+    loadHistory();
+    fetchGraphCapacity().then(setGraphCapacity).catch(() => {});
+  }, []);
 
   function loadHistory() {
     fetchQueryHistory().then(setHistory).catch(() => {});
   }
 
-  function toggleMode(key: string) {
-    setEnabledModes(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
+  function buildSlotSpecs(): SlotSpec[] {
+    return slotConfigs.map(sc => {
+      const isNeuron = NEURON_MODES.has(sc.mode);
+      const modeLabel = ALL_MODES.find(m => m.key === sc.mode)?.label ?? sc.mode;
+      const label = isNeuron
+        ? `${modeLabel} @ ${(sc.tokenBudget / 1000).toFixed(0)}K / K=${sc.topK}`
+        : undefined;
+      return {
+        mode: sc.mode,
+        token_budget: sc.tokenBudget,
+        top_k: sc.topK,
+        label,
+      };
     });
   }
 
   async function handleSubmit() {
-    const modes = Array.from(enabledModes);
-    if (!message.trim() || modes.length === 0) return;
+    const specs = buildSlotSpecs();
+    if (!message.trim() || specs.length === 0) return;
     setLoading(true);
     setError('');
     setResult(null);
@@ -454,14 +611,17 @@ export default function QueryLab() {
     setRefinePhase('idle');
     setView('new');
     setSelectedQuery(null);
+    // Mark all slots as loading
+    setSlotLoadingSet(new Set(slotConfigs.map((_, i) => i)));
     try {
-      const res = await submitQuery(message, modes);
+      const res = await submitQuery(message, specs);
       setResult(res);
       loadHistory();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Query failed');
     } finally {
       setLoading(false);
+      setSlotLoadingSet(new Set());
     }
   }
 
@@ -552,39 +712,53 @@ export default function QueryLab() {
             onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleSubmit(); }}
           />
           <div className="query-controls">
-            <div className="mode-toggles">
-              {ALL_MODES.map(m => (
-                <label key={m.key} className={`toggle-label${enabledModes.has(m.key) ? ' active' : ''}`} style={enabledModes.has(m.key) ? { borderColor: MODE_COLORS[m.key] } : undefined}>
-                  <input type="checkbox" checked={enabledModes.has(m.key)} onChange={() => toggleMode(m.key)} />
-                  {m.label}
-                </label>
-              ))}
+            <SlotBuilder slots={slotConfigs} onChange={setSlotConfigs} capacity={graphCapacity} />
+            <div className="query-controls-bottom">
               <select className="baseline-select" value={baseline} onChange={e => setBaseline(e.target.value)}>
                 {ALL_MODES.map(m => (
                   <option key={m.key} value={m.key}>Baseline: {m.label}</option>
                 ))}
               </select>
+              <button className="btn" onClick={handleSubmit} disabled={loading || !message.trim() || slotConfigs.length === 0}>
+                {loading ? 'Processing...' : `Submit (${slotConfigs.length} slot${slotConfigs.length !== 1 ? 's' : ''})`}
+              </button>
             </div>
-            <button className="btn" onClick={handleSubmit} disabled={loading || !message.trim() || enabledModes.size === 0}>
-              {loading ? 'Processing...' : 'Submit Query'}
-            </button>
           </div>
         </div>
 
         {error && <div className="error-msg">{error}</div>}
 
+        {/* Per-slot loading indicators */}
+        {loading && (
+          <div className="slot-loading-panel">
+            {slotConfigs.map((sc, i) => {
+              const modeInfo = ALL_MODES.find(m => m.key === sc.mode);
+              const isNeuron = NEURON_MODES.has(sc.mode);
+              const label = isNeuron
+                ? `${modeInfo?.label ?? sc.mode} @ ${(sc.tokenBudget / 1000).toFixed(0)}K`
+                : (modeInfo?.label ?? sc.mode);
+              const done = !slotLoadingSet.has(i);
+              return (
+                <div key={sc.id} className={`slot-loading-item${done ? ' done' : ''}`}>
+                  {!done && <span className="slot-spinner" />}
+                  {done && <span className="slot-check">&#10003;</span>}
+                  <span className="slot-loading-label" style={{ color: MODE_COLORS[sc.mode] ?? '#8892a8' }}>{label}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {result && view === 'new' && (
-          <>
-            <LiveResult
-              result={result} baseline={baseline}
-              rating={rating} setRating={setRating} rated={rated} onRate={handleRate}
-              evalText={evalText} evalMdl={evalMdl} evalIn={evalIn} evalOut={evalOut}
-              evalScores={evalScores} evalWinner={evalWinner}
-              evalModel={evalModel} setEvalModel={setEvalModel}
-              evalLoading={evalLoading} onEval={handleEval}
-              onRunAgain={handleSubmit} onRefinePhaseChange={setRefinePhase}
-            />
-          </>
+          <LiveResult
+            result={result} baseline={baseline}
+            rating={rating} setRating={setRating} rated={rated} onRate={handleRate}
+            evalText={evalText} evalMdl={evalMdl} evalIn={evalIn} evalOut={evalOut}
+            evalScores={evalScores} evalWinner={evalWinner}
+            evalModel={evalModel} setEvalModel={setEvalModel}
+            evalLoading={evalLoading} onEval={handleEval}
+            onRunAgain={handleSubmit} onRefinePhaseChange={setRefinePhase}
+          />
         )}
 
         {selectedQuery && view === 'history' && <HistoryDetail query={selectedQuery} baseline={baseline} />}
@@ -607,12 +781,14 @@ export default function QueryLab() {
   );
 }
 
+// ────────── Live Result ──────────
+
 function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalText, evalMdl, evalIn, evalOut, evalScores, evalWinner, evalModel, setEvalModel, evalLoading, onEval, onRunAgain, onRefinePhaseChange }: {
   result: QueryResponse; baseline: string;
   rating: number; setRating: (v: number) => void; rated: boolean; onRate: () => void;
   evalText: string | null; evalMdl: string | null; evalIn: number; evalOut: number;
   evalScores: EvalScoreOut[]; evalWinner: string | null;
-  evalModel: 'haiku' | 'sonnet'; setEvalModel: (v: 'haiku' | 'sonnet') => void;
+  evalModel: 'haiku' | 'sonnet' | 'opus'; setEvalModel: (v: 'haiku' | 'sonnet' | 'opus') => void;
   evalLoading: boolean; onEval: () => void;
   onRunAgain: () => void; onRefinePhaseChange: (phase: RefinePhase) => void;
 }) {
@@ -655,8 +831,8 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
       <SpreadTrail queryId={result.query_id} />
 
       {/* Responses */}
-      {result.slots.map(slot => (
-        <Section key={slot.mode} title={slotLabel(slot)} titleStyle={{ borderLeft: `3px solid ${MODE_COLORS[slot.mode] ?? '#8892a8'}`, paddingLeft: 8 }}>
+      {result.slots.map((slot, i) => (
+        <Section key={i} title={slotDisplayLabel(slot)} titleStyle={{ borderLeft: `3px solid ${MODE_COLORS[slot.mode] ?? '#8892a8'}`, paddingLeft: 8 }}>
           <div className="response-text">{slot.response}</div>
         </Section>
       ))}
@@ -670,9 +846,10 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
       {result.slots.length >= 2 && (
         <Section id="section-compare" title="Compare Outputs" className="eval-card" headerRight={
           <div className="eval-controls">
-            <select value={evalModel} onChange={e => setEvalModel(e.target.value as 'haiku' | 'sonnet')}>
+            <select value={evalModel} onChange={e => setEvalModel(e.target.value as 'haiku' | 'sonnet' | 'opus')}>
               <option value="haiku">Evaluate with Haiku</option>
               <option value="sonnet">Evaluate with Sonnet</option>
+              <option value="opus">Evaluate with Opus</option>
             </select>
             <button className="btn btn-sm" onClick={onEval} disabled={evalLoading || !!evalText}>
               {evalLoading ? 'Evaluating...' : evalText ? 'Evaluated' : 'Compare Outputs'}
@@ -682,7 +859,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
           {evalText && (
             <div className="eval-result">
               <div className="eval-model-tag">Evaluated by {evalMdl}</div>
-              <EvalScoreTable scores={evalScores} winner={evalWinner} />
+              <EvalScoreTable scores={evalScores} winner={evalWinner} slots={result.slots} />
               <div className="response-text" style={{ marginTop: 12 }}>{evalText}</div>
               <div className="token-breakdown" style={{ marginTop: 12 }}>
                 <div className="breakdown-item"><div className="bd-value">{evalIn}</div><div className="bd-label">Eval In</div></div>
@@ -706,9 +883,11 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
   );
 }
 
+// ────────── History Detail ──────────
+
 function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: string }) {
   const [evalLoading, setEvalLoading] = useState(false);
-  const [evalModel, setEvalModel] = useState<'haiku' | 'sonnet'>('haiku');
+  const [evalModel, setEvalModel] = useState<'haiku' | 'sonnet' | 'opus'>('haiku');
   const [localEvalText, setLocalEvalText] = useState(query.eval_text);
   const [localEvalMdl, setLocalEvalMdl] = useState(query.eval_model);
   const [localEvalIn, setLocalEvalIn] = useState(query.eval_input_tokens);
@@ -747,9 +926,9 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
         <h3>
           Query #{query.id}
           <span className="history-modes" style={{ marginLeft: 8 }}>
-            {query.slots.map(s => {
-              const def = ALL_MODES.find(d => d.key === s.mode);
-              return <span key={s.mode} className="mode-badge" style={{ background: (MODE_COLORS[s.mode] ?? '#8892a8') + '33', color: MODE_COLORS[s.mode] ?? '#8892a8' }}>{def?.short ?? s.mode}</span>;
+            {query.slots.map((s, i) => {
+              const label = slotDisplayLabel(s);
+              return <span key={i} className="mode-badge" style={{ background: (MODE_COLORS[s.mode] ?? '#8892a8') + '33', color: MODE_COLORS[s.mode] ?? '#8892a8' }}>{label}</span>;
             })}
           </span>
         </h3>
@@ -796,8 +975,8 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
       <SpreadTrail queryId={query.id} />
 
       {/* Responses */}
-      {query.slots.map(slot => (
-        <Section key={slot.mode} title={slotLabel(slot)} titleStyle={{ borderLeft: `3px solid ${MODE_COLORS[slot.mode] ?? '#8892a8'}`, paddingLeft: 8 }}>
+      {query.slots.map((slot, i) => (
+        <Section key={i} title={slotDisplayLabel(slot)} titleStyle={{ borderLeft: `3px solid ${MODE_COLORS[slot.mode] ?? '#8892a8'}`, paddingLeft: 8 }}>
           <div className="response-text">{slot.response}</div>
         </Section>
       ))}
@@ -813,9 +992,10 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
       {query.slots.length >= 2 && (
         <Section title="Compare Outputs" className="eval-card" headerRight={
           <div className="eval-controls">
-            <select value={evalModel} onChange={e => setEvalModel(e.target.value as 'haiku' | 'sonnet')}>
+            <select value={evalModel} onChange={e => setEvalModel(e.target.value as 'haiku' | 'sonnet' | 'opus')}>
               <option value="haiku">Evaluate with Haiku</option>
               <option value="sonnet">Evaluate with Sonnet</option>
+              <option value="opus">Evaluate with Opus</option>
             </select>
             <button className="btn btn-sm" onClick={handleEval} disabled={evalLoading}>
               {evalLoading ? 'Evaluating...' : localEvalText ? 'Re-evaluate' : 'Compare Outputs'}
@@ -825,7 +1005,7 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
           {localEvalText && (
             <div className="eval-result">
               <div className="eval-model-tag">Evaluated by {localEvalMdl}</div>
-              <EvalScoreTable scores={localEvalScores} winner={localEvalWinner} />
+              <EvalScoreTable scores={localEvalScores} winner={localEvalWinner} slots={query.slots} />
               <div className="response-text" style={{ marginTop: 12 }}>{localEvalText}</div>
               <div className="token-breakdown" style={{ marginTop: 12 }}>
                 <div className="breakdown-item"><div className="bd-value">{localEvalIn}</div><div className="bd-label">Eval In</div></div>
