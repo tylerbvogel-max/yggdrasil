@@ -2439,6 +2439,33 @@ details summary:hover { color: var(--text); }
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
+
+.about-thesis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.about-thesis-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.about-thesis-card h4 {
+  font-size: 0.9rem;
+  margin-bottom: 8px;
+}
+
+.about-thesis-card p {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  line-height: 1.6;
+  margin: 0;
+}
+
 .about-features {
   list-style: none;
   padding-left: 0;
