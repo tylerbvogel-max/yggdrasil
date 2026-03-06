@@ -10,39 +10,47 @@ import NextSteps from './components/NextSteps'
 import AutopilotPage from './components/AutopilotPage'
 import CirclePacking from './components/CirclePacking'
 import AboutPage from './components/AboutPage'
+import MonetizationPage from './components/MonetizationPage'
 import DeptChordDiagram from './components/DeptChordDiagram'
 
-type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'pipeline' | 'evaluation' | 'refinements' | 'bolster' | 'autopilot' | 'nextsteps' | 'about';
+type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'pipeline' | 'evaluation' | 'refinements' | 'bolster' | 'autopilot' | 'nextsteps' | 'about' | 'monetization';
 
-const NAV_GROUPS = [
+interface NavItem {
+  key: Tab;
+  label: string;
+  className?: string;
+}
+
+const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: 'Visualizations',
     items: [
-      { key: 'explorer' as Tab, label: 'Explorer' },
-      { key: 'graph' as Tab, label: 'Graph' },
-      { key: 'dashboard' as Tab, label: 'Dashboard' },
-      { key: 'cofiring' as Tab, label: 'Co-Firing' },
+      { key: 'explorer', label: 'Explorer' },
+      { key: 'graph', label: 'Graph' },
+      { key: 'dashboard', label: 'Dashboard' },
+      { key: 'cofiring', label: 'Co-Firing' },
     ],
   },
   {
     label: 'Training',
     items: [
-      { key: 'query' as Tab, label: 'Query Lab' },
-      { key: 'refinements' as Tab, label: 'Refinements' },
-      { key: 'bolster' as Tab, label: 'Bolster' },
-      { key: 'autopilot' as Tab, label: 'Autopilot' },
+      { key: 'query', label: 'Query Lab' },
+      { key: 'refinements', label: 'Refinements' },
+      { key: 'bolster', label: 'Bolster' },
+      { key: 'autopilot', label: 'Autopilot' },
     ],
   },
   {
     label: 'About',
     items: [
-      { key: 'about' as Tab, label: 'Overview' },
-      { key: 'pipeline' as Tab, label: 'Pipeline' },
-      { key: 'nextsteps' as Tab, label: 'Next Steps' },
-      { key: 'evaluation' as Tab, label: 'Evaluation' },
+      { key: 'about', label: 'Overview' },
+      { key: 'pipeline', label: 'Pipeline' },
+      { key: 'nextsteps', label: 'Next Steps' },
+      { key: 'evaluation', label: 'Evaluation' },
+      { key: 'monetization', label: 'Monetization', className: 'nav-monetization' },
     ],
   },
-] as const;
+];
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('explorer');
@@ -59,7 +67,7 @@ export default function App() {
                 {group.items.map(item => (
                   <button
                     key={item.key}
-                    className={tab === item.key ? 'active' : ''}
+                    className={`${tab === item.key ? 'active' : ''}${item.className ? ' ' + item.className : ''}`}
                     onClick={() => setTab(item.key)}
                   >
                     {item.label}
@@ -90,6 +98,7 @@ export default function App() {
         {tab === 'autopilot' && <AutopilotPage />}
         {tab === 'nextsteps' && <NextSteps />}
         {tab === 'about' && <AboutPage />}
+        {tab === 'monetization' && <MonetizationPage />}
       </main>
     </div>
   )
