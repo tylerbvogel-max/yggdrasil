@@ -7,4 +7,5 @@ export const DEPT_COLORS: Record<string, string> = {
   'Administrative & Support': '#facc15',
   'Program Management': '#22c55e',
   'Finance': '#ef4444',
+  'Regulatory': '#94a3b8',
 };

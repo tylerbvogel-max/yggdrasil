@@ -155,7 +155,8 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }
   queryId: number; hasEval: boolean; hasNeurons: boolean;
   onRunAgain?: () => void; onPhaseChange?: (phase: RefinePhase) => void;
 }) {
-  const [refineModel, setRefineModel] = useState<'haiku' | 'sonnet'>('haiku');
+  const [refineModel, setRefineModel] = useState<'haiku' | 'sonnet' | 'opus'>('haiku');
+  const [refineMaxTokens, setRefineMaxTokens] = useState(4096);
   const [refineLoading, setRefineLoading] = useState(false);
   const [refineResult, setRefineResult] = useState<RefineResponse | null>(null);
   const [refineError, setRefineError] = useState('');
@@ -181,7 +182,7 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }
     setRefineError('');
     setApplyResult(null);
     try {
-      const res = await refineQuery(queryId, refineModel, userContext || undefined);
+      const res = await refineQuery(queryId, refineModel, refineMaxTokens, userContext || undefined);
       setRefineResult(res);
       setCheckedUpdates(new Set(res.updates.map((_, i) => i)));
       setCheckedNewNeurons(new Set(res.new_neurons.map((_, i) => i)));
@@ -228,10 +229,22 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }
       <div className="eval-header">
         <h3>Refine Neurons</h3>
         <div className="eval-controls">
-          <select value={refineModel} onChange={e => setRefineModel(e.target.value as 'haiku' | 'sonnet')}>
+          <select value={refineModel} onChange={e => setRefineModel(e.target.value as 'haiku' | 'sonnet' | 'opus')}>
             <option value="haiku">Refine with Haiku</option>
             <option value="sonnet">Refine with Sonnet</option>
+            <option value="opus">Refine with Opus</option>
           </select>
+          <label className="refine-token-slider">
+            <span>Max tokens: {refineMaxTokens >= 1000 ? `${(refineMaxTokens / 1000).toFixed(1).replace(/\.0$/, '')}K` : refineMaxTokens}</span>
+            <input
+              type="range"
+              min={512}
+              max={16384}
+              step={512}
+              value={refineMaxTokens}
+              onChange={e => setRefineMaxTokens(Number(e.target.value))}
+            />
+          </label>
           <button id="btn-refine" className="btn btn-sm" onClick={handleRefine} disabled={refineLoading}>
             {refineLoading ? 'Analyzing...' : refineResult ? 'Re-analyze' : 'Refine Neurons'}
           </button>
@@ -257,7 +270,7 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }
           background: 'var(--bg-input, var(--bg-card))',
           color: 'var(--text)',
         }}
-        maxLength={4000}
+        maxLength={16000}
       />
 
       {refineError && <div className="error-msg" style={{ marginBottom: 12 }}>{refineError}</div>}
@@ -910,7 +923,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
               <tr><th>ID</th><th>Combined</th><th>Spread</th><th>Burst</th><th>Impact</th><th>Precision</th><th>Novelty</th><th>Recency</th><th>Relevance</th></tr>
             </thead>
             <tbody>
-              {result.neuron_scores.map(s => (
+              {result.neuron_scores.slice(0, 10).map(s => (
                 <tr key={s.neuron_id}>
                   <td>{s.neuron_id}</td><td>{s.combined.toFixed(3)}</td>
                   <td style={s.spread_boost > 0 ? { color: '#e8a735', fontWeight: 600 } : undefined}>{s.spread_boost > 0 ? s.spread_boost.toFixed(3) : '—'}</td>
@@ -924,7 +937,11 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
         </Section>
       )}
 
-      <SpreadTrail queryId={result.query_id} />
+      {result.neuron_scores.length > 0 && (
+        <Section title="Activation Radial" defaultOpen={false}>
+          <SpreadTrail queryId={result.query_id} neuronScores={result.neuron_scores} />
+        </Section>
+      )}
 
       {/* Responses */}
       {result.slots.map((slot, i) => (
@@ -1068,7 +1085,16 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
         </Section>
       )}
 
-      <SpreadTrail queryId={query.id} />
+      {query.neuron_hits.length > 0 && (
+        <Section title="Activation Radial" defaultOpen={false}>
+          <SpreadTrail queryId={query.id} neuronScores={query.neuron_hits.map(h => ({
+            neuron_id: h.neuron_id, combined: h.combined, burst: h.burst,
+            impact: h.impact, precision: h.precision, novelty: h.novelty,
+            recency: h.recency, relevance: h.relevance, spread_boost: h.spread_boost,
+            label: h.label, department: h.department, layer: h.layer,
+          }))} />
+        </Section>
+      )}
 
       {/* Responses */}
       {query.slots.map((slot, i) => (

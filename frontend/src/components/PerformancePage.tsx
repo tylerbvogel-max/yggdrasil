@@ -1,0 +1,457 @@
+import { useState } from 'react';
+import { fetchPerformance } from '../api';
+
+interface TokenPair { input: number; output: number }
+interface CostSummary {
+  total_queries: number; total_cost: number; avg_cost: number; min_cost: number; max_cost: number;
+  classify_tokens: TokenPair; execute_tokens: TokenPair; eval_tokens: TokenPair;
+  total_input_tokens: number; total_output_tokens: number;
+}
+interface CostModeling {
+  avg_tokens: { classify_input: number; classify_output: number; execute_input: number; execute_output: number };
+  per_query_cost: { haiku_neuron: number; sonnet_raw: number; opus_raw: number };
+  savings_vs_opus: number; savings_vs_sonnet: number;
+  projected_monthly_1k: { haiku_neuron: number; sonnet_raw: number; opus_raw: number };
+  annual_savings_vs_opus_1k: number; annual_savings_vs_sonnet_1k: number;
+}
+interface QualityMode {
+  mode: string; n: number; accuracy: number; completeness: number; clarity: number; faithfulness: number; overall: number;
+}
+interface ScoreDist { score: number; count: number }
+interface Reliability { distribution: ScoreDist[]; total_evaluated: number; score_4_plus: number; reliability_pct: number }
+interface TrendPeriod { queries: number; overall: number; accuracy: number; completeness: number }
+interface NeuronStats {
+  active_neurons: number; distinct_fired: number; never_fired: number;
+  utilization: Record<string, number>; layer_distribution: Record<string, number>; department_distribution: Record<string, number>;
+}
+interface RefinementImpact { neurons_created: number; neurons_updated: number; graph_growth: Record<string, number> }
+interface AutopilotRow { status: string; runs: number; avg_score: number; created: number; updated: number; cost: number }
+interface Investment { query_pipeline: number; autopilot: number; total: number }
+interface NeuronQualityCorr { bucket: string; queries: number; avg_score: number }
+interface QueryTimelinePoint { id: number; cost: number; neurons: number; score: number | null; created_at: string | null }
+
+interface PerfData {
+  cost_summary: CostSummary; cost_modeling: CostModeling; quality_by_mode: QualityMode[];
+  quality_ratio: number | null; reliability: Reliability;
+  quality_trend: Record<string, TrendPeriod>; neuron_stats: NeuronStats;
+  refinement_impact: RefinementImpact; autopilot: AutopilotRow[]; investment: Investment;
+  neuron_quality_correlation: NeuronQualityCorr[]; query_timeline: QueryTimelinePoint[];
+}
+
+const fmt = (n: number, d = 2) => n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+const fmtK = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(0)}K` : `${n}`;
+const pct = (n: number) => `${n.toFixed(1)}%`;
+
+function ModeLabel({ mode }: { mode: string }) {
+  const colors: Record<string, string> = {
+    opus_neuron: '#a78bfa', sonnet_neuron: '#60a5fa', haiku_neuron: '#22c55e',
+    opus_raw: '#f472b6', sonnet_raw: '#fb923c', haiku_raw: '#94a3b8',
+  };
+  return <span style={{ color: colors[mode] || 'var(--text)', fontWeight: 600 }}>{mode.replace('_', ' + ')}</span>;
+}
+
+function Bar({ value, max, color }: { value: number; max: number; color: string }) {
+  const w = max > 0 ? Math.max(2, (value / max) * 100) : 0;
+  return <div style={{ background: color, height: 18, width: `${w}%`, borderRadius: 3, minWidth: 2 }} />;
+}
+
+export default function PerformancePage() {
+  const [data, setData] = useState<PerfData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastRun, setLastRun] = useState<string | null>(null);
+
+  const runAnalysis = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const d = await fetchPerformance();
+      setData(d);
+      setLastRun(new Date().toLocaleTimeString());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to fetch');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="perf-page">
+      <div className="perf-header">
+        <div>
+          <h2>Performance Analysis</h2>
+          <p className="perf-subtitle">
+            Pure SQL analytics — no LLM invocation. Computed from query logs, eval scores, and refinement history.
+          </p>
+        </div>
+        <div className="perf-run-area">
+          <button className="perf-run-btn" onClick={runAnalysis} disabled={loading}>
+            {loading ? 'Computing...' : 'Run Analysis'}
+          </button>
+          {lastRun && <span className="perf-last-run">Last run: {lastRun}</span>}
+        </div>
+      </div>
+
+      {error && <div className="perf-error">{error}</div>}
+
+      {!data && !loading && (
+        <div className="perf-empty">Click "Run Analysis" to compute performance metrics from the database.</div>
+      )}
+
+      {data && <>
+        {/* Hero metrics */}
+        <div className="perf-hero">
+          <div className="perf-hero-card" style={{ borderTopColor: '#22c55e' }}>
+            <span className="perf-hero-value" style={{ color: '#22c55e' }}>{pct(data.cost_modeling.savings_vs_opus)}</span>
+            <span className="perf-hero-label">Cost savings vs Opus</span>
+          </div>
+          <div className="perf-hero-card" style={{ borderTopColor: '#38bdf8' }}>
+            <span className="perf-hero-value" style={{ color: '#38bdf8' }}>{data.quality_ratio ?? '—'}%</span>
+            <span className="perf-hero-label">Quality vs Opus Raw</span>
+          </div>
+          <div className="perf-hero-card" style={{ borderTopColor: '#facc15' }}>
+            <span className="perf-hero-value" style={{ color: '#facc15' }}>{data.reliability.reliability_pct}%</span>
+            <span className="perf-hero-label">Reliability (score 4+)</span>
+          </div>
+          <div className="perf-hero-card" style={{ borderTopColor: '#a78bfa' }}>
+            <span className="perf-hero-value" style={{ color: '#a78bfa' }}>{data.cost_summary.total_queries}</span>
+            <span className="perf-hero-label">Total queries</span>
+          </div>
+        </div>
+
+        {/* Cost Modeling */}
+        <section className="perf-section">
+          <h3>Cost Modeling</h3>
+          <p className="perf-section-desc">Per-query cost comparison: Haiku + Neurons vs raw alternatives.</p>
+          <div className="perf-cost-grid">
+            <div className="perf-cost-card">
+              <div className="perf-cost-mode">Haiku + Neurons</div>
+              <div className="perf-cost-amount" style={{ color: '#22c55e' }}>${fmt(data.cost_modeling.per_query_cost.haiku_neuron, 4)}</div>
+              <div className="perf-cost-label">per query</div>
+            </div>
+            <div className="perf-cost-card">
+              <div className="perf-cost-mode">Sonnet Raw</div>
+              <div className="perf-cost-amount" style={{ color: '#fb923c' }}>${fmt(data.cost_modeling.per_query_cost.sonnet_raw, 4)}</div>
+              <div className="perf-cost-label">per query</div>
+            </div>
+            <div className="perf-cost-card">
+              <div className="perf-cost-mode">Opus Raw</div>
+              <div className="perf-cost-amount" style={{ color: '#f472b6' }}>${fmt(data.cost_modeling.per_query_cost.opus_raw, 4)}</div>
+              <div className="perf-cost-label">per query</div>
+            </div>
+          </div>
+
+          <h4>Projected at 1,000 queries/month</h4>
+          <table className="perf-table">
+            <thead><tr><th>Approach</th><th>Monthly</th><th>Annual</th><th>Annual Savings</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><ModeLabel mode="haiku_neuron" /></td>
+                <td>${fmt(data.cost_modeling.projected_monthly_1k.haiku_neuron)}</td>
+                <td>${fmt(data.cost_modeling.projected_monthly_1k.haiku_neuron * 12)}</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td><ModeLabel mode="sonnet_raw" /></td>
+                <td>${fmt(data.cost_modeling.projected_monthly_1k.sonnet_raw)}</td>
+                <td>${fmt(data.cost_modeling.projected_monthly_1k.sonnet_raw * 12)}</td>
+                <td style={{ color: '#22c55e' }}>${fmt(data.cost_modeling.annual_savings_vs_sonnet_1k)}</td>
+              </tr>
+              <tr>
+                <td><ModeLabel mode="opus_raw" /></td>
+                <td>${fmt(data.cost_modeling.projected_monthly_1k.opus_raw)}</td>
+                <td>${fmt(data.cost_modeling.projected_monthly_1k.opus_raw * 12)}</td>
+                <td style={{ color: '#22c55e' }}>${fmt(data.cost_modeling.annual_savings_vs_opus_1k)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        {/* Quality by Mode */}
+        <section className="perf-section">
+          <h3>Quality by Answer Mode</h3>
+          <p className="perf-section-desc">Blind evaluation scores across all tested configurations.</p>
+          <table className="perf-table">
+            <thead><tr><th>Mode</th><th>N</th><th>Accuracy</th><th>Complete</th><th>Clarity</th><th>Faith</th><th>Overall</th></tr></thead>
+            <tbody>
+              {data.quality_by_mode.map(q => (
+                <tr key={q.mode}>
+                  <td><ModeLabel mode={q.mode} /></td>
+                  <td>{q.n}</td>
+                  <td>{q.accuracy}</td>
+                  <td>{q.completeness}</td>
+                  <td>{q.clarity}</td>
+                  <td>{q.faithfulness}</td>
+                  <td style={{ fontWeight: 700 }}>{q.overall}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+
+        {/* Reliability */}
+        <section className="perf-section">
+          <h3>Reliability Distribution</h3>
+          <p className="perf-section-desc">
+            Score distribution for Haiku + Neurons ({data.reliability.total_evaluated} evaluations).
+            {' '}<strong>{data.reliability.reliability_pct}%</strong> score 4 or above.
+          </p>
+          <div className="perf-dist">
+            {data.reliability.distribution.map(d => {
+              const maxCount = Math.max(...data.reliability.distribution.map(x => x.count));
+              const colors: Record<number, string> = { 1: '#ef4444', 2: '#fb923c', 3: '#facc15', 4: '#22c55e', 5: '#38bdf8' };
+              return (
+                <div key={d.score} className="perf-dist-row">
+                  <span className="perf-dist-label">Score {d.score}</span>
+                  <div className="perf-dist-bar-wrap">
+                    <Bar value={d.count} max={maxCount} color={colors[d.score] || '#94a3b8'} />
+                  </div>
+                  <span className="perf-dist-count">{d.count} ({pct(d.count / data.reliability.total_evaluated * 100)})</span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Quality Trend */}
+        <section className="perf-section">
+          <h3>Quality Trend</h3>
+          <p className="perf-section-desc">Haiku + Neuron quality improvement as the graph grows.</p>
+          {data.quality_trend.early && data.quality_trend.late && (
+            <table className="perf-table">
+              <thead><tr><th>Period</th><th>Queries</th><th>Overall</th><th>Accuracy</th><th>Completeness</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>Early (1st half)</td>
+                  <td>{data.quality_trend.early.queries}</td>
+                  <td>{data.quality_trend.early.overall}</td>
+                  <td>{data.quality_trend.early.accuracy}</td>
+                  <td>{data.quality_trend.early.completeness}</td>
+                </tr>
+                <tr>
+                  <td>Late (2nd half)</td>
+                  <td>{data.quality_trend.late.queries}</td>
+                  <td style={{ color: data.quality_trend.late.overall > data.quality_trend.early.overall ? '#22c55e' : '#ef4444', fontWeight: 700 }}>
+                    {data.quality_trend.late.overall}
+                  </td>
+                  <td>{data.quality_trend.late.accuracy}</td>
+                  <td>{data.quality_trend.late.completeness}</td>
+                </tr>
+                <tr>
+                  <td style={{ fontStyle: 'italic', color: 'var(--text-dim)' }}>Change</td>
+                  <td />
+                  <td style={{ color: '#22c55e' }}>
+                    +{pct((data.quality_trend.late.overall - data.quality_trend.early.overall) / data.quality_trend.early.overall * 100)}
+                  </td>
+                  <td />
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+          )}
+        </section>
+
+        {/* Neuron Count vs Quality */}
+        <section className="perf-section">
+          <h3>Neuron Count vs Quality</h3>
+          <p className="perf-section-desc">Does selecting more neurons improve answer quality?</p>
+          <table className="perf-table">
+            <thead><tr><th>Neurons Selected</th><th>Queries</th><th>Avg Overall</th></tr></thead>
+            <tbody>
+              {data.neuron_quality_correlation.map(c => (
+                <tr key={c.bucket}>
+                  <td>{c.bucket}</td>
+                  <td>{c.queries}</td>
+                  <td style={{ fontWeight: 700 }}>{c.avg_score}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+
+        {/* Investment */}
+        <section className="perf-section">
+          <h3>Total Investment</h3>
+          <div className="perf-cost-grid">
+            <div className="perf-cost-card">
+              <div className="perf-cost-mode">Query Pipeline</div>
+              <div className="perf-cost-amount">${fmt(data.investment.query_pipeline)}</div>
+              <div className="perf-cost-label">{data.cost_summary.total_queries} queries</div>
+            </div>
+            <div className="perf-cost-card">
+              <div className="perf-cost-mode">Autopilot</div>
+              <div className="perf-cost-amount">${fmt(data.investment.autopilot)}</div>
+              <div className="perf-cost-label">{data.autopilot.reduce((s, a) => s + a.runs, 0)} runs</div>
+            </div>
+            <div className="perf-cost-card" style={{ borderColor: 'var(--accent)' }}>
+              <div className="perf-cost-mode">Total Spend</div>
+              <div className="perf-cost-amount" style={{ color: 'var(--accent)' }}>${fmt(data.investment.total)}</div>
+              <div className="perf-cost-label">{data.neuron_stats.active_neurons} neurons built</div>
+            </div>
+          </div>
+        </section>
+
+        {/* Token Usage */}
+        <section className="perf-section">
+          <h3>Token Usage</h3>
+          <table className="perf-table">
+            <thead><tr><th>Stage</th><th>Input Tokens</th><th>Output Tokens</th><th>Total</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Classification (Stage 1)</td>
+                <td>{fmtK(data.cost_summary.classify_tokens.input)}</td>
+                <td>{fmtK(data.cost_summary.classify_tokens.output)}</td>
+                <td>{fmtK(data.cost_summary.classify_tokens.input + data.cost_summary.classify_tokens.output)}</td>
+              </tr>
+              <tr>
+                <td>Execution (Stage 2)</td>
+                <td>{fmtK(data.cost_summary.execute_tokens.input)}</td>
+                <td>{fmtK(data.cost_summary.execute_tokens.output)}</td>
+                <td>{fmtK(data.cost_summary.execute_tokens.input + data.cost_summary.execute_tokens.output)}</td>
+              </tr>
+              <tr>
+                <td>Evaluation</td>
+                <td>{fmtK(data.cost_summary.eval_tokens.input)}</td>
+                <td>{fmtK(data.cost_summary.eval_tokens.output)}</td>
+                <td>{fmtK(data.cost_summary.eval_tokens.input + data.cost_summary.eval_tokens.output)}</td>
+              </tr>
+              <tr style={{ fontWeight: 700 }}>
+                <td>Total</td>
+                <td>{fmtK(data.cost_summary.total_input_tokens)}</td>
+                <td>{fmtK(data.cost_summary.total_output_tokens)}</td>
+                <td>{fmtK(data.cost_summary.total_input_tokens + data.cost_summary.total_output_tokens)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        {/* Neuron Graph Stats */}
+        <section className="perf-section">
+          <h3>Neuron Graph</h3>
+          <div className="perf-neuron-grid">
+            <div>
+              <h4>Utilization</h4>
+              <table className="perf-table perf-table-compact">
+                <tbody>
+                  <tr><td>Active neurons</td><td>{data.neuron_stats.active_neurons.toLocaleString()}</td></tr>
+                  <tr><td>Distinct fired</td><td>{data.neuron_stats.distinct_fired}</td></tr>
+                  <tr><td>Never fired</td><td>{data.neuron_stats.never_fired} ({pct(data.neuron_stats.never_fired / data.neuron_stats.active_neurons * 100)})</td></tr>
+                  {Object.entries(data.neuron_stats.utilization).map(([k, v]) => (
+                    <tr key={k}><td>{k.replace(/_/g, ' ')}</td><td>{v}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <h4>Layer Distribution</h4>
+              <table className="perf-table perf-table-compact">
+                <tbody>
+                  {Object.entries(data.neuron_stats.layer_distribution).map(([k, v]) => (
+                    <tr key={k}><td>{k}</td><td>{v}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <h4>Department Distribution</h4>
+              <table className="perf-table perf-table-compact">
+                <tbody>
+                  {Object.entries(data.neuron_stats.department_distribution).map(([k, v]) => (
+                    <tr key={k}><td>{k}</td><td>{v}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        {/* Refinement Impact */}
+        <section className="perf-section">
+          <h3>Refinement Impact</h3>
+          <div className="perf-cost-grid">
+            <div className="perf-cost-card">
+              <div className="perf-cost-mode">Neurons Created</div>
+              <div className="perf-cost-amount" style={{ color: '#22c55e' }}>{data.refinement_impact.neurons_created.toLocaleString()}</div>
+              <div className="perf-cost-label">via refinement</div>
+            </div>
+            <div className="perf-cost-card">
+              <div className="perf-cost-mode">Neurons Updated</div>
+              <div className="perf-cost-amount" style={{ color: '#38bdf8' }}>{data.refinement_impact.neurons_updated}</div>
+              <div className="perf-cost-label">via refinement</div>
+            </div>
+          </div>
+          <h4>Graph Growth by Query Phase</h4>
+          <div className="perf-growth-bars">
+            {Object.entries(data.refinement_impact.graph_growth).map(([phase, count]) => {
+              const maxG = Math.max(...Object.values(data.refinement_impact.graph_growth));
+              return (
+                <div key={phase} className="perf-dist-row">
+                  <span className="perf-dist-label" style={{ width: 80 }}>{phase.replace(/_/g, ' ')}</span>
+                  <div className="perf-dist-bar-wrap">
+                    <Bar value={count} max={maxG} color="#60a5fa" />
+                  </div>
+                  <span className="perf-dist-count">{count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Autopilot */}
+        {data.autopilot.length > 0 && (
+          <section className="perf-section">
+            <h3>Autopilot Runs</h3>
+            <table className="perf-table">
+              <thead><tr><th>Status</th><th>Runs</th><th>Avg Score</th><th>Created</th><th>Updated</th><th>Cost</th></tr></thead>
+              <tbody>
+                {data.autopilot.map(a => (
+                  <tr key={a.status}>
+                    <td style={{ color: a.status === 'completed' ? '#22c55e' : '#fb923c' }}>{a.status}</td>
+                    <td>{a.runs}</td>
+                    <td>{a.avg_score}</td>
+                    <td>{a.created}</td>
+                    <td>{a.updated}</td>
+                    <td>${fmt(a.cost)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        )}
+
+        {/* Query Timeline */}
+        <section className="perf-section">
+          <h3>Query Timeline</h3>
+          <p className="perf-section-desc">Per-query cost and quality score over time.</p>
+          <div className="perf-timeline">
+            <div className="perf-timeline-header">
+              <span style={{ width: 40 }}>QID</span>
+              <span style={{ width: 70 }}>Cost</span>
+              <span style={{ width: 60 }}>Neurons</span>
+              <span style={{ flex: 1 }}>Score</span>
+            </div>
+            <div className="perf-timeline-body">
+              {data.query_timeline.map(q => (
+                <div key={q.id} className="perf-timeline-row">
+                  <span style={{ width: 40, color: 'var(--text-dim)' }}>#{q.id}</span>
+                  <span style={{ width: 70 }}>${fmt(q.cost, 4)}</span>
+                  <span style={{ width: 60 }}>{q.neurons}</span>
+                  <span style={{ flex: 1 }}>
+                    {q.score !== null ? (
+                      <span className="perf-score-pip" style={{
+                        background: q.score >= 4 ? '#22c55e' : q.score >= 3 ? '#facc15' : '#ef4444',
+                        width: `${q.score / 5 * 100}%`,
+                      }}>{q.score}</span>
+                    ) : (
+                      <span style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>—</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      </>}
+    </div>
+  );
+}

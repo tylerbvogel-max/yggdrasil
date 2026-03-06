@@ -206,6 +206,66 @@ export default function NextSteps() {
       </section>
 
       <section className="next-steps-section">
+        <h3>Deterministic Query Classification</h3>
+        <span className="status-badge planned">Backlog</span>
+        <p>
+          Currently the pipeline makes <strong>2 LLM calls per query</strong>: (1) Haiku classification
+          (intent, departments, roles, keywords) and (2) per-slot execution. All scoring signals, spread
+          activation, diversity floor, prompt assembly, and co-firing edges are already fully deterministic.
+          The classification stage is the only LLM dependency in the scoring pipeline.
+        </p>
+        <p>
+          Replacing the Haiku classifier with a deterministic alternative would make the entire selection
+          pipeline LLM-free, with only the final execution step requiring a model call.
+        </p>
+
+        <h4>Candidate Approaches</h4>
+        <ul>
+          <li>
+            <strong>Keyword / regex matching</strong> — Match query terms against the known department
+            and role vocabulary. Cheapest and fastest, but brittle with synonyms and novel phrasing.
+            Good enough for well-scoped queries within familiar domains.
+          </li>
+          <li>
+            <strong>TF-IDF / BM25</strong> — Score query terms against existing neuron text corpus to
+            identify relevant departments and roles without any LLM call. Handles partial matches and
+            term frequency better than raw keyword matching.
+          </li>
+          <li>
+            <strong>Local embedding model</strong> — A small sentence-transformer (~30MB) encodes the
+            query and compares against pre-computed department/role embeddings via cosine similarity.
+            Near-LLM classification quality at zero API cost and &lt;10ms latency.
+          </li>
+        </ul>
+
+        <h4>When It Matters</h4>
+        <ul>
+          <li>
+            <strong>High volume</strong> — At 100K queries/day, classification alone costs ~$5/day.
+            A local classifier eliminates it entirely.
+          </li>
+          <li>
+            <strong>Latency</strong> — The Haiku classification call adds ~300-500ms of network roundtrip.
+            A local classifier runs in &lt;10ms. Significant for real-time or interactive applications.
+          </li>
+          <li>
+            <strong>Air-gapped deployment</strong> — Defense customers may need the scoring pipeline to
+            work without external API calls. A deterministic classifier makes the entire selection pipeline
+            air-gappable, with only the final execution needing an LLM endpoint.
+          </li>
+        </ul>
+
+        <h4>Current Recommendation</h4>
+        <p>
+          Keep Haiku classification for now — it costs ~$0.00005 per call and handles edge cases well.
+          Design the classifier interface so it's swappable: the downstream pipeline only consumes a
+          structured dict (intent, departments, role_keys, keywords). Any replacement slots in behind
+          the same <code>classify_query()</code> function signature without touching scoring, assembly,
+          or execution code.
+        </p>
+      </section>
+
+      <section className="next-steps-section">
         <h3>Microglia — Quality Scanner</h3>
         <span className="status-badge planned">Planned</span>
         <p>Three threat vectors, three detection strategies:</p>
@@ -363,6 +423,7 @@ export default function NextSteps() {
             <tr><td>Cross-Ref Chasing</td><td>Graph traversal at query time</td><td><span className="status-badge planned">Tier 2</span></td></tr>
             <tr><td>Microglia</td><td>Quality scanner + quarantine</td><td><span className="status-badge planned">Planned</span></td></tr>
             <tr><td>Ependymal</td><td>Graph hygiene / reorg</td><td><span className="status-badge planned">Planned</span></td></tr>
+            <tr><td>Deterministic Classifier</td><td>LLM-free query classification</td><td><span className="status-badge planned">Backlog</span></td></tr>
             <tr><td>PostgreSQL Migration</td><td>Multi-user scaling (SQLAlchemy swap)</td><td><span className="status-badge planned">When Needed</span></td></tr>
           </tbody>
         </table>

@@ -11,7 +11,7 @@ from sqlalchemy import select, func, text
 
 from app.database import engine, async_session
 from app.models import Base, Neuron, SystemState
-from app.routers import query, neurons, admin, autopilot
+from app.routers import query, neurons, admin, autopilot, performance
 from app.seed.loader import load_seed
 from app.seed.regulatory_seed import seed_regulatory
 
@@ -137,6 +137,7 @@ app.include_router(query.router)
 app.include_router(neurons.router)
 app.include_router(admin.router)
 app.include_router(autopilot.router)
+app.include_router(performance.router)
 
 
 @app.get("/health")

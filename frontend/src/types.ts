@@ -87,6 +87,9 @@ export interface NeuronScoreResponse {
   recency: number;
   relevance: number;
   spread_boost: number;
+  label: string | null;
+  department: string | null;
+  layer: number;
 }
 
 export interface QueryResponse {

@@ -99,8 +99,8 @@ export function submitRating(queryId: number, utility: number): Promise<RatingRe
   });
 }
 
-export function refineQuery(queryId: number, model: 'haiku' | 'sonnet', userContext?: string): Promise<RefineResponse> {
-  const body: Record<string, string> = { model };
+export function refineQuery(queryId: number, model: 'haiku' | 'sonnet' | 'opus', maxTokens: number = 4096, userContext?: string): Promise<RefineResponse> {
+  const body: Record<string, string | number> = { model, max_tokens: maxTokens };
   if (userContext?.trim()) body.user_context = userContext.trim();
   return json<RefineResponse>(`/query/${queryId}/refine`, {
     method: 'POST',
@@ -197,4 +197,9 @@ export function cancelAutopilotTick(): Promise<AutopilotTickResponse> {
 
 export function fetchAutopilotStatus(): Promise<{ running: boolean; step: string; detail: string }> {
   return json<{ running: boolean; step: string; detail: string }>('/admin/autopilot/status');
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function fetchPerformance(): Promise<any> {
+  return json<unknown>('/admin/performance');
 }

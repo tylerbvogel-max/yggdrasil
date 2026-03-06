@@ -189,7 +189,10 @@ async def execute_query(
         query.neuron_scores_json = json.dumps([
             {"neuron_id": s.neuron_id, "combined": s.combined, "burst": s.burst,
              "impact": s.impact, "precision": s.precision, "novelty": s.novelty,
-             "recency": s.recency, "relevance": s.relevance, "spread_boost": s.spread_boost}
+             "recency": s.recency, "relevance": s.relevance, "spread_boost": s.spread_boost,
+             "label": neuron_map[s.neuron_id].label if s.neuron_id in neuron_map else None,
+             "department": neuron_map[s.neuron_id].department if s.neuron_id in neuron_map else None,
+             "layer": neuron_map[s.neuron_id].layer if s.neuron_id in neuron_map else 0}
             for s in all_scored
         ])
 
@@ -230,8 +233,11 @@ async def execute_query(
     neuron_scores = [
         {"neuron_id": s.neuron_id, "combined": s.combined, "burst": s.burst,
          "impact": s.impact, "precision": s.precision, "novelty": s.novelty, "recency": s.recency,
-         "relevance": s.relevance, "spread_boost": s.spread_boost}
-        for s in all_scored[:10]
+         "relevance": s.relevance, "spread_boost": s.spread_boost,
+         "label": neuron_map[s.neuron_id].label if s.neuron_id in neuron_map else None,
+         "department": neuron_map[s.neuron_id].department if s.neuron_id in neuron_map else None,
+         "layer": neuron_map[s.neuron_id].layer if s.neuron_id in neuron_map else 0}
+        for s in all_scored
     ]
 
     return {

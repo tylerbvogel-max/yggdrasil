@@ -40,6 +40,9 @@ class NeuronScoreResponse(BaseModel):
     recency: float
     relevance: float
     spread_boost: float = 0
+    label: str | None = None
+    department: str | None = None
+    layer: int = 0
 
 
 class QueryResponse(BaseModel):
@@ -200,8 +203,9 @@ class QueryDetail(BaseModel):
 
 
 class RefineRequest(BaseModel):
-    model: str = Field("haiku", pattern="^(haiku|sonnet)$")
-    user_context: str | None = Field(None, max_length=4000)
+    model: str = Field("haiku", pattern="^(haiku|sonnet|opus)$")
+    max_tokens: int = Field(4096, ge=512, le=16384)
+    user_context: str | None = Field(None, max_length=16000)
 
 
 class NeuronUpdateSuggestion(BaseModel):

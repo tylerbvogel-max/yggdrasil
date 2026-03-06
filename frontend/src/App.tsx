@@ -11,9 +11,12 @@ import AutopilotPage from './components/AutopilotPage'
 import CirclePacking from './components/CirclePacking'
 import AboutPage from './components/AboutPage'
 import MonetizationPage from './components/MonetizationPage'
+import SampleQueries from './components/SampleQueries'
 import DeptChordDiagram from './components/DeptChordDiagram'
+import SecurityPage from './components/SecurityPage'
+import PerformancePage from './components/PerformancePage'
 
-type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'pipeline' | 'evaluation' | 'refinements' | 'bolster' | 'autopilot' | 'nextsteps' | 'about' | 'monetization';
+type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'bolster' | 'autopilot' | 'nextsteps' | 'about' | 'monetization' | 'security' | 'performance';
 
 interface NavItem {
   key: Tab;
@@ -35,9 +38,17 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: 'Training',
     items: [
       { key: 'query', label: 'Query Lab' },
+      { key: 'samples', label: 'Samples' },
       { key: 'refinements', label: 'Refinements' },
       { key: 'bolster', label: 'Bolster' },
       { key: 'autopilot', label: 'Autopilot' },
+      { key: 'performance', label: 'Performance' },
+    ],
+  },
+  {
+    label: 'Security',
+    items: [
+      { key: 'security', label: 'NIST AI RMF' },
     ],
   },
   {
@@ -95,10 +106,13 @@ export default function App() {
         {tab === 'evaluation' && <EvaluationPage />}
         {tab === 'refinements' && <RefinementHistory />}
         <div style={{ display: tab === 'bolster' ? 'contents' : 'none' }}><BolsterPage /></div>
+        {tab === 'samples' && <SampleQueries />}
         {tab === 'autopilot' && <AutopilotPage />}
         {tab === 'nextsteps' && <NextSteps />}
         {tab === 'about' && <AboutPage />}
         {tab === 'monetization' && <MonetizationPage />}
+        {tab === 'security' && <SecurityPage />}
+        {tab === 'performance' && <PerformancePage />}
       </main>
     </div>
   )

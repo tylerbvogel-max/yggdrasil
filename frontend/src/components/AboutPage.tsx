@@ -44,7 +44,10 @@ export default function AboutPage() {
             <p>
               In regulated industries (defense, aerospace, medical, financial), "the AI said so" is not an acceptable
               audit trail. Every federal contractor needs to demonstrate <em>why</em> a decision was made and
-              <em> what information informed it</em>. Yggdrasil provides full provenance:
+              <em> what information informed it</em>. The <strong>NIST AI Risk Management Framework (AI RMF, NIST AI 100-1)</strong> defines
+              traceability and explainability as core requirements for trustworthy AI &mdash; its Map and Measure functions
+              require organizations to document system behavior and reconstruct how outputs were produced.
+              Yggdrasil provides full provenance aligned with these requirements:
               <strong> every classification, score, neuron selection, assembled prompt, and response is logged</strong>.
               The only non-deterministic step is the final LLM generation &mdash; everything else is reproducible.
             </p>

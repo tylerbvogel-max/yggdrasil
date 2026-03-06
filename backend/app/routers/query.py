@@ -511,7 +511,7 @@ async def refine_query(
             f"neuron content:\n\n{req.user_context.strip()}"
         )
 
-    result = await claude_chat(system_prompt, user_prompt, max_tokens=4096, model=req.model)
+    result = await claude_chat(system_prompt, user_prompt, max_tokens=req.max_tokens, model=req.model)
 
     raw_text = result["text"].strip()
 
