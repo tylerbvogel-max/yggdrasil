@@ -9,6 +9,10 @@ frontend/dist/
 
 # Data
 backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+backend/*.db.bak*
+backend/*.json
 
 # Env
 .env
