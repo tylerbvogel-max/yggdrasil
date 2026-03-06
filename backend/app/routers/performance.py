@@ -1,9 +1,11 @@
 """GET /admin/performance — Pure SQL analytics, no LLM invocation."""
 
-import json
+import math
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+import numpy as np
+from scipy import stats as sp_stats
 
 from app.database import get_db
 
@@ -300,7 +302,243 @@ async def performance_report(db: AsyncSession = Depends(get_db)):
         for r in rows
     ]
 
+    # --- 12. Statistical significance tests ---
+    async def _get_scores(mode: str, col: str = "overall") -> list[float]:
+        rows = (await db.execute(text(
+            f"SELECT {col} FROM eval_scores WHERE answer_mode = :m"
+        ), {"m": mode})).fetchall()
+        return [float(r[0]) for r in rows]
+
+    hn_overall = await _get_scores("haiku_neuron")
+    op_overall = await _get_scores("opus_raw")
+    hr_overall = await _get_scores("haiku_raw")
+    sn_overall = await _get_scores("sonnet_neuron")
+    on_overall = await _get_scores("opus_neuron")
+    sr_overall = await _get_scores("sonnet_raw")
+    hn_comp = await _get_scores("haiku_neuron", "completeness")
+    op_comp = await _get_scores("opus_raw", "completeness")
+
+    stat_tests = []
+
+    def _cohens_d(a: np.ndarray, b: np.ndarray) -> float:
+        na, nb = len(a), len(b)
+        if na < 2 or nb < 2:
+            return 0.0
+        pooled = np.sqrt(((na - 1) * a.std(ddof=1)**2 + (nb - 1) * b.std(ddof=1)**2) / (na + nb - 2))
+        return float((a.mean() - b.mean()) / pooled) if pooled > 0 else 0.0
+
+    def _effect_label(d: float) -> str:
+        ad = abs(d)
+        if ad < 0.2: return "negligible"
+        if ad < 0.5: return "small"
+        if ad < 0.8: return "medium"
+        return "large"
+
+    def _power_n(d: float) -> int:
+        """Sample size per group needed for 80% power at alpha=0.05."""
+        if abs(d) < 0.01:
+            return 99999
+        from scipy.stats import norm
+        z_a = norm.ppf(0.975)
+        z_b = norm.ppf(0.80)
+        return math.ceil(((z_a + z_b) / abs(d)) ** 2)
+
+    # Test 1: Haiku+Neurons vs Opus Raw (overall)
+    if len(hn_overall) >= 3 and len(op_overall) >= 3:
+        hn_arr = np.array(hn_overall)
+        op_arr = np.array(op_overall)
+        t_stat, t_p = sp_stats.ttest_ind(hn_arr, op_arr, equal_var=False)
+        u_stat, mw_p = sp_stats.mannwhitneyu(hn_arr, op_arr, alternative='two-sided')
+        d = _cohens_d(hn_arr, op_arr)
+        diff = float(hn_arr.mean() - op_arr.mean())
+        se = np.sqrt(hn_arr.std(ddof=1)**2/len(hn_arr) + op_arr.std(ddof=1)**2/len(op_arr))
+        n_need = _power_n(d)
+        stat_tests.append({
+            "id": "quality_gap",
+            "title": "Haiku+Neurons vs Opus Raw — Overall Quality",
+            "description": "Tests whether the quality difference between cheap enriched queries and expensive raw queries is statistically real.",
+            "group_a": {"label": "Haiku+Neurons", "n": len(hn_arr), "mean": round(float(hn_arr.mean()), 3), "std": round(float(hn_arr.std(ddof=1)), 3)},
+            "group_b": {"label": "Opus Raw", "n": len(op_arr), "mean": round(float(op_arr.mean()), 3), "std": round(float(op_arr.std(ddof=1)), 3)},
+            "welch_t": round(float(t_stat), 4), "welch_p": round(float(t_p), 6),
+            "mann_whitney_u": round(float(u_stat), 1), "mann_whitney_p": round(float(mw_p), 6),
+            "cohens_d": round(d, 3), "effect_size": _effect_label(d),
+            "mean_diff": round(diff, 3),
+            "ci_95": [round(diff - 1.96 * float(se), 3), round(diff + 1.96 * float(se), 3)],
+            "n_needed_80pct_power": n_need,
+            "adequately_powered": min(len(hn_arr), len(op_arr)) >= n_need,
+            "significant_welch": float(t_p) < 0.05,
+            "significant_mw": float(mw_p) < 0.05,
+        })
+
+    # Test 2: Haiku+Neurons vs Haiku Raw (neuron value-add)
+    if len(hn_overall) >= 3 and len(hr_overall) >= 3:
+        hn_arr = np.array(hn_overall)
+        hr_arr = np.array(hr_overall)
+        u2, mw2_p = sp_stats.mannwhitneyu(hn_arr, hr_arr, alternative='greater')
+        d2 = _cohens_d(hn_arr, hr_arr)
+        stat_tests.append({
+            "id": "neuron_value",
+            "title": "Haiku+Neurons vs Haiku Raw — Neuron Value-Add",
+            "description": "Tests whether adding neuron context measurably improves Haiku's answer quality.",
+            "group_a": {"label": "Haiku+Neurons", "n": len(hn_arr), "mean": round(float(hn_arr.mean()), 3)},
+            "group_b": {"label": "Haiku Raw", "n": len(hr_arr), "mean": round(float(hr_arr.mean()), 3)},
+            "mann_whitney_u": round(float(u2), 1), "mann_whitney_p": round(float(mw2_p), 6),
+            "cohens_d": round(d2, 3), "effect_size": _effect_label(d2),
+            "one_sided": True,
+            "significant_mw": float(mw2_p) < 0.05,
+            "warning": f"n={len(hr_arr)} for Haiku Raw is critically small" if len(hr_arr) < 10 else None,
+        })
+
+    # Test 3: All enriched vs all raw (pooled)
+    enriched_all = hn_overall + sn_overall + on_overall
+    raw_all = op_overall + sr_overall + hr_overall
+    if len(enriched_all) >= 3 and len(raw_all) >= 3:
+        en_arr = np.array(enriched_all)
+        ra_arr = np.array(raw_all)
+        t3, p3 = sp_stats.ttest_ind(en_arr, ra_arr, equal_var=False)
+        u3, mw3 = sp_stats.mannwhitneyu(en_arr, ra_arr, alternative='two-sided')
+        d3 = _cohens_d(en_arr, ra_arr)
+        n3 = _power_n(d3)
+        stat_tests.append({
+            "id": "enriched_vs_raw",
+            "title": "All Enriched vs All Raw (Pooled)",
+            "description": "Pools all neuron-enriched evaluations against all raw evaluations across models.",
+            "group_a": {"label": "All Enriched", "n": len(en_arr), "mean": round(float(en_arr.mean()), 3), "std": round(float(en_arr.std(ddof=1)), 3)},
+            "group_b": {"label": "All Raw", "n": len(ra_arr), "mean": round(float(ra_arr.mean()), 3), "std": round(float(ra_arr.std(ddof=1)), 3)},
+            "welch_t": round(float(t3), 4), "welch_p": round(float(p3), 6),
+            "mann_whitney_u": round(float(u3), 1), "mann_whitney_p": round(float(mw3), 6),
+            "cohens_d": round(d3, 3), "effect_size": _effect_label(d3),
+            "n_needed_80pct_power": n3,
+            "adequately_powered": min(len(en_arr), len(ra_arr)) >= n3,
+            "significant_welch": float(p3) < 0.05,
+            "significant_mw": float(mw3) < 0.05,
+        })
+
+    # Test 4: Quality trend (early vs late)
+    early_scores = [float(r[0]) for r in (await db.execute(text(
+        f"SELECT overall FROM eval_scores WHERE answer_mode='haiku_neuron' AND query_id <= {median_id}"
+    ))).fetchall()]
+    late_scores = [float(r[0]) for r in (await db.execute(text(
+        f"SELECT overall FROM eval_scores WHERE answer_mode='haiku_neuron' AND query_id > {median_id}"
+    ))).fetchall()]
+    if len(early_scores) >= 3 and len(late_scores) >= 3:
+        ea = np.array(early_scores)
+        la = np.array(late_scores)
+        t4, p4 = sp_stats.ttest_ind(la, ea, equal_var=False, alternative='greater')
+        u4, mw4 = sp_stats.mannwhitneyu(la, ea, alternative='greater')
+        stat_tests.append({
+            "id": "quality_trend",
+            "title": "Quality Trend — Early vs Late",
+            "description": "Tests whether Haiku+Neuron quality improved as the graph grew over time.",
+            "group_a": {"label": f"Late (Q{median_id+1}-{total_queries})", "n": len(la), "mean": round(float(la.mean()), 3), "std": round(float(la.std(ddof=1)), 3)},
+            "group_b": {"label": f"Early (Q1-{median_id})", "n": len(ea), "mean": round(float(ea.mean()), 3), "std": round(float(ea.std(ddof=1)), 3)},
+            "welch_t": round(float(t4), 4), "welch_p": round(float(p4), 6),
+            "mann_whitney_u": round(float(u4), 1), "mann_whitney_p": round(float(mw4), 6),
+            "one_sided": True,
+            "significant_welch": float(p4) < 0.05,
+            "significant_mw": float(mw4) < 0.05,
+        })
+
+    # Test 5: Reliability binomial CI
+    if len(hn_overall) >= 3:
+        n_tot = len(hn_overall)
+        n_good = sum(1 for s in hn_overall if s >= 4)
+        p_hat = n_good / n_tot
+        z = 1.96
+        denom = 1 + z**2 / n_tot
+        center = (p_hat + z**2 / (2 * n_tot)) / denom
+        margin = z * math.sqrt(p_hat * (1 - p_hat) / n_tot + z**2 / (4 * n_tot**2)) / denom
+
+        bt75 = sp_stats.binomtest(n_good, n_tot, 0.75, alternative='greater')
+        bt70 = sp_stats.binomtest(n_good, n_tot, 0.70, alternative='greater')
+
+        stat_tests.append({
+            "id": "reliability",
+            "title": "Reliability — Score >= 4 Rate",
+            "description": "Wilson confidence interval and binomial tests for the proportion of queries scoring 4 or above.",
+            "n_total": n_tot, "n_good": n_good, "observed_rate": round(p_hat * 100, 1),
+            "wilson_ci_95": [round((center - margin) * 100, 1), round((center + margin) * 100, 1)],
+            "binomial_75": {"p": round(float(bt75.pvalue), 6), "significant": float(bt75.pvalue) < 0.05,
+                            "claim": "Can claim >75% reliability" if float(bt75.pvalue) < 0.05 else "Cannot claim >75% reliability"},
+            "binomial_70": {"p": round(float(bt70.pvalue), 6), "significant": float(bt70.pvalue) < 0.05,
+                            "claim": "Can claim >70% reliability" if float(bt70.pvalue) < 0.05 else "Cannot claim >70% reliability"},
+        })
+
+    # Test 6: Completeness H+N > Opus Raw
+    if len(hn_comp) >= 3 and len(op_comp) >= 3:
+        hnc = np.array(hn_comp)
+        opc = np.array(op_comp)
+        u6, mw6 = sp_stats.mannwhitneyu(hnc, opc, alternative='greater')
+        d6 = _cohens_d(hnc, opc)
+        n6 = _power_n(d6)
+        stat_tests.append({
+            "id": "completeness",
+            "title": "Completeness — Haiku+Neurons vs Opus Raw",
+            "description": "Tests whether neuron context gives Haiku better completeness than Opus achieves natively.",
+            "group_a": {"label": "Haiku+Neurons", "n": len(hnc), "mean": round(float(hnc.mean()), 3)},
+            "group_b": {"label": "Opus Raw", "n": len(opc), "mean": round(float(opc.mean()), 3)},
+            "mann_whitney_u": round(float(u6), 1), "mann_whitney_p": round(float(mw6), 6),
+            "cohens_d": round(d6, 3), "effect_size": _effect_label(d6),
+            "one_sided": True,
+            "n_needed_80pct_power": n6,
+            "adequately_powered": min(len(hnc), len(opc)) >= n6,
+            "significant_mw": float(mw6) < 0.05,
+        })
+
+    # --- Benjamini-Hochberg FDR correction across all tests ---
+    # Collect all p-values with their test index and field name
+    raw_pvals: list[tuple[int, str, float]] = []
+    for i, t in enumerate(stat_tests):
+        if "mann_whitney_p" in t:
+            raw_pvals.append((i, "mann_whitney", t["mann_whitney_p"]))
+        if "welch_p" in t:
+            raw_pvals.append((i, "welch", t["welch_p"]))
+        if "binomial_75" in t:
+            raw_pvals.append((i, "binom75", t["binomial_75"]["p"]))
+        if "binomial_70" in t:
+            raw_pvals.append((i, "binom70", t["binomial_70"]["p"]))
+
+    if raw_pvals:
+        m = len(raw_pvals)
+        sorted_pvals = sorted(raw_pvals, key=lambda x: x[2])
+        adjusted = [0.0] * m
+        for rank_idx in range(m - 1, -1, -1):
+            rank = rank_idx + 1
+            raw_p = sorted_pvals[rank_idx][2]
+            bh_p = raw_p * m / rank
+            if rank_idx < m - 1:
+                bh_p = min(bh_p, adjusted[rank_idx + 1])
+            adjusted[rank_idx] = min(bh_p, 1.0)
+
+        # Write adjusted p-values and FDR significance back into tests
+        for rank_idx, (test_i, field, _raw_p) in enumerate(sorted_pvals):
+            adj_p = round(adjusted[rank_idx], 6)
+            t = stat_tests[test_i]
+            if field == "mann_whitney":
+                t["mann_whitney_p_adj"] = adj_p
+                t["significant_mw_fdr"] = adj_p < 0.05
+            elif field == "welch":
+                t["welch_p_adj"] = adj_p
+                t["significant_welch_fdr"] = adj_p < 0.05
+            elif field == "binom75":
+                t["binomial_75"]["p_adj"] = adj_p
+                t["binomial_75"]["significant_fdr"] = adj_p < 0.05
+            elif field == "binom70":
+                t["binomial_70"]["p_adj"] = adj_p
+                t["binomial_70"]["significant_fdr"] = adj_p < 0.05
+
+        fdr_summary = {
+            "method": "Benjamini-Hochberg",
+            "total_tests": m,
+            "alpha": 0.05,
+            "description": "Controls false discovery rate — the expected proportion of false positives among rejected hypotheses.",
+        }
+    else:
+        fdr_summary = None
+
     return {
+        "stat_tests": stat_tests,
+        "fdr_correction": fdr_summary,
         "cost_summary": cost_summary,
         "cost_modeling": cost_modeling,
         "quality_by_mode": quality_by_mode,

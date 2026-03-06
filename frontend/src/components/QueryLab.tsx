@@ -722,6 +722,17 @@ export default function QueryLab() {
     setSelectedQuery(null);
     // Mark all slots as loading
     setSlotLoadingSet(new Set(slotConfigs.map((_, i) => i)));
+    // Add pending entry to history immediately
+    const pendingEntry: QuerySummary = {
+      id: -Date.now(),
+      user_message: message,
+      classified_intent: null,
+      modes: specs.map(s => s.mode),
+      cost_usd: null,
+      user_rating: null,
+      created_at: new Date().toISOString(),
+    };
+    setHistory(prev => [pendingEntry, ...prev]);
     try {
       const res = await submitQuery(message, specs);
       setResult(res);
@@ -789,25 +800,30 @@ export default function QueryLab() {
         {!historyCollapsed && (
           <>
             {history.length === 0 && <div className="history-empty">No queries yet</div>}
-            {history.map(q => (
-              <div
-                key={q.id}
-                className={`history-item${selectedQuery?.id === q.id ? ' selected' : ''}`}
-                onClick={() => selectHistoryItem(q.id)}
-              >
-                <div className="history-msg">{q.user_message}</div>
-                <div className="history-meta">
-                  {q.classified_intent && <span className="tag intent">{q.classified_intent}</span>}
-                  <span className="history-modes">
-                    {q.modes.map(m => {
-                      const def = ALL_MODES.find(d => d.key === m);
-                      return <span key={m} className="mode-badge" style={{ background: (MODE_COLORS[m] ?? '#8892a8') + '33', color: MODE_COLORS[m] ?? '#8892a8' }}>{def?.short ?? m}</span>;
-                    })}
-                  </span>
-                  {q.cost_usd != null && <span className="history-cost">${q.cost_usd.toFixed(4)}</span>}
+            {history.map(q => {
+              const isPending = q.id < 0;
+              return (
+                <div
+                  key={q.id}
+                  className={`history-item${selectedQuery?.id === q.id ? ' selected' : ''}${isPending ? ' pending' : ''}`}
+                  onClick={() => !isPending && selectHistoryItem(q.id)}
+                  style={isPending ? { cursor: 'default' } : undefined}
+                >
+                  <div className="history-msg">{q.user_message}</div>
+                  <div className="history-meta">
+                    {isPending && <span className="tag intent" style={{ opacity: 0.7 }}>Running...</span>}
+                    {!isPending && q.classified_intent && <span className="tag intent">{q.classified_intent}</span>}
+                    <span className="history-modes">
+                      {q.modes.map(m => {
+                        const def = ALL_MODES.find(d => d.key === m);
+                        return <span key={m} className="mode-badge" style={{ background: (MODE_COLORS[m] ?? '#8892a8') + '33', color: MODE_COLORS[m] ?? '#8892a8' }}>{def?.short ?? m}</span>;
+                      })}
+                    </span>
+                    {q.cost_usd != null && <span className="history-cost">${q.cost_usd.toFixed(4)}</span>}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </>
         )}
       </div>

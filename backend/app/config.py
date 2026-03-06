@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     spread_min_edge_weight: float = 0.15
     spread_decay: float = 0.5
     spread_min_activation: float = 0.15
+    spread_max_hops: int = 3
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

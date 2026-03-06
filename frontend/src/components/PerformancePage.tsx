@@ -30,7 +30,30 @@ interface Investment { query_pipeline: number; autopilot: number; total: number 
 interface NeuronQualityCorr { bucket: string; queries: number; avg_score: number }
 interface QueryTimelinePoint { id: number; cost: number; neurons: number; score: number | null; created_at: string | null }
 
+interface GroupStats { label: string; n: number; mean: number; std?: number }
+interface BinomialResult { p: number; significant: boolean; claim: string }
+interface StatTest {
+  id: string; title: string; description: string;
+  group_a?: GroupStats; group_b?: GroupStats;
+  welch_t?: number; welch_p?: number; welch_p_adj?: number;
+  mann_whitney_u?: number; mann_whitney_p?: number; mann_whitney_p_adj?: number;
+  cohens_d?: number; effect_size?: string;
+  mean_diff?: number; ci_95?: [number, number];
+  n_needed_80pct_power?: number; adequately_powered?: boolean;
+  significant_welch?: boolean; significant_mw?: boolean;
+  significant_welch_fdr?: boolean; significant_mw_fdr?: boolean;
+  one_sided?: boolean; warning?: string | null;
+  // reliability-specific
+  n_total?: number; n_good?: number; observed_rate?: number;
+  wilson_ci_95?: [number, number];
+  binomial_75?: BinomialResult & { p_adj?: number; significant_fdr?: boolean };
+  binomial_70?: BinomialResult & { p_adj?: number; significant_fdr?: boolean };
+}
+
+interface FdrCorrection { method: string; total_tests: number; alpha: number; description: string }
 interface PerfData {
+  stat_tests: StatTest[];
+  fdr_correction: FdrCorrection | null;
   cost_summary: CostSummary; cost_modeling: CostModeling; quality_by_mode: QualityMode[];
   quality_ratio: number | null; reliability: Reliability;
   quality_trend: Record<string, TrendPeriod>; neuron_stats: NeuronStats;
@@ -118,6 +141,137 @@ export default function PerformancePage() {
             <span className="perf-hero-label">Total queries</span>
           </div>
         </div>
+
+        {/* Statistical Significance */}
+        {data.stat_tests.length > 0 && (
+          <section className="perf-section">
+            <h3>Statistical Significance</h3>
+            <p className="perf-section-desc">
+              Hypothesis tests validating whether observed differences are statistically real or could be noise.
+              Tests use &alpha;=0.05. Mann-Whitney U is preferred for ordinal (1&ndash;5) scale data.
+              {data.fdr_correction && <> All p-values are corrected for multiple comparisons using <strong>{data.fdr_correction.method}</strong> FDR
+              ({data.fdr_correction.total_tests} tests). Significance badges reflect adjusted p-values.</>}
+            </p>
+
+            <div className="stat-tests">
+              {data.stat_tests.map(t => {
+                const isSigRaw = t.significant_mw ?? t.significant_welch ?? (t.binomial_70?.significant);
+                const isSigFdr = t.significant_mw_fdr ?? t.significant_welch_fdr ?? (t.binomial_70?.significant_fdr);
+                const isSig = isSigFdr ?? isSigRaw;
+                return (
+                  <div key={t.id} className={`stat-test-card ${isSig ? 'stat-sig' : 'stat-ns'}`}>
+                    <div className="stat-test-header">
+                      <strong>{t.title}</strong>
+                      <span className={`stat-badge ${isSig ? 'stat-badge-sig' : 'stat-badge-ns'}`}>
+                        {isSig ? 'Significant (FDR)' : 'Not Significant (FDR)'}
+                      </span>
+                    </div>
+                    <p className="stat-test-desc">{t.description}</p>
+
+                    {t.warning && <p className="stat-test-warn">{t.warning}</p>}
+
+                    {/* Group comparison tests */}
+                    {t.group_a && t.group_b && (
+                      <div className="stat-test-groups">
+                        <div className="stat-test-group">
+                          <span className="stat-group-label">{t.group_a.label}</span>
+                          <span>n={t.group_a.n}, mean={t.group_a.mean}{t.group_a.std !== undefined ? `, std=${t.group_a.std}` : ''}</span>
+                        </div>
+                        <div className="stat-test-group">
+                          <span className="stat-group-label">{t.group_b.label}</span>
+                          <span>n={t.group_b.n}, mean={t.group_b.mean}{t.group_b.std !== undefined ? `, std=${t.group_b.std}` : ''}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="stat-test-results">
+                      {t.mann_whitney_p !== undefined && (
+                        <div className="stat-result-row">
+                          <span className="stat-result-label">Mann-Whitney U{t.one_sided ? ' (one-sided)' : ''}</span>
+                          <span>U={t.mann_whitney_u}</span>
+                          <span className={t.significant_mw ? 'stat-p-sig' : 'stat-p-ns'}>
+                            p={t.mann_whitney_p < 0.000001 ? '<0.000001' : t.mann_whitney_p.toFixed(6)}
+                          </span>
+                          {t.mann_whitney_p_adj !== undefined && (
+                            <span className={t.significant_mw_fdr ? 'stat-p-sig' : 'stat-p-ns'}>
+                              p<sub>adj</sub>={t.mann_whitney_p_adj.toFixed(6)}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {t.welch_p !== undefined && (
+                        <div className="stat-result-row">
+                          <span className="stat-result-label">Welch's t-test</span>
+                          <span>t={t.welch_t}</span>
+                          <span className={t.significant_welch ? 'stat-p-sig' : 'stat-p-ns'}>
+                            p={t.welch_p.toFixed(6)}
+                          </span>
+                          {t.welch_p_adj !== undefined && (
+                            <span className={t.significant_welch_fdr ? 'stat-p-sig' : 'stat-p-ns'}>
+                              p<sub>adj</sub>={t.welch_p_adj.toFixed(6)}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {t.cohens_d !== undefined && (
+                        <div className="stat-result-row">
+                          <span className="stat-result-label">Effect size</span>
+                          <span>Cohen's d={t.cohens_d}</span>
+                          <span className="stat-effect">{t.effect_size}</span>
+                        </div>
+                      )}
+                      {t.ci_95 && (
+                        <div className="stat-result-row">
+                          <span className="stat-result-label">Mean diff</span>
+                          <span>{t.mean_diff}</span>
+                          <span>95% CI: [{t.ci_95[0]}, {t.ci_95[1]}]</span>
+                        </div>
+                      )}
+                      {t.n_needed_80pct_power !== undefined && (
+                        <div className="stat-result-row">
+                          <span className="stat-result-label">Power (80%)</span>
+                          <span>Need n={t.n_needed_80pct_power}/group</span>
+                          <span className={t.adequately_powered ? 'stat-p-sig' : 'stat-p-ns'}>
+                            {t.adequately_powered ? 'Adequately powered' : 'Underpowered'}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Reliability-specific */}
+                      {t.observed_rate !== undefined && (
+                        <>
+                          <div className="stat-result-row">
+                            <span className="stat-result-label">Observed</span>
+                            <span>{t.n_good}/{t.n_total} = {t.observed_rate}%</span>
+                            <span>Wilson 95% CI: [{t.wilson_ci_95?.[0]}%, {t.wilson_ci_95?.[1]}%]</span>
+                          </div>
+                          {t.binomial_75 && (
+                            <div className="stat-result-row">
+                              <span className="stat-result-label">H0: rate &le; 75%</span>
+                              <span className={t.binomial_75.significant ? 'stat-p-sig' : 'stat-p-ns'}>
+                                p={t.binomial_75.p.toFixed(6)}
+                              </span>
+                              <span>{t.binomial_75.claim}</span>
+                            </div>
+                          )}
+                          {t.binomial_70 && (
+                            <div className="stat-result-row">
+                              <span className="stat-result-label">H0: rate &le; 70%</span>
+                              <span className={t.binomial_70.significant ? 'stat-p-sig' : 'stat-p-ns'}>
+                                p={t.binomial_70.p.toFixed(6)}
+                              </span>
+                              <span>{t.binomial_70.claim}</span>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {/* Cost Modeling */}
         <section className="perf-section">

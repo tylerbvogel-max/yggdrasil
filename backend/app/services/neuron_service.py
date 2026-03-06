@@ -177,10 +177,16 @@ async def spread_activation(
     scored: list[NeuronScoreBreakdown],
     top_k_count: int,
 ) -> list[NeuronScoreBreakdown]:
-    """Spread activation through NeuronEdge graph to pull in associatively-linked neurons.
+    """Multi-hop spread activation through NeuronEdge co-firing graph.
 
-    After initial scoring, does a single-hop spread through high-weight edges to
-    promote neighbors with strong connections into the top-K.
+    Propagates activation from top-K neurons through high-weight edges to discover
+    associatively-linked neurons, including "bridge" entities not directly connected
+    to the query but reachable via intermediate nodes. Based on spreading activation
+    theory from cognitive science (Collins & Loftus 1975) and adapted for KG-based
+    RAG per SA-RAG (Pavlovic et al., arXiv:2512.15922, Dec 2025).
+
+    Each hop compounds decay: hop-N activation = source_activation * edge_weight * decay.
+    Uses max (not sum) across paths to prevent hub bias.
     """
     if not settings.spread_enabled or not scored:
         return scored
@@ -190,45 +196,59 @@ async def spread_activation(
     top_k_ids = {s.neuron_id for s in top_k}
     score_by_id = {s.neuron_id: s for s in scored}
 
-    # Fetch all qualifying edges where at least one endpoint is in top-K
+    # Track best activation seen for each neighbor across all hops
+    neighbor_activation: dict[int, float] = {}  # neighbor_id → max activation
+
+    # Frontier starts as top-K neurons with their combined scores
+    frontier: dict[int, float] = {s.neuron_id: s.combined for s in top_k}
+    visited: set[int] = set(top_k_ids)
+
+    # Pre-fetch all edges above weight threshold (one query for all hops)
     edge_result = await db.execute(
         select(NeuronEdge).where(
-            and_(
-                NeuronEdge.weight >= settings.spread_min_edge_weight,
-                or_(
-                    NeuronEdge.source_id.in_(top_k_ids),
-                    NeuronEdge.target_id.in_(top_k_ids),
-                ),
-            )
+            NeuronEdge.weight >= settings.spread_min_edge_weight,
         )
     )
-    edges = list(edge_result.scalars().all())
+    all_edges = list(edge_result.scalars().all())
 
-    if not edges:
+    if not all_edges:
         return scored
 
-    # Calculate activation for each neighbor
-    neighbor_activation: dict[int, float] = {}  # neighbor_id → max activation
-    for edge in edges:
-        # Skip if both endpoints already in top-K
-        if edge.source_id in top_k_ids and edge.target_id in top_k_ids:
-            continue
+    # Build adjacency lookup: node_id → [(neighbor_id, weight), ...]
+    adjacency: dict[int, list[tuple[int, float]]] = {}
+    for edge in all_edges:
+        adjacency.setdefault(edge.source_id, []).append((edge.target_id, edge.weight))
+        adjacency.setdefault(edge.target_id, []).append((edge.source_id, edge.weight))
 
-        # Determine which is the source (in top-K) and which is the neighbor
-        if edge.source_id in top_k_ids:
-            source_id, neighbor_id = edge.source_id, edge.target_id
-        else:
-            source_id, neighbor_id = edge.target_id, edge.source_id
+    for hop in range(settings.spread_max_hops):
+        next_frontier: dict[int, float] = {}
 
-        source_score = score_by_id[source_id].combined
-        activation = source_score * edge.weight * settings.spread_decay
+        for source_id, source_activation in frontier.items():
+            for neighbor_id, edge_weight in adjacency.get(source_id, []):
+                activation = source_activation * edge_weight * settings.spread_decay
 
-        if activation < settings.spread_min_activation:
-            continue
+                if activation < settings.spread_min_activation:
+                    continue
 
-        # Max (not sum) across paths to prevent hub bias
-        if neighbor_id not in neighbor_activation or activation > neighbor_activation[neighbor_id]:
-            neighbor_activation[neighbor_id] = activation
+                # Skip neurons already in top-K (no self-reinforcement)
+                if neighbor_id in top_k_ids:
+                    continue
+
+                # Max across all paths to this neighbor (prevents hub bias)
+                if neighbor_id not in neighbor_activation or activation > neighbor_activation[neighbor_id]:
+                    neighbor_activation[neighbor_id] = activation
+
+                # Add to next frontier if not already visited (prevents cycles)
+                if neighbor_id not in visited:
+                    if neighbor_id not in next_frontier or activation > next_frontier[neighbor_id]:
+                        next_frontier[neighbor_id] = activation
+
+        if not next_frontier:
+            break  # No more reachable nodes above threshold
+
+        # Mark frontier nodes as visited, advance
+        visited.update(next_frontier.keys())
+        frontier = next_frontier
 
     if not neighbor_activation:
         return scored
@@ -281,9 +301,7 @@ async def spread_activation(
             ))
 
     # Displace lowest-scoring top-K neurons with promoted ones
-    # Sort promoted by combined descending
     promoted_scores.sort(key=lambda s: s.combined, reverse=True)
-    displace_count = min(len(promoted_scores), len(top_k))
 
     # Remove promoted neurons from below_cutoff if they were there
     promoted_ids = {s.neuron_id for s in promoted_scores}

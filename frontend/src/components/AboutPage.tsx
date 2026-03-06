@@ -79,9 +79,13 @@ export default function AboutPage() {
             and Recency (recent use). This produces a nuanced ranking that adapts to usage patterns over time.
           </li>
           <li>
-            <strong>Spread Activation</strong> &mdash; When a neuron fires, activation propagates through the co-firing
-            graph to related neurons. This means the system surfaces knowledge connections that weren't explicitly
-            queried for &mdash; emergent recall, not just retrieval.
+            <strong>Multi-Hop Spread Activation</strong> &mdash; When a neuron fires, activation propagates through
+            the co-firing graph to related neurons across up to 3 hops with compounding decay, discovering
+            &ldquo;bridge&rdquo; entities not directly connected to the query but reachable through intermediate
+            nodes. Based on spreading activation theory from cognitive science (Collins &amp; Loftus, 1975)
+            and adapted for knowledge-graph RAG per SA-RAG (Pavlovi&#x107; et al., arXiv:2512.15922, 2025).
+            Uses max-path aggregation (not sum) to prevent hub bias &mdash; a neuron reachable via many weak
+            paths doesn&rsquo;t outrank one reachable via a single strong path.
           </li>
           <li>
             <strong>Token-Budgeted Prompt Assembly</strong> &mdash; Score-ordered packing with per-slot configurable
@@ -137,6 +141,116 @@ export default function AboutPage() {
             skeletal (5&ndash;15 neurons) to full coverage (60&ndash;100+ neurons per role).
           </li>
         </ul>
+      </section>
+
+      <section className="about-section">
+        <h3>Where This Fits in Current Research</h3>
+        <p>
+          Yggdrasil&rsquo;s architecture independently converges with several recent academic approaches to
+          graph-based retrieval-augmented generation. No single component is novel in isolation &mdash;
+          the value is in the integration of these techniques into a complete, measured production system
+          with blind evaluation infrastructure and statistical significance testing.
+        </p>
+
+        <table className="about-table">
+          <thead>
+            <tr><th>Approach</th><th>What They Do</th><th>Yggdrasil&rsquo;s Relationship</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Microsoft GraphRAG</td>
+              <td>
+                Auto-extracts knowledge graphs from documents using LLMs, applies Leiden community detection
+                to discover hierarchical clusters, and pre-generates community summaries. Supports &ldquo;global&rdquo;
+                queries (summarize the whole corpus) and &ldquo;local&rdquo; queries (reason about specific entities).
+              </td>
+              <td>
+                Yggdrasil uses a hand-structured organizational hierarchy (6 layers: Department &rarr; Role &rarr;
+                Task &rarr; System &rarr; Decision &rarr; Output) rather than auto-extracted graphs.
+                This trades scalability for domain precision &mdash; the graph encodes how aerospace defense teams
+                actually operate, not just what entities appear in documents. GraphRAG&rsquo;s community detection
+                could be applied to Yggdrasil&rsquo;s co-firing graph to discover emergent neuron groupings that
+                the hand-designed hierarchy doesn&rsquo;t capture.
+              </td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>SA-RAG <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>(arXiv:2512.15922, Dec 2025)</span></td>
+              <td>
+                Integrates spreading activation &mdash; a cognitive science algorithm modeling how human semantic
+                memory retrieves associated concepts &mdash; into knowledge-graph-based RAG. Discovers &ldquo;bridge&rdquo;
+                entities not directly mentioned in the query but critical for multi-hop reasoning.
+                Achieves 25&ndash;39% accuracy improvement over naive RAG on multi-hop benchmarks.
+              </td>
+              <td>
+                Yggdrasil independently implemented spread activation through its co-firing graph before
+                SA-RAG&rsquo;s publication. After reviewing SA-RAG&rsquo;s results (25&ndash;39% accuracy
+                improvement from multi-hop propagation), the implementation was extended from single-hop to
+                multi-hop (configurable up to 3 hops with compounding decay), enabling bridge entity discovery
+                across organizational boundaries &mdash; neurons reachable only through intermediate nodes
+                that connect disparate departments or knowledge domains.
+              </td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Cog-RAG <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>(AAAI 2026)</span></td>
+              <td>
+                Uses a cognitive-inspired two-stage retrieval strategy: first activates query-relevant
+                thematic content from a theme hypergraph (global context), then drills down to specific
+                entities within that theme using an entity hypergraph (local details). Models high-order
+                relationships via hyperedges connecting multiple entities simultaneously.
+              </td>
+              <td>
+                Yggdrasil&rsquo;s Stage 1 classification (intent, departments, roles, keywords) serves a
+                similar &ldquo;theme activation&rdquo; function, followed by individual neuron scoring. The
+                classification boost (1.5&times; for role match, 1.25&times; for department match) acts as
+                a coarse theme filter. Cog-RAG&rsquo;s approach suggests formalizing this into explicit
+                cluster-level scoring before individual neuron ranking &mdash; score groups of neurons first,
+                then only evaluate individuals within the top-scoring clusters.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h4 style={{ marginTop: 16, marginBottom: 8 }}>Hop Count and Neuron Granularity</h4>
+        <p>
+          The optimal number of spread activation hops is not a universal constant &mdash; it depends on
+          neuron granularity and graph density. Coarse-grained neurons (paragraph-level, 100&ndash;300 tokens
+          each, as in this system) pack substantial context per node, so each promoted neuron consumes a
+          significant portion of the token budget. One or two hops already surface meaningful related knowledge;
+          by hop 3, promotions tend to be tangential. Fine-grained neurons (single facts or formulas at
+          20&ndash;50 tokens) would benefit from more hops, since individual nodes don&rsquo;t carry enough
+          context alone and need multi-hop traversal to assemble coherent clusters.
+        </p>
+        <p>
+          Graph density is the other axis. Yggdrasil&rsquo;s co-firing graph is relatively sparse &mdash;
+          edges only form when neurons actually fire together across queries, and the weight threshold
+          ({'>'}0.15) prunes weak links. In a sparse graph, hop 3 may only reach a handful of additional
+          nodes. In a dense graph (10K+ neurons with embedding-based edges), 3 hops could fan out to
+          thousands of candidates, requiring more aggressive decay or lower hop limits.
+        </p>
+        <p>
+          The current configuration (3 max hops, 0.5 decay, 0.15 minimum activation) is calibrated for
+          ~1,800 paragraph-level neurons with sparse co-firing edges. The compounding decay
+          (activation &times; edge_weight &times; 0.5 per hop) naturally prunes weak paths, and the
+          early-exit condition means unused hops cost nothing. If neuron granularity shifts (e.g., the
+          planned MIT OCW ingestion at formula-level detail), the hop count should increase accordingly.
+        </p>
+
+        <h4 style={{ marginTop: 16, marginBottom: 8 }}>What Differentiates This System</h4>
+        <p>
+          The academic systems above are benchmarked against standard datasets (HotpotQA, MuSiQue,
+          2WikiMultihopQA). Yggdrasil is benchmarked against its own domain queries with blind A/B
+          evaluation, statistical significance testing (Benjamini-Hochberg FDR correction across 6 tests),
+          effect size reporting, and power analysis. The research papers prove that graph-based RAG
+          techniques work; Yggdrasil proves what they cost, how reliable they are, and whether the
+          tradeoff is worth it for a specific organization &mdash; with the measurement infrastructure
+          to back it up.
+        </p>
+        <p>
+          The combination of domain-specific organizational hierarchy, multi-signal adaptive scoring,
+          spread activation, token-budgeted assembly, blind evaluation, and full audit provenance in a
+          single system is unusual. No individual technique is unique; the integration and measurement
+          discipline is.
+        </p>
       </section>
 
       <section className="about-section">

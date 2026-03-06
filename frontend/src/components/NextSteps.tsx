@@ -170,6 +170,87 @@ export default function NextSteps() {
       </section>
 
       <section className="next-steps-section">
+        <h3>Research-Based Extensions</h3>
+        <span className="status-badge planned">Backlog</span>
+        <p>
+          Improvements identified from recent graph-augmented retrieval research. Multi-hop spread activation
+          (from SA-RAG) has already been implemented. The following three extensions are candidates for future work.
+        </p>
+
+        <h4>Theme/Cluster Pre-Scoring</h4>
+        <p>
+          <em>Based on: Cog-RAG (AAAI 2026) — cognitive-inspired dual-hypergraph retrieval</em>
+        </p>
+        <ul>
+          <li>
+            <strong>Concept</strong> — Before scoring individual neurons, score neuron clusters (grouped by
+            role_key, department, or discovered community) at the theme level. Clusters whose theme doesn't
+            match the query intent get pruned early, reducing the candidate set before expensive per-neuron
+            scoring runs.
+          </li>
+          <li>
+            <strong>Benefit</strong> — Reduces noise from topically irrelevant neurons that happen to have high
+            Burst or Recency signals. Analogous to how Cog-RAG's theme-level hyperedges filter before
+            document-level retrieval.
+          </li>
+          <li>
+            <strong>Implementation sketch</strong> — Pre-compute cluster embeddings (average of member neuron
+            content embeddings). At query time, compute cosine similarity between query embedding and cluster
+            embeddings. Only score neurons from top-N clusters. Lightweight — adds one vector comparison step.
+          </li>
+        </ul>
+
+        <h4>Co-Firing Community Detection</h4>
+        <p>
+          <em>Based on: GraphRAG (Microsoft, 2024) — Leiden community detection on entity graphs</em>
+        </p>
+        <ul>
+          <li>
+            <strong>Concept</strong> — Run Leiden or Louvain community detection on the NeuronEdge co-firing
+            graph to discover emergent neuron groupings that cross the fixed hierarchy. Neurons that frequently
+            fire together across different queries form natural communities, even if they sit in different
+            departments or roles.
+          </li>
+          <li>
+            <strong>Benefit</strong> — Surfaces cross-domain relationships that the hand-built hierarchy misses.
+            A community of neurons spanning Quality, Engineering, and Contracts might emerge around "first article
+            inspection" — something the tree structure can't represent but the co-firing data reveals.
+          </li>
+          <li>
+            <strong>Implementation sketch</strong> — Periodically run Leiden on NeuronEdge weights using{' '}
+            <code>python-igraph</code> or <code>networkx</code>. Store community assignments as a neuron field.
+            Use communities as an alternative grouping for diversity floor enforcement and spread activation
+            seeding. Could also feed into theme/cluster pre-scoring above.
+          </li>
+        </ul>
+
+        <h4>Community-Level Summaries</h4>
+        <p>
+          <em>Based on: GraphRAG (Microsoft, 2024) — hierarchical community summarization</em>
+        </p>
+        <ul>
+          <li>
+            <strong>Concept</strong> — Pre-generate LLM summaries for each detected community (or for each
+            role/department cluster). These summaries capture the collective knowledge of a group of neurons
+            in a single compressed representation.
+          </li>
+          <li>
+            <strong>Benefit</strong> — When the token budget is tight, a community summary can stand in for
+            10-20 individual neurons at a fraction of the token cost. Enables a "zoom out" mode: broad
+            questions get community summaries, narrow questions get individual neurons, with graceful
+            degradation as budget shrinks.
+          </li>
+          <li>
+            <strong>Implementation sketch</strong> — After community detection, batch-generate summaries via
+            Haiku (one prompt per community: "Summarize the following knowledge areas: [neuron contents]").
+            Store summaries in a <code>NeuronCommunity</code> table. At assembly time, if the token budget
+            can't fit all selected neurons, substitute community summaries for the lowest-scored clusters.
+            Re-generate summaries when community membership changes significantly.
+          </li>
+        </ul>
+      </section>
+
+      <section className="next-steps-section">
         <h3>Tier 3 — Structural Improvements</h3>
         <span className="status-badge planned">Planned</span>
         <p>
@@ -421,6 +502,10 @@ export default function NextSteps() {
             <tr><td>Query Decomposition</td><td>Multi-pass retrieval</td><td><span className="status-badge planned">Tier 1</span></td></tr>
             <tr><td>Sonnet Routing</td><td>Tiered model escalation</td><td><span className="status-badge planned">Tier 2</span></td></tr>
             <tr><td>Cross-Ref Chasing</td><td>Graph traversal at query time</td><td><span className="status-badge planned">Tier 2</span></td></tr>
+            <tr><td>Multi-Hop Spread</td><td>SA-RAG frontier traversal</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>Theme Pre-Scoring</td><td>Cog-RAG cluster filtering</td><td><span className="status-badge planned">Backlog</span></td></tr>
+            <tr><td>Community Detection</td><td>GraphRAG Leiden communities</td><td><span className="status-badge planned">Backlog</span></td></tr>
+            <tr><td>Community Summaries</td><td>GraphRAG compressed fallback</td><td><span className="status-badge planned">Backlog</span></td></tr>
             <tr><td>Microglia</td><td>Quality scanner + quarantine</td><td><span className="status-badge planned">Planned</span></td></tr>
             <tr><td>Ependymal</td><td>Graph hygiene / reorg</td><td><span className="status-badge planned">Planned</span></td></tr>
             <tr><td>Deterministic Classifier</td><td>LLM-free query classification</td><td><span className="status-badge planned">Backlog</span></td></tr>

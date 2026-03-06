@@ -15,8 +15,9 @@ import SampleQueries from './components/SampleQueries'
 import DeptChordDiagram from './components/DeptChordDiagram'
 import SecurityPage from './components/SecurityPage'
 import PerformancePage from './components/PerformancePage'
+import PerformanceExplanationPage from './components/PerformanceExplanationPage'
 
-type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'bolster' | 'autopilot' | 'nextsteps' | 'about' | 'monetization' | 'security' | 'performance';
+type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'bolster' | 'autopilot' | 'nextsteps' | 'about' | 'monetization' | 'security' | 'performance' | 'perf-explain';
 
 interface NavItem {
   key: Tab;
@@ -26,7 +27,14 @@ interface NavItem {
 
 const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
-    label: 'Visualizations',
+    label: 'Query',
+    items: [
+      { key: 'query', label: 'Query Lab' },
+      { key: 'samples', label: 'Samples' },
+    ],
+  },
+  {
+    label: 'Knowledge',
     items: [
       { key: 'explorer', label: 'Explorer' },
       { key: 'graph', label: 'Graph' },
@@ -35,20 +43,19 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     ],
   },
   {
-    label: 'Training',
+    label: 'Improve',
     items: [
-      { key: 'query', label: 'Query Lab' },
-      { key: 'samples', label: 'Samples' },
-      { key: 'refinements', label: 'Refinements' },
       { key: 'bolster', label: 'Bolster' },
       { key: 'autopilot', label: 'Autopilot' },
-      { key: 'performance', label: 'Performance' },
+      { key: 'refinements', label: 'Refinements' },
     ],
   },
   {
-    label: 'Security',
+    label: 'Evaluate',
     items: [
-      { key: 'security', label: 'NIST AI RMF' },
+      { key: 'performance', label: 'Performance' },
+      { key: 'perf-explain', label: 'Methodology' },
+      { key: 'evaluation', label: 'Evaluation' },
     ],
   },
   {
@@ -56,8 +63,8 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { key: 'about', label: 'Overview' },
       { key: 'pipeline', label: 'Pipeline' },
+      { key: 'security', label: 'NIST AI RMF' },
       { key: 'nextsteps', label: 'Next Steps' },
-      { key: 'evaluation', label: 'Evaluation' },
       { key: 'monetization', label: 'Monetization', className: 'nav-monetization' },
     ],
   },
@@ -113,6 +120,7 @@ export default function App() {
         {tab === 'monetization' && <MonetizationPage />}
         {tab === 'security' && <SecurityPage />}
         {tab === 'performance' && <PerformancePage />}
+        {tab === 'perf-explain' && <PerformanceExplanationPage />}
       </main>
     </div>
   )
