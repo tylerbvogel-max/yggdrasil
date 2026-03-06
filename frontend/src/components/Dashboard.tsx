@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchStats, fetchCostReport } from '../api'
+import { fetchStats, fetchCostReport, fetchSpreadLog } from '../api'
+import type { SpreadLogResponse } from '../api'
 import type { NeuronStats, CostReport } from '../types'
 import { Chart, BarController, BarElement, BubbleController, PointElement, CategoryScale, LinearScale, LogarithmicScale, Tooltip, Legend } from 'chart.js'
 import DeptChordDiagram from './DeptChordDiagram'
@@ -24,9 +25,11 @@ const roleColors = [
 export default function Dashboard() {
   const [stats, setStats] = useState<NeuronStats | null>(null);
   const [cost, setCost] = useState<CostReport | null>(null);
+  const [spreadLog, setSpreadLog] = useState<SpreadLogResponse | null>(null);
   const [error, setError] = useState('');
   const [bubbleLogX, setBubbleLogX] = useState(true);
   const [bubbleLogY, setBubbleLogY] = useState(true);
+  const [spreadExpanded, setSpreadExpanded] = useState<number | null>(null);
   const layerRef = useRef<HTMLCanvasElement>(null);
   const deptRef = useRef<HTMLCanvasElement>(null);
   const bubbleRef = useRef<HTMLCanvasElement>(null);
@@ -35,8 +38,8 @@ export default function Dashboard() {
   const bubbleChart = useRef<Chart | null>(null);
 
   useEffect(() => {
-    Promise.all([fetchStats(), fetchCostReport()])
-      .then(([s, c]) => { setStats(s); setCost(c); })
+    Promise.all([fetchStats(), fetchCostReport(), fetchSpreadLog()])
+      .then(([s, c, sl]) => { setStats(s); setCost(c); setSpreadLog(sl); })
       .catch(e => setError(e.message));
   }, []);
 
@@ -210,6 +213,117 @@ export default function Dashboard() {
         <h3>Department Co-Firing (Chord Diagram)</h3>
         <DeptChordDiagram />
       </div>
+
+      {spreadLog && (
+        <div className="chart-card" style={{ marginBottom: '24px' }}>
+          <h3>Spread Activation Log</h3>
+          <div className="stat-cards" style={{ marginBottom: 16 }}>
+            <div className="stat-card">
+              <div className="card-value">{spreadLog.queries_with_spread}</div>
+              <div className="card-label">Queries with Spread</div>
+            </div>
+            <div className="stat-card">
+              <div className="card-value">{Math.round(spreadLog.spread_rate * 100)}%</div>
+              <div className="card-label">Spread Rate</div>
+            </div>
+            <div className="stat-card">
+              <div className="card-value">{spreadLog.top_corridors.length}</div>
+              <div className="card-label">Cross-Dept Corridors</div>
+            </div>
+          </div>
+
+          {spreadLog.top_corridors.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <h4 style={{ color: '#e8a735', margin: '0 0 8px', fontSize: '0.85rem' }}>Top Cross-Department Corridors</h4>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {spreadLog.top_corridors.map(c => (
+                  <span key={c.pair} style={{
+                    background: '#e8a73520', color: '#e8a735', padding: '4px 10px',
+                    borderRadius: 6, fontSize: '0.75rem', border: '1px solid #e8a73540',
+                  }}>
+                    {c.pair} <strong>({c.count})</strong>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {spreadLog.top_neurons.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <h4 style={{ color: '#60a5fa', margin: '0 0 8px', fontSize: '0.85rem' }}>Most Frequently Spread-Promoted Neurons</h4>
+              <table className="about-table" style={{ fontSize: '0.8rem' }}>
+                <thead>
+                  <tr><th>Neuron</th><th>Department</th><th>Spread Count</th></tr>
+                </thead>
+                <tbody>
+                  {spreadLog.top_neurons.map(n => (
+                    <tr key={n.neuron_id}>
+                      <td>{n.label}</td>
+                      <td style={{ color: '#8892a8' }}>{n.department}</td>
+                      <td><strong>{n.spread_count}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <h4 style={{ color: 'var(--text-dim)', margin: '0 0 8px', fontSize: '0.85rem' }}>Recent Queries</h4>
+          <table className="about-table" style={{ fontSize: '0.8rem' }}>
+            <thead>
+              <tr>
+                <th>Query</th>
+                <th style={{ textAlign: 'center' }}>Promoted</th>
+                <th style={{ textAlign: 'center' }}>Avg Boost</th>
+                <th style={{ textAlign: 'center' }}>Max Boost</th>
+                <th style={{ textAlign: 'center' }}>Cross-Dept</th>
+              </tr>
+            </thead>
+            <tbody>
+              {spreadLog.entries.map(e => (
+                <>
+                  <tr
+                    key={e.query_id}
+                    style={{ cursor: e.promoted_count > 0 ? 'pointer' : 'default' }}
+                    onClick={() => e.promoted_count > 0 && setSpreadExpanded(
+                      spreadExpanded === e.query_id ? null : e.query_id
+                    )}
+                  >
+                    <td style={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {e.promoted_count > 0 && (
+                        <span style={{ color: 'var(--text-dim)', marginRight: 4, fontSize: '0.7rem' }}>
+                          {spreadExpanded === e.query_id ? '▼' : '▶'}
+                        </span>
+                      )}
+                      {e.user_message}
+                    </td>
+                    <td style={{ textAlign: 'center', color: e.promoted_count > 0 ? '#e8a735' : 'var(--text-dim)' }}>
+                      {e.promoted_count || '—'}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>{e.promoted_count > 0 ? e.avg_boost.toFixed(3) : '—'}</td>
+                    <td style={{ textAlign: 'center' }}>{e.promoted_count > 0 ? e.max_boost.toFixed(3) : '—'}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      {e.promoted_count > 0 ? (
+                        <span style={{ color: e.cross_dept ? '#22c55e' : 'var(--text-dim)' }}>
+                          {e.cross_dept ? 'Yes' : 'No'}
+                        </span>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                  {spreadExpanded === e.query_id && e.promoted_neurons.map(pn => (
+                    <tr key={`${e.query_id}-${pn.neuron_id}`} style={{ background: 'var(--bg-input)' }}>
+                      <td style={{ paddingLeft: 28, color: '#e8a735' }}>{pn.label}</td>
+                      <td style={{ textAlign: 'center', color: '#8892a8' }} colSpan={2}>{pn.department}</td>
+                      <td style={{ textAlign: 'center' }}>+{pn.boost.toFixed(3)}</td>
+                      <td />
+                    </tr>
+                  ))}
+                </>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="chart-card" style={{ marginBottom: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>

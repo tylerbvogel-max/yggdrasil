@@ -153,6 +153,120 @@ async def department_chord(layer: int = 1, min_weight: float = 0.15, db: AsyncSe
         ]
 
 
+@router.get("/edges/spread-log")
+async def spread_log(limit: int = 100, db: AsyncSession = Depends(get_db)):
+    """Aggregate spread activation history across recent queries."""
+    result = await db.execute(
+        select(QueryModel)
+        .where(QueryModel.neuron_scores_json.isnot(None))
+        .order_by(QueryModel.created_at.desc())
+        .limit(limit)
+    )
+    queries = result.scalars().all()
+
+    # Fetch all neuron labels/departments in one query
+    all_neuron_ids: set[int] = set()
+    parsed_queries: list[tuple] = []  # (query, scores_list)
+    for q in queries:
+        try:
+            scores = json.loads(q.neuron_scores_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        promoted = [s for s in scores if s.get("spread_boost", 0) > 0]
+        if not promoted:
+            parsed_queries.append((q, scores, []))
+            continue
+        for s in promoted:
+            all_neuron_ids.add(s["neuron_id"])
+        parsed_queries.append((q, scores, promoted))
+
+    neuron_map: dict[int, dict] = {}
+    if all_neuron_ids:
+        n_result = await db.execute(
+            select(Neuron.id, Neuron.label, Neuron.department).where(
+                Neuron.id.in_(all_neuron_ids)
+            )
+        )
+        for row in n_result.all():
+            neuron_map[row[0]] = {"label": row[1], "department": row[2]}
+
+    # Build per-query log entries
+    entries = []
+    # Track neuron-level spread frequency
+    neuron_spread_counts: dict[int, int] = {}
+    # Track department-pair corridors
+    dept_corridors: dict[str, int] = {}
+
+    for q, scores, promoted in parsed_queries:
+        # Departments of non-spread (source) neurons
+        source_depts: set[str] = set()
+        for s in scores:
+            if s.get("spread_boost", 0) == 0:
+                nid = s["neuron_id"]
+                if nid in neuron_map:
+                    source_depts.add(neuron_map[nid]["department"])
+
+        promoted_depts: set[str] = set()
+        promoted_neurons = []
+        for p in promoted:
+            nid = p["neuron_id"]
+            neuron_spread_counts[nid] = neuron_spread_counts.get(nid, 0) + 1
+            info = neuron_map.get(nid, {"label": f"#{nid}", "department": "Unknown"})
+            promoted_neurons.append({
+                "neuron_id": nid,
+                "label": info["label"],
+                "department": info["department"],
+                "boost": round(p["spread_boost"], 4),
+            })
+            promoted_depts.add(info["department"])
+
+        # Track cross-department corridors
+        cross_dept = bool(promoted_depts - source_depts) if source_depts else False
+        for sd in source_depts:
+            for pd in promoted_depts:
+                if sd != pd:
+                    key = " → ".join(sorted([sd, pd]))
+                    dept_corridors[key] = dept_corridors.get(key, 0) + 1
+
+        entries.append({
+            "query_id": q.id,
+            "user_message": q.user_message[:120],
+            "created_at": q.created_at.isoformat() if q.created_at else None,
+            "promoted_count": len(promoted),
+            "avg_boost": round(sum(p["spread_boost"] for p in promoted) / len(promoted), 4) if promoted else 0,
+            "max_boost": round(max((p["spread_boost"] for p in promoted), default=0), 4),
+            "cross_dept": cross_dept,
+            "promoted_neurons": promoted_neurons,
+        })
+
+    # Top spread-promoted neurons
+    top_neurons = sorted(neuron_spread_counts.items(), key=lambda x: x[1], reverse=True)[:20]
+    top_neuron_list = [
+        {
+            "neuron_id": nid,
+            "label": neuron_map.get(nid, {}).get("label", f"#{nid}"),
+            "department": neuron_map.get(nid, {}).get("department", "Unknown"),
+            "spread_count": count,
+        }
+        for nid, count in top_neurons
+    ]
+
+    # Top corridors
+    top_corridors = sorted(dept_corridors.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    total_queries = len(parsed_queries)
+    queries_with_spread = sum(1 for _, _, p in parsed_queries if p)
+
+    return {
+        "total_queries": total_queries,
+        "queries_with_spread": queries_with_spread,
+        "spread_rate": round(queries_with_spread / total_queries, 4) if total_queries else 0,
+        "entries": entries,
+        "top_neurons": top_neuron_list,
+        "top_corridors": [{"pair": k, "count": v} for k, v in top_corridors],
+    }
+
+
 @router.get("/edges/spread-trail")
 async def spread_trail(query_id: int, db: AsyncSession = Depends(get_db)):
     """Get spread activation trail for a query."""

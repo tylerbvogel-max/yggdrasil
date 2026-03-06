@@ -129,6 +129,30 @@ export function fetchSpreadTrail(queryId: number): Promise<SpreadTrailResponse> 
   return json<SpreadTrailResponse>(`/neurons/edges/spread-trail?query_id=${queryId}`);
 }
 
+export interface SpreadLogEntry {
+  query_id: number;
+  user_message: string;
+  created_at: string | null;
+  promoted_count: number;
+  avg_boost: number;
+  max_boost: number;
+  cross_dept: boolean;
+  promoted_neurons: { neuron_id: number; label: string; department: string; boost: number }[];
+}
+
+export interface SpreadLogResponse {
+  total_queries: number;
+  queries_with_spread: number;
+  spread_rate: number;
+  entries: SpreadLogEntry[];
+  top_neurons: { neuron_id: number; label: string; department: string; spread_count: number }[];
+  top_corridors: { pair: string; count: number }[];
+}
+
+export function fetchSpreadLog(limit = 100): Promise<SpreadLogResponse> {
+  return json<SpreadLogResponse>(`/neurons/edges/spread-log?limit=${limit}`);
+}
+
 export function fetchRefinementHistory(): Promise<NeuronRefinementEntry[]> {
   return json<NeuronRefinementEntry[]>('/neurons/refinements');
 }
