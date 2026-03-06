@@ -653,60 +653,43 @@ body {
   gap: 12px;
 }
 
-/* Slot Builder */
+/* Slot Builder — Grid + XY Plot */
 .slot-builder {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.slot-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.slot-card-header {
+  display: flex;
+  align-items: center;
   gap: 6px;
 }
 
-.slot-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.slot-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
 .slot-mode-select {
+  flex: 1;
   background: var(--bg-card);
   border: 1px solid var(--border);
   color: var(--text);
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 0.8125rem;
-  min-width: 160px;
-}
-
-.slot-budget {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-}
-
-.slot-budget-slider {
-  flex: 1;
-  accent-color: var(--accent);
-  cursor: pointer;
-  height: 4px;
-  min-width: 100px;
-}
-
-.slot-budget-label {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--accent);
-  min-width: 32px;
-  text-align: right;
 }
 
 .slot-remove-btn {
@@ -731,28 +714,182 @@ body {
   cursor: default;
 }
 
-.slot-param-icon {
-  width: 18px;
-  height: 18px;
+.slot-raw-label {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  text-align: center;
+  padding: 24px 8px;
+  opacity: 0.6;
+}
+
+.slot-add-card {
+  border: 1px dashed var(--border);
+  background: transparent;
+  cursor: pointer;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: 0.65rem;
-  font-weight: 700;
+  gap: 4px;
+  min-height: 160px;
   color: var(--text-dim);
+  font-size: 0.8125rem;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.slot-add-card:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.slot-add-icon {
+  font-size: 1.5rem;
+  font-weight: 300;
+  line-height: 1;
+}
+
+/* XY Plot */
+.xy-plot-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  user-select: none;
+}
+
+.xy-plot-ylabel {
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  opacity: 0.6;
+  writing-mode: vertical-lr;
+  transform: rotate(180deg);
+  position: absolute;
+  left: -2px;
+  top: 50%;
+  translate: 0 -50%;
+}
+
+.xy-plot-xlabel {
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  opacity: 0.6;
+}
+
+.xy-plot-inner {
+  position: relative;
+  width: 100%;
+}
+
+.xy-plot-area {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1.4;
   background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.xy-gridline-v {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.xy-gridline-h {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.xy-crosshair-h {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.xy-crosshair-v {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent);
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.xy-dot {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.5);
+  z-index: 2;
+}
+
+.xy-readout {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--bg-card);
+  padding: 1px 5px;
   border-radius: 3px;
-  flex-shrink: 0;
+  pointer-events: none;
+  z-index: 3;
 }
 
-.slot-topk .slot-budget-label {
-  color: #a78bfa;
+.xy-plot-xticks {
+  position: relative;
+  width: 100%;
+  height: 12px;
 }
 
-.slot-add-btn {
-  align-self: flex-start;
-  font-size: 0.75rem !important;
-  padding: 3px 10px !important;
+.xy-tick-x {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 0.55rem;
+  color: var(--text-dim);
+  opacity: 0.6;
+}
+
+.xy-plot-yticks {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 0;
+  z-index: 1;
+}
+
+.xy-tick-y {
+  position: absolute;
+  right: 4px;
+  transform: translateY(-50%);
+  font-size: 0.55rem;
+  color: var(--text-dim);
+  opacity: 0.6;
+  white-space: nowrap;
 }
 
 /* Graph capacity bar */

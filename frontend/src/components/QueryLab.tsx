@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { submitQuery, submitRating, fetchQueryHistory, fetchQueryDetail, evaluateQuery, refineQuery, applyRefinements, fetchGraphCapacity } from '../api'
 import type { SlotSpec, GraphCapacity } from '../api'
 import type { QueryResponse, QuerySummary, QueryDetail, SlotResult, EvalScoreOut, RefineResponse } from '../types'
@@ -358,6 +358,117 @@ interface SlotConfig {
 
 let nextSlotId = 1;
 
+const TOKEN_MIN = 1000;
+const TOKEN_MAX = 32000;
+const TOPK_MIN = 1;
+const TOPK_MAX = 500;
+
+function XYPlot({ tokenBudget, topK, maxNeurons, onChange }: {
+  tokenBudget: number;
+  topK: number;
+  maxNeurons: number;
+  onChange: (tokenBudget: number, topK: number) => void;
+}) {
+  const plotRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+
+  const effectiveTopKMax = Math.min(maxNeurons, TOPK_MAX);
+
+  const posFromValues = useCallback((tb: number, tk: number) => {
+    const xPct = ((tb - TOKEN_MIN) / (TOKEN_MAX - TOKEN_MIN)) * 100;
+    const yPct = (1 - (tk - TOPK_MIN) / (effectiveTopKMax - TOPK_MIN)) * 100;
+    return { xPct, yPct };
+  }, [effectiveTopKMax]);
+
+  const valuesFromPos = useCallback((clientX: number, clientY: number) => {
+    const rect = plotRef.current!.getBoundingClientRect();
+    const xPct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const yPct = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    const tb = Math.round((TOKEN_MIN + xPct * (TOKEN_MAX - TOKEN_MIN)) / 1000) * 1000;
+    const tk = Math.round(TOPK_MIN + (1 - yPct) * (effectiveTopKMax - TOPK_MIN));
+    return {
+      tokenBudget: Math.max(TOKEN_MIN, Math.min(TOKEN_MAX, tb)),
+      topK: Math.max(TOPK_MIN, Math.min(effectiveTopKMax, tk)),
+    };
+  }, [effectiveTopKMax]);
+
+  const handlePointer = useCallback((e: React.PointerEvent) => {
+    const v = valuesFromPos(e.clientX, e.clientY);
+    onChange(v.tokenBudget, v.topK);
+  }, [valuesFromPos, onChange]);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    dragging.current = true;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    handlePointer(e);
+  }, [handlePointer]);
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    handlePointer(e);
+  }, [handlePointer]);
+
+  const onPointerUp = useCallback(() => {
+    dragging.current = false;
+  }, []);
+
+  const { xPct, yPct } = posFromValues(tokenBudget, topK);
+
+  // Tick marks for X axis
+  const xTicks = [1, 4, 8, 16, 32];
+  const yTicks = [1, 10, 30, 50, 100, 200, effectiveTopKMax].filter((v, i, a) => a.indexOf(v) === i && v <= effectiveTopKMax);
+
+  return (
+    <div className="xy-plot-container">
+      <div className="xy-plot-ylabel">Neurons (K)</div>
+      <div className="xy-plot-inner">
+        <div className="xy-plot-yticks">
+          {yTicks.map(v => {
+            const top = (1 - (v - TOPK_MIN) / (effectiveTopKMax - TOPK_MIN)) * 100;
+            return <span key={v} className="xy-tick-y" style={{ top: `${top}%` }}>{v}</span>;
+          })}
+        </div>
+        <div
+          ref={plotRef}
+          className="xy-plot-area"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        >
+          {/* Grid lines */}
+          {xTicks.map(v => {
+            const left = ((v * 1000 - TOKEN_MIN) / (TOKEN_MAX - TOKEN_MIN)) * 100;
+            return <div key={v} className="xy-gridline-v" style={{ left: `${left}%` }} />;
+          })}
+          {yTicks.map(v => {
+            const top = (1 - (v - TOPK_MIN) / (effectiveTopKMax - TOPK_MIN)) * 100;
+            return <div key={v} className="xy-gridline-h" style={{ top: `${top}%` }} />;
+          })}
+          {/* Crosshair lines to dot */}
+          <div className="xy-crosshair-h" style={{ top: `${yPct}%` }} />
+          <div className="xy-crosshair-v" style={{ left: `${xPct}%` }} />
+          {/* The dot */}
+          <div
+            className="xy-dot"
+            style={{ left: `${xPct}%`, top: `${yPct}%` }}
+          />
+          {/* Value readout */}
+          <div className="xy-readout">
+            {(tokenBudget / 1000).toFixed(0)}K / K={topK}
+          </div>
+        </div>
+        <div className="xy-plot-xticks">
+          {xTicks.map(v => {
+            const left = ((v * 1000 - TOKEN_MIN) / (TOKEN_MAX - TOKEN_MIN)) * 100;
+            return <span key={v} className="xy-tick-x" style={{ left: `${left}%` }}>{v}K</span>;
+          })}
+        </div>
+      </div>
+      <div className="xy-plot-xlabel">Token Budget</div>
+    </div>
+  );
+}
+
 function SlotBuilder({ slots, onChange, capacity }: {
   slots: SlotConfig[];
   onChange: (slots: SlotConfig[]) => void;
@@ -381,71 +492,56 @@ function SlotBuilder({ slots, onChange, capacity }: {
     <div className="slot-builder">
       {capacity && (
         <div className="graph-capacity-bar">
-          <span className="capacity-label">Graph Capacity:</span>
+          <span className="capacity-label">Graph:</span>
           <span className="capacity-value">{capacity.active_neurons.toLocaleString()} neurons</span>
           <span className="capacity-sep">&middot;</span>
           <span className="capacity-value">{capacity.total_content_tokens.toLocaleString()} content tokens</span>
           <span className="capacity-sep">&middot;</span>
-          <span className="capacity-value">{capacity.total_tokens.toLocaleString()} total tokens</span>
+          <span className="capacity-value">{capacity.total_tokens.toLocaleString()} total</span>
         </div>
       )}
-      <div className="slot-list">
+      <div className="slot-grid">
         {slots.map(slot => {
           const isNeuron = NEURON_MODES.has(slot.mode);
           return (
-            <div key={slot.id} className="slot-item">
-              <select
-                className="slot-mode-select"
-                value={slot.mode}
-                onChange={e => updateSlot(slot.id, { mode: e.target.value })}
-              >
-                {ALL_MODES.map(m => (
-                  <option key={m.key} value={m.key}>{m.label}</option>
-                ))}
-              </select>
-              {isNeuron && (
-                <>
-                  <div className="slot-budget">
-                    <span className="slot-param-icon" title="Token budget">T</span>
-                    <input
-                      type="range"
-                      min={1000}
-                      max={32000}
-                      step={1000}
-                      value={slot.tokenBudget}
-                      onChange={e => updateSlot(slot.id, { tokenBudget: Number(e.target.value) })}
-                      className="slot-budget-slider"
-                    />
-                    <span className="slot-budget-label">{(slot.tokenBudget / 1000).toFixed(0)}K</span>
-                  </div>
-                  <div className="slot-budget slot-topk">
-                    <span className="slot-param-icon" title="Top-K neurons">K</span>
-                    <input
-                      type="range"
-                      min={1}
-                      max={Math.min(maxNeurons, 500)}
-                      step={1}
-                      value={slot.topK}
-                      onChange={e => updateSlot(slot.id, { topK: Number(e.target.value) })}
-                      className="slot-budget-slider"
-                    />
-                    <span className="slot-budget-label">{slot.topK}</span>
-                  </div>
-                </>
+            <div key={slot.id} className="slot-card" style={{ borderColor: (MODE_COLORS[slot.mode] ?? '#8892a8') + '66' }}>
+              <div className="slot-card-header">
+                <select
+                  className="slot-mode-select"
+                  value={slot.mode}
+                  onChange={e => updateSlot(slot.id, { mode: e.target.value })}
+                >
+                  {ALL_MODES.map(m => (
+                    <option key={m.key} value={m.key}>{m.label}</option>
+                  ))}
+                </select>
+                <button
+                  className="slot-remove-btn"
+                  onClick={() => removeSlot(slot.id)}
+                  title="Remove slot"
+                  disabled={slots.length <= 1}
+                >
+                  &times;
+                </button>
+              </div>
+              {isNeuron ? (
+                <XYPlot
+                  tokenBudget={slot.tokenBudget}
+                  topK={slot.topK}
+                  maxNeurons={maxNeurons}
+                  onChange={(tb, tk) => updateSlot(slot.id, { tokenBudget: tb, topK: tk })}
+                />
+              ) : (
+                <div className="slot-raw-label">Raw mode — no neuron context</div>
               )}
-              <button
-                className="slot-remove-btn"
-                onClick={() => removeSlot(slot.id)}
-                title="Remove slot"
-                disabled={slots.length <= 1}
-              >
-                &times;
-              </button>
             </div>
           );
         })}
+        <button className="slot-card slot-add-card" onClick={addSlot}>
+          <span className="slot-add-icon">+</span>
+          <span>Add Slot</span>
+        </button>
       </div>
-      <button className="btn btn-sm slot-add-btn" onClick={addSlot}>+ Add Slot</button>
     </div>
   );
 }
