@@ -10,13 +10,12 @@ import NextSteps from './components/NextSteps'
 import AutopilotPage from './components/AutopilotPage'
 import CirclePacking from './components/CirclePacking'
 import AboutPage from './components/AboutPage'
-import MonetizationPage from './components/MonetizationPage'
 import SampleQueries from './components/SampleQueries'
 import DeptChordDiagram from './components/DeptChordDiagram'
 import SecurityPage from './components/SecurityPage'
 import PerformancePage from './components/PerformancePage'
 
-type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'bolster' | 'autopilot' | 'nextsteps' | 'about' | 'monetization' | 'security' | 'performance';
+type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'bolster' | 'autopilot' | 'nextsteps' | 'about' | 'security' | 'performance';
 
 interface NavItem {
   key: Tab;
@@ -58,7 +57,6 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { key: 'pipeline', label: 'Pipeline' },
       { key: 'nextsteps', label: 'Next Steps' },
       { key: 'evaluation', label: 'Evaluation' },
-      { key: 'monetization', label: 'Monetization', className: 'nav-monetization' },
     ],
   },
 ];
@@ -110,7 +108,6 @@ export default function App() {
         {tab === 'autopilot' && <AutopilotPage />}
         {tab === 'nextsteps' && <NextSteps />}
         {tab === 'about' && <AboutPage />}
-        {tab === 'monetization' && <MonetizationPage />}
         {tab === 'security' && <SecurityPage />}
         {tab === 'performance' && <PerformancePage />}
       </main>
