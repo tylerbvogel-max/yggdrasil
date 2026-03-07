@@ -19,7 +19,7 @@ export default function NextSteps() {
           API signatures) as first-class citizens with provenance tracking, staleness detection, and citation-based
           cross-referencing.
         </p>
-        <p style={{ margin: 0, fontSize: '0.9em', color: 'var(--text-dim, #888)' }}>
+        <p style={{ margin: 0, fontSize: '0.9em', color: 'var(--text-dim, #aaa)' }}>
           Full spec: <code>readables/regulatory-neuron-spec.md</code><br />
           Implementation brief (new session quickstart): <code>readables/authoritative-source-implementation-brief.md</code>
         </p>
