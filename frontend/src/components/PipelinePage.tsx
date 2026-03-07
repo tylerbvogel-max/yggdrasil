@@ -77,6 +77,23 @@ export default function PipelinePage() {
               </div>
             </div>
           </div>
+
+          <div className="flow-arrow short" />
+
+          <div className="flow-step substep">
+            <span className="flow-number">2e</span>
+            <div className="flow-step-content">
+              <div className="flow-step-label">External Reference Detection</div>
+              <div className="flow-step-desc">
+                Post-assembly, assembled neurons are scanned for references to external authoritative
+                sources &mdash; regulations (FAR, ITAR, NIST, MIL-STDs), technical specs (Python docs,
+                PySpark APIs, framework signatures). Unresolved references are queued for future
+                acquisition as <strong>emergent neurons</strong> &mdash; the graph identifies what it
+                doesn&rsquo;t know and grows itself at the point of need. This scan is non-blocking;
+                the query proceeds immediately while gaps are logged.
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="flow-arrow" />

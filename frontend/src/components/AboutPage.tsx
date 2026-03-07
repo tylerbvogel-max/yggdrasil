@@ -254,6 +254,117 @@ export default function AboutPage() {
       </section>
 
       <section className="about-section">
+        <h3>Authoritative Sources &amp; Emergent Neurons</h3>
+        <p>
+          Not all knowledge is created equal. Yggdrasil distinguishes between three categories of knowledge,
+          each with different content rules, provenance requirements, and lifecycle management:
+        </p>
+
+        <h4 style={{ marginTop: 16, marginBottom: 8 }}>Source-Typed Neurons</h4>
+        <table className="about-table">
+          <thead>
+            <tr><th>Source Type</th><th>Domain</th><th>Content Rules</th><th>Example</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Operational</td>
+              <td>Both</td>
+              <td>Experiential knowledge, organizational procedures. No citation required.</td>
+              <td>&ldquo;When processing an export request, classify the item using USML categories&rdquo;</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Regulatory Primary</td>
+              <td>Legal</td>
+              <td>Verbatim regulatory text. Never LLM-paraphrased. Citation and effective date required.</td>
+              <td>FAR 52.227-14 &ldquo;Rights in Data &mdash; General&rdquo;</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Regulatory Interpretive</td>
+              <td>Legal</td>
+              <td>Agency guidance, case holdings. Citation required. Must edge to the primary it interprets.</td>
+              <td>DCAA CAM &sect;6-410.3 guidance on IR&amp;D cost allowability</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Technical Primary</td>
+              <td>Technical</td>
+              <td>API signatures, syntax, specs. Never LLM-paraphrased. Citation and version required.</td>
+              <td><code>DataFrame.join(other, on, how)</code> &mdash; exact parameters and behavior</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Technical Pattern</td>
+              <td>Technical</td>
+              <td>Official guides, best practices, known gotchas. Citation recommended.</td>
+              <td>SCD Type 2 pattern for Delta Lake medallion architecture</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          The unifying principle: <strong>facts that must be assumed true because they are outside the
+          system&rsquo;s control</strong>. FAR 52.227-14 says what it says. <code>DataFrame.join()</code> takes
+          the parameters it takes. A paraphrased neuron is a liability if the paraphrase is wrong. These
+          neurons carry full provenance &mdash; citation, source URL, effective date or version, and
+          verification timestamp &mdash; and are never LLM-generated or paraphrased.
+        </p>
+
+        <h4 style={{ marginTop: 16, marginBottom: 8 }}>External Reference Detection</h4>
+        <p>
+          Every neuron&rsquo;s content is scanned by a deterministic regex-based pattern matcher that detects
+          references to external authoritative sources. The detector covers regulatory citations (FAR, DFARS,
+          ITAR, EAR, CFR, NIST, MIL-STD, AS9100, ASME, ISO, SAE, OSHA, ASTM, and more) and technical
+          references (Python stdlib, PySpark, SQLAlchemy, React, FastAPI, Delta Lake, Node.js). Each detected
+          reference is tracked with its resolution status &mdash; whether a corresponding primary source neuron
+          exists in the graph.
+        </p>
+
+        <h4 style={{ marginTop: 16, marginBottom: 8 }}>Emergent Neurons</h4>
+        <p>
+          Emergent neurons are the graph&rsquo;s third self-organizing pathway, alongside co-firing edges
+          (emergent relationships) and spread activation (emergent relevance). When the reference detector
+          finds a citation that no existing primary neuron resolves, that reference enters an <strong>emergent
+          queue</strong> &mdash; a priority-ranked backlog of knowledge gaps the system has discovered in itself.
+        </p>
+        <p>
+          Each time the same unresolved reference is detected across different neurons or queries, its priority
+          increases. When a reference crosses a detection threshold (or a human triggers it manually), the system
+          acquires the authoritative source text, segments it into neuron proposals via LLM, and presents them
+          for human review &mdash; the same flow as bolster. On approval, the new neuron is created with full
+          provenance, edges are automatically built to every neuron that referenced it, and those neurons&rsquo;
+          external reference entries are marked resolved.
+        </p>
+        <p>
+          The result is a graph that <strong>identifies what it doesn&rsquo;t know and grows itself at the
+          point of need</strong>. Rather than pre-loading every possible regulation or API reference, the system
+          maintains a core set of the most-referenced authoritative sources (~50&ndash;80 pre-loaded) and acquires
+          everything else on demand as the operational neurons reveal what they actually reference. The emergent
+          queue doubles as gap analytics &mdash; a self-generating map of the system&rsquo;s blind spots,
+          prioritized by how frequently each gap is encountered.
+        </p>
+
+        <table className="about-table">
+          <thead>
+            <tr><th>Self-Organizing Pathway</th><th>Trigger</th><th>What Emerges</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Co-Firing Edges</td>
+              <td>Two neurons fire together repeatedly across queries</td>
+              <td>An emergent <em>relationship</em> &mdash; an association that wasn&rsquo;t designed but discovered</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Spread Activation</td>
+              <td>Multi-hop traversal discovers bridge neurons</td>
+              <td>An emergent <em>relevance</em> &mdash; a neuron not directly related but reachable through intermediate nodes</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Emergent Neurons</td>
+              <td>Unresolved citation detected in operational content</td>
+              <td>An emergent <em>node</em> &mdash; the graph grows itself where knowledge is missing</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section className="about-section">
         <h3>Neuron Graph Structure</h3>
         <table className="about-table">
           <thead>
