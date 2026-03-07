@@ -665,7 +665,29 @@ async def _refine(
         except json.JSONDecodeError:
             pass
 
-    # Build neuron details
+    # Build neuron details with structural context (child counts, sibling counts)
+    all_neuron_ids = [n.id for n in all_neurons]
+    child_counts: dict[int, int] = {}
+    sibling_counts: dict[int, int] = {}
+    for n in all_neurons:
+        # Count children
+        cc_result = await db.execute(
+            select(func.count(Neuron.id)).where(
+                Neuron.parent_id == n.id, Neuron.is_active == True
+            )
+        )
+        child_counts[n.id] = cc_result.scalar() or 0
+        # Count siblings (other children of the same parent)
+        if n.parent_id:
+            sc_result = await db.execute(
+                select(func.count(Neuron.id)).where(
+                    Neuron.parent_id == n.parent_id, Neuron.is_active == True
+                )
+            )
+            sibling_counts[n.id] = (sc_result.scalar() or 1) - 1  # exclude self
+        else:
+            sibling_counts[n.id] = 0
+
     neuron_sections = []
     for n in all_neurons:
         neuron_sections.append(
@@ -675,6 +697,7 @@ async def _refine(
             f"  Role Key: {n.role_key or 'none'}\n"
             f"  Summary: {n.summary or 'none'}\n"
             f"  Content:\n{n.content or '(empty)'}\n"
+            f"  Children: {child_counts.get(n.id, 0)}, Siblings: {sibling_counts.get(n.id, 0)}\n"
             f"  Invocations: {n.invocations}, Avg Utility: {n.avg_utility:.3f}, Active: {n.is_active}"
         )
 
@@ -733,6 +756,11 @@ async def _refine(
         "layer (parent's layer + 1), node_type, label, content, summary, and department/role_key "
         "(inherit from parent)\n"
         f"- IMPORTANT: New neurons must have layer <= {max_layer}. Do NOT create neurons at layer {max_layer + 1} or deeper.\n"
+        "- BREADTH OVER DEPTH: Prefer adding sibling neurons under an existing parent over "
+        "creating deeper chains. If a neuron has 0 children, consider adding multiple siblings "
+        "under its PARENT rather than adding a child under it. Never create a chain of single-child "
+        "neurons — if you need to add to a branch that already has only 1 child at each level, "
+        "add siblings at an existing level instead. Check the Children/Siblings counts below.\n"
         "- Keep content concise and factual — neurons are context snippets, not essays\n"
         "- Content should contain actionable, specific knowledge (definitions, procedures, best practices, "
         "key metrics, common pitfalls) — not vague overviews\n\n"
@@ -842,10 +870,46 @@ async def _apply_all(
         updated_count += 1
 
     created_count = 0
+    created_parent_ids: set[int] = set()  # Track parents we've already added children to this tick
     state = await get_system_state(db)
     for n in new_neurons:
+        parent_id = n.get("parent_id")
+
+        # Chain-depth guard: don't extend single-child chains
+        if parent_id:
+            # Check if parent already has exactly 0 children AND its grandparent
+            # also has exactly 1 child (the parent) — this would create a thin chain
+            parent_child_count = (await db.execute(
+                select(func.count(Neuron.id)).where(
+                    Neuron.parent_id == parent_id, Neuron.is_active == True
+                )
+            )).scalar() or 0
+            # Also count children we're creating this tick under the same parent
+            tick_siblings = sum(1 for pid in created_parent_ids if pid == parent_id)
+            effective_children = parent_child_count + tick_siblings
+
+            if effective_children == 0:
+                # Parent has no children — check if parent itself is a lone child
+                parent_neuron = await db.get(Neuron, parent_id)
+                if parent_neuron and parent_neuron.parent_id:
+                    grandparent_child_count = (await db.execute(
+                        select(func.count(Neuron.id)).where(
+                            Neuron.parent_id == parent_neuron.parent_id, Neuron.is_active == True
+                        )
+                    )).scalar() or 0
+                    if grandparent_child_count == 1:
+                        # This would extend a single-child chain — redirect to be a sibling instead
+                        import logging
+                        logging.getLogger(__name__).info(
+                            f"AUTOPILOT: Redirecting neuron from parent #{parent_id} to "
+                            f"#{parent_neuron.parent_id} to avoid single-child chain"
+                        )
+                        parent_id = parent_neuron.parent_id
+                        n["layer"] = parent_neuron.layer  # Same layer as would-be parent
+
+        created_parent_ids.add(parent_id or 0)
         neuron = Neuron(
-            parent_id=n.get("parent_id"),
+            parent_id=parent_id,
             layer=n.get("layer", 3),
             node_type=n.get("node_type", "knowledge"),
             label=n.get("label", ""),
