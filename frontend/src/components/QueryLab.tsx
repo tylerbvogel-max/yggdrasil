@@ -1001,7 +1001,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
 
       <RefinePanel queryId={result.query_id} hasEval={!!evalText} hasNeurons={hasNeurons} onRunAgain={onRunAgain} onPhaseChange={onRefinePhaseChange} />
 
-      {result.slots.length >= 2 && (
+      {result.slots.length >= 1 && (
         <Section title="Export for External Review">
           <p style={{ fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: 12 }}>
             Download a blind evaluation file for an external model (e.g., ChatGPT). Answers are labeled A/B/C with no model identification.
@@ -1234,6 +1234,89 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
               </div>
             </div>
           )}
+        </Section>
+      )}
+
+      {query.slots.length >= 1 && (
+        <Section title="Export for External Review">
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: 12 }}>
+            Download a blind evaluation file for an external model (e.g., ChatGPT). Answers are labeled A/B/C with no model identification.
+          </p>
+          <button className="btn btn-sm" onClick={() => {
+            const lines: string[] = [];
+            lines.push('='.repeat(80));
+            lines.push('BLIND EVALUATION REQUEST');
+            lines.push('='.repeat(80));
+            lines.push('');
+            lines.push('You are evaluating multiple AI-generated answers to the same prompt.');
+            lines.push('Each answer is labeled with a letter (A, B, C, etc.). You do not know');
+            lines.push('which model produced which answer.');
+            lines.push('');
+            lines.push('Score each answer on the following dimensions (1-5 scale):');
+            lines.push('');
+            lines.push('  Accuracy      - Are the facts, standards, and procedures correct?');
+            lines.push('  Completeness  - Does it cover all relevant aspects of the question?');
+            lines.push('  Clarity       - Is it well-organized and easy to follow?');
+            lines.push('  Faithfulness  - Does it avoid hallucinated facts or made-up references?');
+            lines.push('  Overall       - Holistic quality considering all dimensions above.');
+            lines.push('');
+            lines.push('After scoring, select a winner (the best overall answer).');
+            lines.push('Provide a brief justification for your scores and winner selection.');
+            lines.push('');
+            lines.push('='.repeat(80));
+            lines.push('PROMPT');
+            lines.push('='.repeat(80));
+            lines.push('');
+            lines.push(`User query: ${query.user_message}`);
+            lines.push('');
+
+            query.slots.forEach((slot, i) => {
+              const label = String.fromCharCode(65 + i);
+              lines.push('='.repeat(80));
+              lines.push(`ANSWER ${label}`);
+              lines.push('='.repeat(80));
+              lines.push('');
+              lines.push(slot.response);
+              lines.push('');
+            });
+
+            if (localEvalScores.length > 0) {
+              lines.push('='.repeat(80));
+              lines.push('INTERNAL EVALUATION (for comparison — do not let this bias your scoring)');
+              lines.push('='.repeat(80));
+              lines.push('');
+              lines.push('Dimension'.padEnd(16) + localEvalScores.map(s => `Answer ${s.answer_label}`.padEnd(12)).join(''));
+              lines.push('-'.repeat(16 + localEvalScores.length * 12));
+              for (const dim of ['accuracy', 'completeness', 'clarity', 'faithfulness', 'overall'] as const) {
+                const dimLabel = dim.charAt(0).toUpperCase() + dim.slice(1);
+                lines.push(dimLabel.padEnd(16) + localEvalScores.map(s => `${s[dim]}/5`.padEnd(12)).join(''));
+              }
+              lines.push('');
+              if (localEvalWinner) {
+                lines.push(`Internal winner: Answer ${localEvalWinner}`);
+              }
+              if (localEvalText) {
+                lines.push('');
+                lines.push('Internal verdict:');
+                lines.push(localEvalText);
+              }
+            }
+
+            lines.push('');
+            lines.push('='.repeat(80));
+            lines.push('END OF EVALUATION FILE');
+            lines.push('='.repeat(80));
+
+            const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `yggdrasil-blind-eval-q${query.id}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }}>
+            Export Blind Evaluation (.txt)
+          </button>
         </Section>
       )}
 
