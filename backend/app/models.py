@@ -183,6 +183,8 @@ class AutopilotRun(Base):
     generated_query: Mapped[str] = mapped_column(Text, nullable=False)
     directive: Mapped[str] = mapped_column(Text, nullable=False)
     focus_neuron_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    gap_source: Mapped[str | None] = mapped_column(String(30), nullable=True)  # emergent_queue|low_eval|thin_neuron|sparse_subtree|directive
+    gap_target: Mapped[str | None] = mapped_column(Text, nullable=True)  # Human-readable gap description
     neurons_activated: Mapped[int] = mapped_column(Integer, default=0)
     updates_applied: Mapped[int] = mapped_column(Integer, default=0)
     neurons_created: Mapped[int] = mapped_column(Integer, default=0)

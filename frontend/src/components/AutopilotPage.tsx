@@ -11,6 +11,14 @@ import {
   fetchTree,
 } from '../api';
 
+const GAP_SOURCE_LABELS: Record<string, { label: string; color: string }> = {
+  emergent_queue: { label: 'Emergent Queue', color: '#e8b84d' },
+  low_eval: { label: 'Low Eval', color: '#e85d5d' },
+  thin_neuron: { label: 'Thin Neuron', color: '#8b8bea' },
+  sparse_subtree: { label: 'Sparse Subtree', color: '#5dbb5d' },
+  directive: { label: 'Directive', color: '#888' },
+};
+
 export default function AutopilotPage() {
   const [config, setConfig] = useState<AutopilotConfig | null>(null);
   const [runs, setRuns] = useState<AutopilotRun[]>([]);
@@ -65,7 +73,7 @@ export default function AutopilotPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Poll step progress — detect both manual and timer-triggered runs
+  // Poll step progress
   useEffect(() => {
     const poll = async () => {
       try {
@@ -75,7 +83,6 @@ export default function AutopilotPage() {
           setCurrentStep(status.step);
           setStepDetail(status.detail);
         } else if (running && !status.running) {
-          // Run just finished (timer-triggered) — reload data
           setRunning(false);
           setCurrentStep('');
           setStepDetail('');
@@ -133,7 +140,6 @@ export default function AutopilotPage() {
     setRunning(true);
     setRunResult(null);
     try {
-      // Save config first so the run uses current form values
       const saved = await updateAutopilotConfig({
         directive,
         interval_minutes: interval,
@@ -171,7 +177,6 @@ export default function AutopilotPage() {
       return;
     }
     setExpandedRun(runId);
-    // Lazy-load changes
     if (!runChanges[runId]) {
       try {
         const changes = await fetchAutopilotRunChanges(runId);
@@ -195,6 +200,12 @@ export default function AutopilotPage() {
 
   if (loading) return <div className="loading">Loading autopilot...</div>;
 
+  // Gap source stats from run history
+  const gapStats = runs.reduce<Record<string, number>>((acc, r) => {
+    if (r.gap_source) acc[r.gap_source] = (acc[r.gap_source] || 0) + 1;
+    return acc;
+  }, {});
+
   return (
     <div className="autopilot-page">
       {/* Config Panel */}
@@ -209,9 +220,14 @@ export default function AutopilotPage() {
           </div>
         </div>
 
+        <div style={{ padding: '8px 0 4px', color: '#aaa', fontSize: '0.85rem' }}>
+          Gap-driven mode: autopilot scans for emergent queue entries, low-eval queries,
+          thin neurons, and sparse subtrees. Falls back to directive when no gaps are found.
+        </div>
+
         <div className="autopilot-config-body">
           <div className="autopilot-field">
-            <label>Training Directive</label>
+            <label>Directive (optional — guides fallback queries when no gaps found)</label>
             <textarea
               value={directive}
               onChange={e => setDirective(e.target.value)}
@@ -240,7 +256,7 @@ export default function AutopilotPage() {
                   </button>
                 )}
                 {!focusNeuronId && (
-                  <span className="focus-hint">No focus = entire graph (random domain)</span>
+                  <span className="focus-hint">No focus = entire graph</span>
                 )}
               </div>
             </div>
@@ -299,7 +315,6 @@ export default function AutopilotPage() {
               <button
                 className="btn autopilot-run-btn"
                 onClick={handleRunNow}
-                disabled={!directive.trim()}
               >
                 Run Now
               </button>
@@ -330,6 +345,30 @@ export default function AutopilotPage() {
         </div>
       </div>
 
+      {/* Gap Source Stats */}
+      {Object.keys(gapStats).length > 0 && (
+        <div className="result-card">
+          <h3>Gap Source Distribution</h3>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', padding: '8px 0' }}>
+            {Object.entries(gapStats).map(([source, count]) => {
+              const info = GAP_SOURCE_LABELS[source] || { label: source, color: '#888' };
+              return (
+                <div key={source} style={{
+                  padding: '6px 12px',
+                  borderRadius: 6,
+                  background: 'rgba(255,255,255,0.05)',
+                  border: `1px solid ${info.color}40`,
+                  fontSize: '0.85rem',
+                }}>
+                  <span style={{ color: info.color, fontWeight: 600 }}>{info.label}</span>
+                  <span style={{ color: '#aaa', marginLeft: 8 }}>{count} run{count !== 1 ? 's' : ''}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Run History */}
       <div className="result-card">
         <h3>Run History ({runs.length})</h3>
@@ -340,6 +379,7 @@ export default function AutopilotPage() {
             <thead>
               <tr>
                 <th>Time</th>
+                <th>Gap Source</th>
                 <th>Generated Query</th>
                 <th>Focus</th>
                 <th>Eval</th>
@@ -361,8 +401,21 @@ export default function AutopilotPage() {
                     <td className="run-time">
                       {run.created_at ? new Date(run.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
                     </td>
+                    <td>
+                      {run.gap_source ? (
+                        <span style={{
+                          color: (GAP_SOURCE_LABELS[run.gap_source] || { color: '#888' }).color,
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                        }}>
+                          {(GAP_SOURCE_LABELS[run.gap_source] || { label: run.gap_source }).label}
+                        </span>
+                      ) : (
+                        <span style={{ color: '#666' }}>-</span>
+                      )}
+                    </td>
                     <td className="run-query" title={run.generated_query}>
-                      {run.generated_query.slice(0, 80)}{run.generated_query.length > 80 ? '...' : ''}
+                      {run.generated_query.slice(0, 70)}{run.generated_query.length > 70 ? '...' : ''}
                     </td>
                     <td className="run-focus">
                       {run.focus_neuron_label ? (
@@ -383,8 +436,14 @@ export default function AutopilotPage() {
                   </tr>
                   {expandedRun === run.id && (
                     <tr key={`${run.id}-detail`} className="autopilot-run-detail">
-                      <td colSpan={8}>
+                      <td colSpan={9}>
                         <div className="run-detail-content">
+                          {run.gap_target && (
+                            <div className="run-detail-section">
+                              <strong>Gap Target:</strong>
+                              <div className="detail-content">{run.gap_target}</div>
+                            </div>
+                          )}
                           <div className="run-detail-section">
                             <strong>Full Query:</strong>
                             <div className="detail-content">{run.generated_query}</div>
@@ -456,7 +515,7 @@ export default function AutopilotPage() {
                           )}
                           <div className="run-detail-meta">
                             <span>Neurons activated: {run.neurons_activated}</span>
-                            <span>Directive: {run.directive.slice(0, 100)}</span>
+                            {run.directive && <span>Directive: {run.directive.slice(0, 100)}</span>}
                             {run.query_id && <span>Query ID: #{run.query_id}</span>}
                           </div>
                         </div>
@@ -474,6 +533,7 @@ export default function AutopilotPage() {
 }
 
 const STEPS = [
+  { key: 'detect', label: 'Detect' },
   { key: 'generate', label: 'Generate' },
   { key: 'execute', label: 'Execute' },
   { key: 'evaluate', label: 'Evaluate' },

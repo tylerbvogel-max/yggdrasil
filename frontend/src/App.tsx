@@ -5,7 +5,6 @@ import QueryLab from './components/QueryLab'
 import PipelinePage from './components/PipelinePage'
 import EvaluationPage from './components/EvaluationPage'
 import RefinementHistory from './components/RefinementHistory'
-import BolsterPage from './components/BolsterPage'
 import NextSteps from './components/NextSteps'
 import AutopilotPage from './components/AutopilotPage'
 import CirclePacking from './components/CirclePacking'
@@ -17,7 +16,7 @@ import SecurityPage from './components/SecurityPage'
 import PerformancePage from './components/PerformancePage'
 import PerformanceExplanationPage from './components/PerformanceExplanationPage'
 
-type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'bolster' | 'autopilot' | 'nextsteps' | 'about' | 'monetization' | 'security' | 'performance' | 'perf-explain';
+type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'nextsteps' | 'about' | 'monetization' | 'security' | 'performance' | 'perf-explain';
 
 interface NavItem {
   key: Tab;
@@ -45,7 +44,6 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: 'Improve',
     items: [
-      { key: 'bolster', label: 'Bolster' },
       { key: 'autopilot', label: 'Autopilot' },
       { key: 'refinements', label: 'Refinements' },
     ],
@@ -112,7 +110,6 @@ export default function App() {
         {tab === 'pipeline' && <PipelinePage />}
         {tab === 'evaluation' && <EvaluationPage />}
         {tab === 'refinements' && <RefinementHistory />}
-        <div style={{ display: tab === 'bolster' ? 'contents' : 'none' }}><BolsterPage /></div>
         {tab === 'samples' && <SampleQueries />}
         {tab === 'autopilot' && <AutopilotPage />}
         {tab === 'nextsteps' && <NextSteps />}

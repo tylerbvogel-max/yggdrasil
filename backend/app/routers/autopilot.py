@@ -1,7 +1,7 @@
-"""Autopilot — autonomous neuron training loop.
+"""Autopilot — gap-driven autonomous neuron growth loop.
 
-External cron calls POST /admin/autopilot/tick on an interval.
-Each tick: generate query → execute → self-evaluate → refine → auto-apply all.
+Each tick: detect gap -> generate targeted query -> execute -> evaluate -> refine -> apply.
+Falls back to directive-based random queries when no gaps are found.
 """
 
 import json
@@ -15,24 +15,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, async_session
 from app.models import (
     AutopilotConfig, AutopilotRun, Query, Neuron, EvalScore, NeuronRefinement,
+    EmergentQueue,
 )
 from app.schemas import (
     AutopilotConfigOut, AutopilotConfigUpdate, AutopilotRunOut, AutopilotTickResponse,
-    NeuronUpdateSuggestion, NewNeuronSuggestion,
 )
 from app.services.executor import execute_query
 from app.services.claude_cli import claude_chat
 from app.services.neuron_service import get_system_state
+from app.services.gap_detector import detect_gap, GapTarget
 
 router = APIRouter(prefix="/admin/autopilot", tags=["autopilot"])
 
 # In-memory cancellation flag
 _cancel_requested = False
 _tick_running = False
-_current_step = ""  # Current step label for progress tracking
-_current_detail = ""  # Substep detail message for UI
+_current_step = ""
+_current_detail = ""
 
-TICK_STEPS = ["generate", "execute", "evaluate", "refine", "apply", "record"]
+TICK_STEPS = ["detect", "generate", "execute", "evaluate", "refine", "apply", "record"]
 
 
 def _set_step(step: str, detail: str = ""):
@@ -175,9 +176,7 @@ async def tick(db: AsyncSession = Depends(get_db)):
     config = await _get_or_create_config(db)
     if not config.enabled:
         return AutopilotTickResponse(status="skipped", message="Autopilot is disabled")
-    if not config.directive.strip():
-        return AutopilotTickResponse(status="skipped", message="No directive set")
-    # Respect interval — skip if too soon since last tick
+    # Respect interval
     if config.last_tick_at:
         elapsed = datetime.now(timezone.utc) - config.last_tick_at.replace(tzinfo=timezone.utc)
         if elapsed < timedelta(minutes=config.interval_minutes):
@@ -192,8 +191,6 @@ async def run_now(db: AsyncSession = Depends(get_db)):
     if _tick_running:
         return AutopilotTickResponse(status="skipped", message="A tick is already running")
     config = await _get_or_create_config(db)
-    if not config.directive.strip():
-        return AutopilotTickResponse(status="skipped", message="No directive set")
     return await _run_tick(db, config)
 
 
@@ -210,6 +207,8 @@ async def list_runs(db: AsyncSession = Depends(get_db)):
             generated_query=r.generated_query,
             directive=r.directive,
             focus_neuron_label=r.focus_neuron_label,
+            gap_source=r.gap_source,
+            gap_target=r.gap_target,
             neurons_activated=r.neurons_activated,
             updates_applied=r.updates_applied,
             neurons_created=r.neurons_created,
@@ -249,7 +248,6 @@ async def get_run_changes(run_id: int, db: AsyncSession = Depends(get_db)):
             "new_value": r.new_value,
             "reason": r.reason,
         }
-        # For creates, include the full neuron details
         if r.action == "create" and neuron:
             entry["neuron_detail"] = {
                 "layer": neuron.layer,
@@ -266,8 +264,7 @@ async def get_run_changes(run_id: int, db: AsyncSession = Depends(get_db)):
 # ── Tick Orchestration ─────────────────────────────────────────────────
 
 async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickResponse:
-    """Run one autopilot cycle. Uses separate DB sessions per step to avoid
-    holding a long SQLite lock across multiple Haiku calls."""
+    """Run one gap-driven autopilot cycle."""
     global _cancel_requested, _tick_running, _current_step
     _cancel_requested = False
     _tick_running = True
@@ -288,17 +285,24 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
     reasoning = ""
     updates_applied = 0
     neurons_created = 0
+    gap_source = None
+    gap_target_desc = None
+    gap: GapTarget | None = None
 
     def _check_cancel():
         if _cancel_requested:
             raise _CancelledError("Autopilot tick cancelled by user")
 
     try:
-        # Step 0: Read-only — gather context, then release DB
-        _set_step("generate", "Loading focus context and recent queries...")
+        # Step 0: Detect gap
+        _set_step("detect", "Scanning for knowledge gaps...")
         async with async_session() as s0:
+            gap = await detect_gap(s0, focus_neuron_id)
+
+            # Also gather focus context
             if focus_neuron_id:
                 focus_label, focus_context = await _get_subtree_context(s0, focus_neuron_id)
+
             recent_result = await s0.execute(
                 select(AutopilotRun.generated_query)
                 .order_by(AutopilotRun.id.desc())
@@ -306,18 +310,27 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
             )
             recent_queries = [r[0] for r in recent_result.all()]
 
+        if gap:
+            gap_source = gap.source
+            gap_target_desc = gap.description
+            _set_step("detect", f"Found gap: {gap.source} — {gap.description[:80]}...")
+        else:
+            gap_source = "directive"
+            gap_target_desc = "No structural gaps found — using directive for exploration"
+            _set_step("detect", "No gaps found — falling back to directive-based query")
+
         _check_cancel()
 
-        # Step 1: Generate query (Haiku call — no DB needed)
-        _set_step("generate", "Calling Haiku to generate test query...")
+        # Step 1: Generate targeted query
+        _set_step("generate", "Generating targeted query from gap analysis...")
         generated_query, gen_cost = await _generate_query(
-            directive, recent_queries, focus_context
+            directive, recent_queries, focus_context, gap
         )
         total_cost += gen_cost
 
         _check_cancel()
 
-        # Step 2: Execute through pipeline (owns its own session/commit)
+        # Step 2: Execute through pipeline
         _set_step("execute", "Scoring and selecting candidate neurons...")
         async with async_session() as s2:
             exec_result = await execute_query(s2, generated_query, modes=["haiku_neuron"])
@@ -327,7 +340,7 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
 
         _check_cancel()
 
-        # Step 3: Self-evaluate (Haiku/Sonnet/Opus call + short DB write)
+        # Step 3: Self-evaluate
         _set_step("evaluate", f"Calling {eval_model} to evaluate response quality...")
         async with async_session() as s3:
             query = await s3.get(Query, query_id)
@@ -337,29 +350,38 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
 
         _check_cancel()
 
-        # Step 4: Refine (Haiku/Sonnet/Opus call + short DB write)
+        # Step 4: Refine
         _set_step("refine", f"Calling {eval_model} to analyze gaps and suggest improvements...")
         async with async_session() as s4:
             query = await s4.get(Query, query_id)
             reasoning, updates, new_neurons, refine_cost = await _refine(
                 s4, query, max_layer=max_layer, focus_neuron_id=focus_neuron_id,
-                model=eval_model,
+                model=eval_model, gap=gap,
             )
             await s4.commit()
             total_cost += refine_cost
 
         _check_cancel()
 
-        # Step 5: Apply all suggestions (short DB writes)
+        # Step 5: Apply all suggestions
         n_updates = len(updates) if updates else 0
         n_new = len(new_neurons) if new_neurons else 0
         _set_step("apply", f"Applying {n_updates} updates and {n_new} new neurons...")
         async with async_session() as s5:
             query = await s5.get(Query, query_id)
             updates_applied, neurons_created = await _apply_all(s5, query, updates, new_neurons)
+
+            # If gap was from emergent queue and we created neurons, mark it resolved
+            if gap and gap.source == "emergent_queue" and gap.emergent_queue_id and neurons_created > 0:
+                eq_entry = await s5.get(EmergentQueue, gap.emergent_queue_id)
+                if eq_entry:
+                    eq_entry.status = "resolved"
+                    eq_entry.resolved_at = datetime.now(timezone.utc)
+                    eq_entry.notes = f"Resolved by autopilot run (query #{query_id})"
+
             await s5.commit()
 
-        # Step 6: Record run + update last_tick_at
+        # Step 6: Record run
         _set_step("record", "Saving run metrics...")
         async with async_session() as s6:
             cfg = await _get_or_create_config(s6)
@@ -369,6 +391,8 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
                 generated_query=generated_query,
                 directive=directive,
                 focus_neuron_label=focus_label,
+                gap_source=gap_source,
+                gap_target=gap_target_desc,
                 neurons_activated=neurons_activated,
                 updates_applied=updates_applied,
                 neurons_created=neurons_created,
@@ -390,7 +414,6 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
         _tick_running = False
         _current_step = ""
         _current_detail = ""
-        # Record partial run as cancelled
         try:
             async with async_session() as sc:
                 run = AutopilotRun(
@@ -398,6 +421,8 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
                     generated_query=generated_query,
                     directive=directive,
                     focus_neuron_label=focus_label,
+                    gap_source=gap_source,
+                    gap_target=gap_target_desc,
                     neurons_activated=neurons_activated,
                     updates_applied=updates_applied,
                     neurons_created=neurons_created,
@@ -417,13 +442,14 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
         _tick_running = False
         _current_step = ""
         _current_detail = ""
-        # Record error in a fresh session
         try:
             async with async_session() as se:
                 run = AutopilotRun(
                     generated_query=generated_query,
                     directive=directive,
                     focus_neuron_label=focus_label,
+                    gap_source=gap_source,
+                    gap_target=gap_target_desc,
                     neurons_activated=0,
                     updates_applied=0,
                     neurons_created=0,
@@ -444,9 +470,10 @@ class _CancelledError(Exception):
 
 
 async def _generate_query(
-    directive: str, recent_queries: list[str], focus_context: str
+    directive: str, recent_queries: list[str], focus_context: str,
+    gap: GapTarget | None,
 ) -> tuple[str, float]:
-    """Generate a novel test query via Haiku."""
+    """Generate a targeted query based on gap analysis, or fall back to directive."""
     recent_section = ""
     if recent_queries:
         recent_section = (
@@ -458,14 +485,27 @@ async def _generate_query(
     if focus_context:
         focus_section = f"\n\nFocus area (generate queries specifically about this domain):\n{focus_context}"
 
-    system_prompt = (
-        "You generate realistic test queries for a knowledge management system. "
-        "Generate ONE novel, specific query that someone working in this domain would ask. "
-        "The query should test the system's knowledge and require detailed, practical answers. "
-        "Respond with ONLY the query text — no explanation, no quotes, no numbering."
-    )
-
-    user_prompt = f"Training directive: {directive}{focus_section}{recent_section}"
+    if gap and gap.source != "directive":
+        # Gap-driven query generation
+        system_prompt = (
+            "You generate targeted test queries for a knowledge management system. "
+            "A gap has been detected in the knowledge graph. Generate ONE specific, "
+            "detailed query that would expose this gap and require the system to have "
+            "knowledge it currently lacks. "
+            "The query should sound like a natural question from a domain expert. "
+            "Respond with ONLY the query text — no explanation, no quotes, no numbering."
+        )
+        gap_section = f"\n\nDetected gap:\n{gap.description}"
+        user_prompt = f"Training directive: {directive or 'general knowledge improvement'}{focus_section}{gap_section}{recent_section}"
+    else:
+        # Directive-based fallback (no gaps found)
+        system_prompt = (
+            "You generate realistic test queries for a knowledge management system. "
+            "Generate ONE novel, specific query that someone working in this domain would ask. "
+            "The query should test the system's knowledge and require detailed, practical answers. "
+            "Respond with ONLY the query text — no explanation, no quotes, no numbering."
+        )
+        user_prompt = f"Training directive: {directive or 'general knowledge improvement'}{focus_section}{recent_section}"
 
     result = await claude_chat(system_prompt, user_prompt, max_tokens=256, model="haiku")
     query_text = result["text"].strip().strip('"').strip("'")
@@ -475,8 +515,7 @@ async def _generate_query(
 async def _self_evaluate(
     db: AsyncSession, query: Query, model: str = "haiku"
 ) -> tuple[int, str, float]:
-    """Single-response self-evaluation via Haiku. Returns (overall, verdict, cost)."""
-    # Get the neuron-enhanced response
+    """Single-response self-evaluation. Returns (overall, verdict, cost)."""
     response_text = ""
     if query.results_json:
         try:
@@ -512,7 +551,6 @@ async def _self_evaluate(
     result = await claude_chat(system_prompt, user_prompt, max_tokens=512, model=model)
     raw = result["text"].strip()
 
-    # Parse
     accuracy = completeness = clarity = faithfulness = overall = 3
     verdict = raw
     try:
@@ -532,14 +570,13 @@ async def _self_evaluate(
     except (json.JSONDecodeError, Exception):
         pass
 
-    # Delete old eval scores for this query
+    # Delete old eval scores
     old_scores = await db.execute(
         select(EvalScore).where(EvalScore.query_id == query.id)
     )
     for old in old_scores.scalars():
         await db.delete(old)
 
-    # Write EvalScore row
     db.add(EvalScore(
         query_id=query.id,
         eval_model=model,
@@ -564,8 +601,9 @@ async def _self_evaluate(
 async def _refine(
     db: AsyncSession, query: Query, max_layer: int = 5,
     focus_neuron_id: int | None = None, model: str = "haiku",
+    gap: GapTarget | None = None,
 ) -> tuple[str, list[dict], list[dict], float]:
-    """Refine neurons based on eval. Returns (reasoning, updates, new_neurons, cost)."""
+    """Refine neurons based on eval + gap context. Returns (reasoning, updates, new_neurons, cost)."""
     # Load eval scores
     eval_result = await db.execute(
         select(EvalScore).where(EvalScore.query_id == query.id)
@@ -580,14 +618,21 @@ async def _refine(
         if neuron:
             neurons.append(neuron)
 
-    # If no neurons were activated, load the focus neuron + its ancestors as anchor points
-    # so the refine step can create new neurons under them
+    # If gap provided context neurons, add those too
+    gap_context_neurons = []
+    if gap and gap.context_neuron_ids:
+        for nid in gap.context_neuron_ids:
+            if nid not in neuron_ids:
+                neuron = await db.get(Neuron, nid)
+                if neuron:
+                    gap_context_neurons.append(neuron)
+
+    # If no neurons were activated, load the focus neuron + ancestors as anchor points
     anchor_neurons = []
-    if not neurons and focus_neuron_id:
+    if not neurons and not gap_context_neurons and focus_neuron_id:
         focus = await db.get(Neuron, focus_neuron_id)
         if focus:
             anchor_neurons.append(focus)
-            # Walk up to get parent chain for context
             current = focus
             while current.parent_id:
                 parent = await db.get(Neuron, current.parent_id)
@@ -595,7 +640,6 @@ async def _refine(
                     break
                 anchor_neurons.insert(0, parent)
                 current = parent
-            # Also grab direct children as potential attach points
             children_result = await db.execute(
                 select(Neuron).where(
                     Neuron.parent_id == focus_neuron_id,
@@ -604,11 +648,11 @@ async def _refine(
             )
             anchor_neurons.extend(children_result.scalars().all())
 
-    all_neurons = neurons if neurons else anchor_neurons
+    all_neurons = neurons + gap_context_neurons if (neurons or gap_context_neurons) else anchor_neurons
     if not all_neurons:
         return "No neurons activated and no focus area set — nothing to refine.", [], [], 0.0
 
-    coverage_gap = not neurons  # True if the topic had no matching neurons
+    coverage_gap = not neurons
 
     # Get neuron response
     neuron_response = None
@@ -645,8 +689,23 @@ async def _refine(
     eval_summary = "\n".join(eval_lines)
     verdict = query.eval_text or "No verdict"
 
-    # Autopilot-specific prompt: aggressive about filling gaps
-    if coverage_gap:
+    # Build gap-aware instructions
+    if gap and gap.source == "emergent_queue":
+        gap_instruction = (
+            f"CRITICAL: This query was generated to fill a specific knowledge gap. "
+            f"The system references '{gap.description.split(chr(39))[1] if chr(39) in gap.description else 'an external reference'}' "
+            f"but has no dedicated neuron for it. You MUST create at least one new neuron "
+            f"with authoritative content covering this reference. Attach it under the most "
+            f"relevant existing neuron.\n"
+        )
+    elif gap and gap.source == "thin_neuron":
+        gap_instruction = (
+            f"CRITICAL: This query targets a thin neuron with minimal content. "
+            f"Prioritize UPDATING existing neurons with richer, more detailed content "
+            f"over creating new ones. If the neuron's content is empty or stub-like, "
+            f"fill it with substantive, actionable knowledge.\n"
+        )
+    elif coverage_gap:
         gap_instruction = (
             "CRITICAL: The knowledge graph had NO neurons covering this topic. The neurons listed below "
             "are anchor points (the focus area and its parent/child hierarchy). You MUST create new neurons "
@@ -695,8 +754,10 @@ async def _refine(
         "No text outside the JSON block."
     )
 
-    if coverage_gap:
+    if coverage_gap and not gap_context_neurons:
         neuron_header = f"## Anchor Neurons (focus area hierarchy — attach new neurons here)\n"
+    elif gap_context_neurons:
+        neuron_header = f"## Context Neurons ({len(neurons)} activated + {len(gap_context_neurons)} gap context)\n"
     else:
         neuron_header = f"## Activated Neurons ({len(neurons)} total)\n"
 
@@ -731,7 +792,7 @@ async def _refine(
     except (json.JSONDecodeError, KeyError, TypeError):
         reasoning = raw
 
-    # Store refine_json on query for audit trail
+    # Store refine_json on query
     refine_data = {
         "reasoning": reasoning,
         "updates": updates_raw,

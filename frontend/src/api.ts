@@ -12,7 +12,6 @@ import type {
   RefineResponse,
   ApplyRefineResponse,
   NeuronRefinementEntry,
-  BolsterResponse,
   AutopilotConfig,
   AutopilotRun,
   AutopilotTickResponse,
@@ -166,24 +165,6 @@ export interface CheckpointResponse {
 
 export function createCheckpoint(): Promise<CheckpointResponse> {
   return json<CheckpointResponse>('/admin/checkpoint', { method: 'POST' });
-}
-
-export function submitBolster(message: string, model: 'haiku' | 'sonnet' | 'opus', department?: string): Promise<BolsterResponse> {
-  const body: Record<string, string> = { message, model };
-  if (department) body.department = department;
-  return json<BolsterResponse>('/admin/bolster', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
-
-export function applyBolster(sessionId: string, updateIds: number[], newNeuronIds: number[]): Promise<ApplyRefineResponse> {
-  return json<ApplyRefineResponse>('/admin/bolster/apply', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, update_ids: updateIds, new_neuron_ids: newNeuronIds }),
-  });
 }
 
 // Autopilot
