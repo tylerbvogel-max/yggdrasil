@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -25,11 +25,22 @@ class Neuron(Base):
     cross_ref_departments: Mapped[str | None] = mapped_column(Text, nullable=True)
     standard_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at_query_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+    # Authoritative source fields
+    source_type: Mapped[str] = mapped_column(String(20), default="operational", server_default="operational")
+    source_origin: Mapped[str] = mapped_column(String(20), default="seed", server_default="seed")
+    citation: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    effective_date: Mapped[datetime.date | None] = mapped_column(Date, nullable=True)
+    last_verified: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    superseded_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=True)
+    source_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    external_references: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
 
-    parent: Mapped["Neuron | None"] = relationship("Neuron", remote_side=[id], lazy="selectin")
+    parent: Mapped["Neuron | None"] = relationship("Neuron", remote_side=[id], foreign_keys=[parent_id], lazy="selectin")
     firings: Mapped[list["NeuronFiring"]] = relationship("NeuronFiring", back_populates="neuron", lazy="select")
 
 
@@ -197,3 +208,21 @@ class PropagationLog(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
+
+
+class EmergentQueue(Base):
+    __tablename__ = "emergent_queue"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    citation_pattern: Mapped[str] = mapped_column(String(200), nullable=False)
+    domain: Mapped[str] = mapped_column(String(20), nullable=False)  # "regulatory" or "technical"
+    family: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    detection_count: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    first_detected_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    last_detected_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    detected_in_neuron_ids: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    detected_in_query_ids: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    resolved_neuron_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=True)
+    resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)

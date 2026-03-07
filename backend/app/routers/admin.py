@@ -10,7 +10,7 @@ from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Neuron, Query, NeuronFiring, NeuronEdge, PropagationLog, IntentNeuronMap, SystemState, NeuronRefinement
+from app.models import Neuron, Query, NeuronFiring, NeuronEdge, PropagationLog, IntentNeuronMap, SystemState, NeuronRefinement, EmergentQueue
 from app.schemas import (
     SeedResponse, ResetResponse, CostReportResponse, CheckpointResponse,
     BolsterRequest, BolsterResponse, ApplyBolsterRequest, ApplyRefineResponse,
@@ -314,6 +314,9 @@ async def apply_bolster(req: ApplyBolsterRequest, db: AsyncSession = Depends(get
             neuron.label = new_val
         elif field == "is_active":
             neuron.is_active = str(new_val).lower() in ("true", "1", "yes")
+        if field in ("content", "summary"):
+            from app.services.reference_hooks import populate_external_references
+            populate_external_references(neuron)
         db.add(NeuronRefinement(
             query_id=None,
             neuron_id=u["neuron_id"],
@@ -342,7 +345,10 @@ async def apply_bolster(req: ApplyBolsterRequest, db: AsyncSession = Depends(get
             role_key=n.get("role_key"),
             is_active=True,
             created_at_query_count=state.total_queries,
+            source_origin="bolster",
         )
+        from app.services.reference_hooks import populate_external_references
+        populate_external_references(neuron)
         db.add(neuron)
         await db.flush()
         db.add(NeuronRefinement(
@@ -358,3 +364,149 @@ async def apply_bolster(req: ApplyBolsterRequest, db: AsyncSession = Depends(get
 
     await db.commit()
     return ApplyRefineResponse(updated=updated_count, created=created_count)
+
+
+@router.get("/emergent-queue")
+async def get_emergent_queue(
+    status: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get emergent queue entries, optionally filtered by status."""
+    stmt = select(EmergentQueue).order_by(EmergentQueue.detection_count.desc())
+    if status:
+        stmt = stmt.where(EmergentQueue.status == status)
+    result = await db.execute(stmt)
+    entries = result.scalars().all()
+
+    return {
+        "total": len(entries),
+        "entries": [
+            {
+                "id": e.id,
+                "citation_pattern": e.citation_pattern,
+                "domain": e.domain,
+                "family": e.family,
+                "detection_count": e.detection_count,
+                "first_detected_at": e.first_detected_at.isoformat() if e.first_detected_at else None,
+                "last_detected_at": e.last_detected_at.isoformat() if e.last_detected_at else None,
+                "detected_in_neuron_ids": json.loads(e.detected_in_neuron_ids or "[]"),
+                "detected_in_query_ids": json.loads(e.detected_in_query_ids or "[]"),
+                "status": e.status,
+                "resolved_neuron_id": e.resolved_neuron_id,
+                "resolved_at": e.resolved_at.isoformat() if e.resolved_at else None,
+                "notes": e.notes,
+            }
+            for e in entries
+        ],
+    }
+
+
+@router.post("/emergent-queue/{entry_id}/dismiss")
+async def dismiss_queue_entry(
+    entry_id: int,
+    notes: str = "",
+    db: AsyncSession = Depends(get_db),
+):
+    """Dismiss an emergent queue entry with a reason."""
+    entry = await db.get(EmergentQueue, entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Queue entry not found")
+    entry.status = "dismissed"
+    entry.notes = notes
+    await db.commit()
+    return {"status": "dismissed", "id": entry_id}
+
+
+@router.post("/scan-references")
+async def scan_references(db: AsyncSession = Depends(get_db)):
+    """Retroactive scan: detect external references in all neurons and seed the emergent queue."""
+    from app.services.reference_detector import detect_neuron_references
+
+    result = await db.execute(select(Neuron).where(Neuron.is_active == True))
+    neurons = result.scalars().all()
+
+    neurons_scanned = 0
+    neurons_with_refs = 0
+    total_refs = 0
+    resolved = 0
+    unresolved = 0
+    new_queue = 0
+    incremented_queue = 0
+    family_counts: dict[str, int] = {}
+
+    # Build a lookup of existing citations -> neuron IDs for resolution
+    citation_lookup: dict[str, int] = {}
+    for n in neurons:
+        if n.citation and n.source_type in ("regulatory_primary", "technical_primary"):
+            citation_lookup[n.citation] = n.id
+
+    for neuron in neurons:
+        neurons_scanned += 1
+        refs = detect_neuron_references(neuron.content, neuron.summary)
+        if not refs:
+            neuron.external_references = None
+            continue
+
+        neurons_with_refs += 1
+        total_refs += len(refs)
+
+        # Check resolution for each reference
+        for ref in refs:
+            # Try to match against known citations
+            matched_id = None
+            for cit, nid in citation_lookup.items():
+                if ref["pattern"] in cit or cit in ref["pattern"]:
+                    matched_id = nid
+                    break
+
+            if matched_id:
+                ref["resolved_neuron_id"] = matched_id
+                ref["resolved_at"] = datetime.now().isoformat()
+                resolved += 1
+            else:
+                unresolved += 1
+                family_counts[ref["family"]] = family_counts.get(ref["family"], 0) + 1
+
+                # Check emergent queue
+                existing = (await db.execute(
+                    select(EmergentQueue).where(EmergentQueue.citation_pattern == ref["pattern"])
+                )).scalar_one_or_none()
+
+                if existing:
+                    if existing.status != "resolved":
+                        existing.detection_count += 1
+                        existing.last_detected_at = datetime.now()
+                        # Add neuron ID to tracking
+                        ids = json.loads(existing.detected_in_neuron_ids or "[]")
+                        if neuron.id not in ids:
+                            ids.append(neuron.id)
+                            existing.detected_in_neuron_ids = json.dumps(ids)
+                        incremented_queue += 1
+                else:
+                    db.add(EmergentQueue(
+                        citation_pattern=ref["pattern"],
+                        domain=ref["domain"],
+                        family=ref["family"],
+                        detection_count=1,
+                        detected_in_neuron_ids=json.dumps([neuron.id]),
+                    ))
+                    new_queue += 1
+
+        neuron.external_references = json.dumps(refs)
+
+    await db.commit()
+
+    top_families = sorted(family_counts.items(), key=lambda x: -x[1])[:10]
+
+    return {
+        "neurons_scanned": neurons_scanned,
+        "neurons_with_references": neurons_with_refs,
+        "total_references_found": total_refs,
+        "resolved": resolved,
+        "unresolved": unresolved,
+        "new_queue_entries": new_queue,
+        "existing_queue_entries_incremented": incremented_queue,
+        "top_unresolved_families": [
+            {"family": f, "count": c} for f, c in top_families
+        ],
+    }

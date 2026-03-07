@@ -766,6 +766,9 @@ async def _apply_all(
             neuron.is_active = new_val.lower() in ("true", "1", "yes")
         else:
             continue
+        if field in ("content", "summary"):
+            from app.services.reference_hooks import populate_external_references
+            populate_external_references(neuron)
         db.add(NeuronRefinement(
             query_id=query.id,
             neuron_id=u["neuron_id"],
@@ -791,7 +794,10 @@ async def _apply_all(
             role_key=n.get("role_key"),
             is_active=True,
             created_at_query_count=state.total_queries,
+            source_origin="autopilot",
         )
+        from app.services.reference_hooks import populate_external_references
+        populate_external_references(neuron)
         db.add(neuron)
         await db.flush()
         db.add(NeuronRefinement(
