@@ -88,17 +88,19 @@ function scoreColor(val: number): string {
   return '#ef4444';
 }
 
-function Section({ title, children, defaultOpen = true, className, headerRight, titleStyle, id }: {
+function Section({ title, children, defaultOpen = false, className, headerRight, titleStyle, id }: {
   title: string; children: ReactNode; defaultOpen?: boolean; className?: string;
   headerRight?: ReactNode; titleStyle?: React.CSSProperties; id?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [read, setRead] = useState(defaultOpen);
   return (
     <div id={id} className={`result-card${className ? ' ' + className : ''}`}>
-      <div className="section-header" onClick={() => setOpen(o => !o)}>
+      <div className="section-header" onClick={() => { setOpen(o => !o); setRead(true); }}>
         <h3 style={titleStyle}>
           <span className={`section-chevron${open ? ' open' : ''}`} />
           {title}
+          {!read && <span className="unread-dot" />}
         </h3>
         {headerRight && <div className="section-header-right" onClick={e => e.stopPropagation()}>{headerRight}</div>}
       </div>
