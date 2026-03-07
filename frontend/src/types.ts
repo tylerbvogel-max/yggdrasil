@@ -132,6 +132,17 @@ export interface NeuronHit {
   spread_boost: number;
 }
 
+export interface RefinementOut {
+  id: number;
+  neuron_id: number;
+  action: string;
+  field: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  reason: string | null;
+  neuron_label: string | null;
+}
+
 export interface QueryDetail {
   id: number;
   user_message: string;
@@ -153,6 +164,7 @@ export interface QueryDetail {
   eval_scores: EvalScoreOut[];
   eval_winner: string | null;
   neuron_hits: NeuronHit[];
+  refinements: RefinementOut[];
   created_at: string | null;
 }
 

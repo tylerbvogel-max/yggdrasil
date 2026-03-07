@@ -11,7 +11,7 @@ from app.schemas import (
     EvalRequest, EvalResponse, EvalScoreOut, EvalScoreSummary,
     RatingRequest, RatingResponse,
     RefineRequest, RefineResponse, NeuronUpdateSuggestion, NewNeuronSuggestion,
-    ApplyRefineRequest, ApplyRefineResponse,
+    ApplyRefineRequest, ApplyRefineResponse, RefinementOut,
 )
 from app.services.executor import execute_query
 from app.services.claude_cli import claude_chat, estimate_cost
@@ -149,6 +149,25 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
         if eval_scores.count(best) == 1:
             eval_winner = best.answer_label
 
+    # Load refinements for this query
+    refinement_result = await db.execute(
+        select(NeuronRefinement).where(NeuronRefinement.query_id == query_id).order_by(NeuronRefinement.id)
+    )
+    refinement_rows = refinement_result.scalars().all()
+    refinements = []
+    for r in refinement_rows:
+        neuron = await db.get(Neuron, r.neuron_id)
+        refinements.append(RefinementOut(
+            id=r.id,
+            neuron_id=r.neuron_id,
+            action=r.action,
+            field=r.field,
+            old_value=r.old_value,
+            new_value=r.new_value,
+            reason=r.reason,
+            neuron_label=neuron.label if neuron else None,
+        ))
+
     return QueryDetail(
         id=query.id,
         user_message=query.user_message,
@@ -170,6 +189,7 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
         eval_scores=eval_scores,
         eval_winner=eval_winner,
         neuron_hits=hits,
+        refinements=refinements,
         created_at=query.created_at.isoformat() if query.created_at else None,
     )
 

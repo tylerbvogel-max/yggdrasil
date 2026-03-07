@@ -178,6 +178,17 @@ class NeuronHit(BaseModel):
     spread_boost: float = 0
 
 
+class RefinementOut(BaseModel):
+    id: int
+    neuron_id: int
+    action: str  # "update" | "create"
+    field: str | None = None
+    old_value: str | None = None
+    new_value: str | None = None
+    reason: str | None = None
+    neuron_label: str | None = None
+
+
 class QueryDetail(BaseModel):
     id: int
     user_message: str
@@ -199,6 +210,7 @@ class QueryDetail(BaseModel):
     eval_scores: list[EvalScoreOut] = []
     eval_winner: str | None = None
     neuron_hits: list[NeuronHit]
+    refinements: list[RefinementOut] = []
     created_at: str | None
 
 

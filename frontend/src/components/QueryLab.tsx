@@ -1239,6 +1239,48 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
 
       <RefinePanel queryId={query.id} hasEval={!!localEvalText} hasNeurons={hasNeurons} />
 
+      {query.refinements && query.refinements.length > 0 && (
+        <Section title={`Applied Refinements (${query.refinements.length})`} defaultOpen={true}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {query.refinements.map(r => (
+              <div key={r.id} style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 6,
+                padding: '10px 14px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span style={{
+                    fontSize: '0.7rem',
+                    padding: '2px 6px',
+                    borderRadius: 3,
+                    fontWeight: 600,
+                    background: r.action === 'create' ? 'rgba(34,197,94,0.15)' : 'rgba(250,204,21,0.15)',
+                    color: r.action === 'create' ? '#22c55e' : '#facc15',
+                  }}>
+                    {r.action === 'create' ? 'CREATED' : 'UPDATED'}
+                  </span>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-bright, #e0e0e0)' }}>
+                    #{r.neuron_id} {r.neuron_label ?? ''}
+                  </span>
+                  {r.field && <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontStyle: 'italic' }}>{r.field}</span>}
+                </div>
+                {r.action === 'update' && r.old_value && r.new_value && (
+                  <div style={{ fontSize: '0.8rem', marginTop: 4 }}>
+                    <div style={{ color: '#f87171', opacity: 0.7 }}>{r.old_value.length > 200 ? r.old_value.slice(0, 200) + '...' : r.old_value}</div>
+                    <div style={{ color: '#4ade80', marginTop: 2 }}>{r.new_value.length > 200 ? r.new_value.slice(0, 200) + '...' : r.new_value}</div>
+                  </div>
+                )}
+                {r.action === 'create' && r.new_value && (
+                  <div style={{ fontSize: '0.8rem', color: '#4ade80', marginTop: 4 }}>{r.new_value}</div>
+                )}
+                {r.reason && <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: 4 }}>{r.reason}</div>}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
       {hasNeurons && query.assembled_prompt && (
         <Section title="Assembled System Prompt" defaultOpen={false}>
           <div className="response-text">{query.assembled_prompt}</div>
