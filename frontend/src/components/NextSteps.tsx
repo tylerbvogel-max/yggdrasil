@@ -2,29 +2,6 @@ export default function NextSteps() {
   return (
     <div className="next-steps">
       <h2>Next Steps</h2>
-
-      <div className="next-steps-callout" style={{
-        background: 'rgba(100, 180, 255, 0.08)',
-        border: '1px solid rgba(100, 180, 255, 0.25)',
-        borderRadius: '8px',
-        padding: '16px 20px',
-        marginBottom: '24px'
-      }}>
-        <h3 style={{ marginTop: 0, marginBottom: '8px', color: 'var(--text-bright, #e0e0e0)' }}>
-          Authoritative Source Neuron Architecture — Ready for Implementation
-        </h3>
-        <p style={{ margin: '0 0 8px 0' }}>
-          Source-typed neurons, external reference detection, emergent (self-growing) neurons, and gap analytics.
-          Extends the graph to handle regulatory knowledge (FAR, ITAR, NIST) and technical references (Python docs,
-          API signatures) as first-class citizens with provenance tracking, staleness detection, and citation-based
-          cross-referencing.
-        </p>
-        <p style={{ margin: 0, fontSize: '0.9em', color: 'var(--text-dim, #888)' }}>
-          Full spec: <code>readables/regulatory-neuron-spec.md</code><br />
-          Implementation brief (new session quickstart): <code>readables/authoritative-source-implementation-brief.md</code>
-        </p>
-      </div>
-
       <p className="next-steps-intro">
         Extending the neuron graph beyond non-deterministic knowledge — mapping biological glial cell
         types to system capabilities, and closing the quality gap between haiku+neurons and raw opus.
