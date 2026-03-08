@@ -14,7 +14,10 @@ function collectDepartments(nodes: TreeNode[]): string[] {
   return Array.from(depts).sort();
 }
 
-export default function Explorer() {
+export default function Explorer({ navigateToNeuronId, onNavigateHandled }: {
+  navigateToNeuronId?: number | null;
+  onNavigateHandled?: () => void;
+} = {}) {
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
   const [deptFilter, setDeptFilter] = useState('');
@@ -58,6 +61,16 @@ export default function Explorer() {
       .then(data => { setTree(data); setDepartments(collectDepartments(data)); })
       .catch(e => setError(e.message));
   }, []);
+
+  // Handle cross-tab navigation to a specific neuron
+  useEffect(() => {
+    if (navigateToNeuronId != null) {
+      setSelectedId(navigateToNeuronId);
+      setSearch(`#${navigateToNeuronId}`);
+      setDeptFilter('');
+      onNavigateHandled?.();
+    }
+  }, [navigateToNeuronId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const dept = deptFilter || undefined;

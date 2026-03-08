@@ -10,6 +10,13 @@ interface Props {
 
 function matchesSearch(node: TreeNode, term: string): boolean {
   if (!term) return true;
+  // Support #id search (e.g. "#2576")
+  const idMatch = term.match(/^#(\d+)$/);
+  if (idMatch) {
+    const targetId = Number(idMatch[1]);
+    if (node.id === targetId) return true;
+    return (node.children ?? []).some(c => matchesSearch(c, term));
+  }
   const lower = term.toLowerCase();
   if (node.label.toLowerCase().includes(lower)) return true;
   return (node.children ?? []).some(c => matchesSearch(c, term));
@@ -28,11 +35,16 @@ function TreeNodeRow({
   onSelect: (id: number) => void;
   depth: number;
 }) {
-  const [open, setOpen] = useState(depth < 1);
   const children = node.children ?? [];
   const hasChildren = children.length > 0;
+  const searchMatch = search && matchesSearch(node, search);
+  const [open, setOpen] = useState(depth < 1);
 
-  if (search && !matchesSearch(node, search)) return null;
+  // Auto-expand when a search matches a descendant
+  const shouldAutoExpand = !!(search && searchMatch && hasChildren);
+  const effectiveOpen = open || shouldAutoExpand;
+
+  if (search && !searchMatch) return null;
 
   return (
     <div className="tree-node">
@@ -45,12 +57,12 @@ function TreeNodeRow({
           className="tree-toggle"
           onClick={e => { e.stopPropagation(); setOpen(!open); }}
         >
-          {hasChildren ? (open ? '\u25BC' : '\u25B6') : ''}
+          {hasChildren ? (effectiveOpen ? '\u25BC' : '\u25B6') : ''}
         </span>
         <span className="tree-label">{node.label}</span>
         {node.invocations > 0 && <span className="tree-badge">{node.invocations}</span>}
       </div>
-      {hasChildren && open && (
+      {hasChildren && effectiveOpen && (
         <div className="tree-children">
           {children.map(child => (
             <TreeNodeRow

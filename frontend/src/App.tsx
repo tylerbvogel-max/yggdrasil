@@ -70,6 +70,12 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('explorer');
+  const [explorerNeuronId, setExplorerNeuronId] = useState<number | null>(null);
+
+  function navigateToNeuron(id: number) {
+    setExplorerNeuronId(id);
+    setTab('explorer');
+  }
 
   return (
     <div className="app">
@@ -95,7 +101,7 @@ export default function App() {
         </nav>
       </header>
       <main className="app-main">
-        {tab === 'explorer' && <Explorer />}
+        {tab === 'explorer' && <Explorer navigateToNeuronId={explorerNeuronId} onNavigateHandled={() => setExplorerNeuronId(null)} />}
         {tab === 'graph' && <CirclePacking />}
         {tab === 'dashboard' && <Dashboard />}
         {tab === 'cofiring' && (
@@ -106,7 +112,7 @@ export default function App() {
             </div>
           </div>
         )}
-        <div style={{ display: tab === 'query' ? 'contents' : 'none' }}><QueryLab /></div>
+        <div style={{ display: tab === 'query' ? 'contents' : 'none' }}><QueryLab onNavigateToNeuron={navigateToNeuron} /></div>
         {tab === 'pipeline' && <PipelinePage />}
         {tab === 'evaluation' && <EvaluationPage />}
         {tab === 'refinements' && <RefinementHistory />}

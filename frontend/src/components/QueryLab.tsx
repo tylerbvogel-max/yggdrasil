@@ -153,10 +153,11 @@ function EvalScoreTable({ scores, winner, slots }: { scores: EvalScoreOut[]; win
 
 type RefinePhase = 'idle' | 'ready' | 'loading' | 'has-suggestions' | 'applying' | 'applied';
 
-function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange, initialRefineResult }: {
+function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange, initialRefineResult, onNavigateToNeuron }: {
   queryId: number; hasEval: boolean; hasNeurons: boolean;
   onRunAgain?: () => void; onPhaseChange?: (phase: RefinePhase) => void;
   initialRefineResult?: RefineResponse | null;
+  onNavigateToNeuron?: (id: number) => void;
 }) {
   const [refineModel, setRefineModel] = useState<'haiku' | 'sonnet' | 'opus'>('haiku');
   const [refineMaxTokens, setRefineMaxTokens] = useState(4096);
@@ -306,7 +307,7 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange, 
                   <input type="checkbox" checked={checkedUpdates.has(i)} onChange={() => toggleUpdate(i)} />
                   <div className="refine-row-content">
                     <div className="refine-row-header">
-                      <span className="refine-neuron-id">#{u.neuron_id}</span>
+                      <span className="refine-neuron-id" style={onNavigateToNeuron ? { cursor: 'pointer', textDecoration: 'underline' } : undefined} onClick={onNavigateToNeuron ? (e) => { e.preventDefault(); e.stopPropagation(); onNavigateToNeuron(u.neuron_id); } : undefined} title={onNavigateToNeuron ? 'View in Explorer' : undefined}>#{u.neuron_id}</span>
                       <span className="refine-field">{u.field}</span>
                     </div>
                     <div className="refine-diff">
@@ -662,7 +663,7 @@ function ActionRail({ hasResult, hasMultiSlot, hasNeurons, evalDone, evalLoading
 
 // ────────── Main Component ──────────
 
-export default function QueryLab() {
+export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: (id: number) => void } = {}) {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<QueryResponse | null>(null);
@@ -946,10 +947,11 @@ export default function QueryLab() {
             evalLoading={evalLoading} onEval={handleEval}
             onRunAgain={handleRunAgain} onRefinePhaseChange={setRefinePhase}
             initialRefineResult={liveRefineRestore}
+            onNavigateToNeuron={onNavigateToNeuron}
           />
         )}
 
-        {selectedQuery && view === 'history' && <HistoryDetail query={selectedQuery} baseline={baseline} />}
+        {selectedQuery && view === 'history' && <HistoryDetail query={selectedQuery} baseline={baseline} onNavigateToNeuron={onNavigateToNeuron} />}
       </div>
 
       {hasResult && (
@@ -971,7 +973,7 @@ export default function QueryLab() {
 
 // ────────── Live Result ──────────
 
-function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalText, evalMdl, evalIn, evalOut, evalScores, evalWinner, evalModel, setEvalModel, evalLoading, onEval, onRunAgain, onRefinePhaseChange, initialRefineResult }: {
+function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalText, evalMdl, evalIn, evalOut, evalScores, evalWinner, evalModel, setEvalModel, evalLoading, onEval, onRunAgain, onRefinePhaseChange, initialRefineResult, onNavigateToNeuron }: {
   result: QueryResponse; baseline: string;
   rating: number; setRating: (v: number) => void; rated: boolean; onRate: () => void;
   evalText: string | null; evalMdl: string | null; evalIn: number; evalOut: number;
@@ -980,6 +982,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
   evalLoading: boolean; onEval: () => void;
   onRunAgain: () => void; onRefinePhaseChange: (phase: RefinePhase) => void;
   initialRefineResult?: RefineResponse | null;
+  onNavigateToNeuron?: (id: number) => void;
 }) {
   const hasNeurons = result.neuron_scores.length > 0;
 
@@ -1063,7 +1066,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
         </Section>
       )}
 
-      <RefinePanel queryId={result.query_id} hasEval={!!evalText} hasNeurons={hasNeurons} onRunAgain={onRunAgain} onPhaseChange={onRefinePhaseChange} initialRefineResult={initialRefineResult} />
+      <RefinePanel queryId={result.query_id} hasEval={!!evalText} hasNeurons={hasNeurons} onRunAgain={onRunAgain} onPhaseChange={onRefinePhaseChange} initialRefineResult={initialRefineResult} onNavigateToNeuron={onNavigateToNeuron} />
 
       {result.slots.length >= 1 && (
         <Section title="Export for External Review">
@@ -1161,7 +1164,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
 
 // ────────── History Detail ──────────
 
-function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: string }) {
+function HistoryDetail({ query, baseline, onNavigateToNeuron }: { query: QueryDetail; baseline: string; onNavigateToNeuron?: (id: number) => void }) {
   const [evalLoading, setEvalLoading] = useState(false);
   const [evalModel, setEvalModel] = useState<'haiku' | 'sonnet' | 'opus'>('haiku');
   const [localEvalText, setLocalEvalText] = useState(query.eval_text);
@@ -1384,7 +1387,7 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
         </Section>
       )}
 
-      <RefinePanel queryId={query.id} hasEval={!!localEvalText} hasNeurons={hasNeurons} initialRefineResult={query.pending_refine} />
+      <RefinePanel queryId={query.id} hasEval={!!localEvalText} hasNeurons={hasNeurons} initialRefineResult={query.pending_refine} onNavigateToNeuron={onNavigateToNeuron} />
 
       {query.refinements && query.refinements.length > 0 && (
         <Section title={`Applied Refinements (${query.refinements.length})`} defaultOpen={true}>
@@ -1407,8 +1410,12 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
                   }}>
                     {r.action === 'create' ? 'CREATED' : 'UPDATED'}
                   </span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-bright, #e0e0e0)' }}>
-                    #{r.neuron_id} {r.neuron_label ?? ''}
+                  <span
+                    style={{ fontSize: '0.85rem', color: 'var(--text-bright, #e0e0e0)', cursor: onNavigateToNeuron ? 'pointer' : undefined }}
+                    onClick={onNavigateToNeuron ? () => onNavigateToNeuron(r.neuron_id) : undefined}
+                    title={onNavigateToNeuron ? 'View in Explorer' : undefined}
+                  >
+                    <span style={{ color: '#60a5fa', textDecoration: onNavigateToNeuron ? 'underline' : undefined }}>#{r.neuron_id}</span> {r.neuron_label ?? ''}
                   </span>
                   {r.field && <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontStyle: 'italic' }}>{r.field}</span>}
                 </div>
