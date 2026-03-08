@@ -769,6 +769,21 @@ export default function QueryLab() {
     }
   }
 
+  function handleNewQuery() {
+    setMessage('');
+    setResult(null);
+    setEvalText(null);
+    setEvalScores([]);
+    setEvalWinner(null);
+    setRated(false);
+    setRefinePhase('idle');
+    setLiveRefineRestore(null);
+    setError('');
+    setView('new');
+    setSelectedQuery(null);
+    document.querySelector('.query-form')?.scrollIntoView({ behavior: 'smooth' });
+  }
+
   function handleRunAgain() {
     setResult(null);
     setEvalText(null);
@@ -830,9 +845,19 @@ export default function QueryLab() {
   return (
     <div className="query-lab-layout">
       <div className={`query-history${historyCollapsed ? ' collapsed' : ''}`}>
-        <h3 onClick={() => setHistoryCollapsed(c => !c)} style={{ cursor: 'pointer' }}>
-          <span className={`section-chevron${!historyCollapsed ? ' open' : ''}`} />
-          {!historyCollapsed ? 'Query History' : ''}
+        <h3 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span onClick={() => setHistoryCollapsed(c => !c)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
+            <span className={`section-chevron${!historyCollapsed ? ' open' : ''}`} />
+            {!historyCollapsed ? 'Query History' : ''}
+          </span>
+          {!historyCollapsed && (
+            <button
+              className="btn btn-sm"
+              title="New query"
+              style={{ padding: '2px 7px', fontSize: '0.85rem', lineHeight: 1 }}
+              onClick={handleNewQuery}
+            >+</button>
+          )}
         </h3>
         {!historyCollapsed && (
           <>
