@@ -769,6 +769,19 @@ export default function QueryLab() {
     }
   }
 
+  function handleRunAgain() {
+    setResult(null);
+    setEvalText(null);
+    setEvalScores([]);
+    setEvalWinner(null);
+    setRated(false);
+    setRefinePhase('idle');
+    setLiveRefineRestore(null);
+    setView('new');
+    setSelectedQuery(null);
+    document.querySelector('.query-form')?.scrollIntoView({ behavior: 'smooth' });
+  }
+
   async function handleEval() {
     if (!result) return;
     setEvalLoading(true);
@@ -906,7 +919,7 @@ export default function QueryLab() {
             evalScores={evalScores} evalWinner={evalWinner}
             evalModel={evalModel} setEvalModel={setEvalModel}
             evalLoading={evalLoading} onEval={handleEval}
-            onRunAgain={handleSubmit} onRefinePhaseChange={setRefinePhase}
+            onRunAgain={handleRunAgain} onRefinePhaseChange={setRefinePhase}
             initialRefineResult={liveRefineRestore}
           />
         )}
