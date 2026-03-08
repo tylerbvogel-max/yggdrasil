@@ -53,7 +53,7 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
     // SVG filter for node glow
     const defs = svg.append('defs');
     const glowFilter = defs.append('filter').attr('id', 'node-glow');
-    glowFilter.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'blur');
+    glowFilter.append('feGaussianBlur').attr('stdDeviation', '2').attr('result', 'blur');
     glowFilter.append('feMerge')
       .selectAll('feMergeNode')
       .data(['blur', 'SourceGraphic'])
@@ -77,23 +77,31 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
       })),
     ];
 
-    const links: SimLink[] = data.edges
+    const nodeById = new Map(nodes.map(n => [n.id, n]));
+
+    // Filter edges: only keep edges where at least one endpoint is center or hop-1
+    // This prevents the dense hop2-to-hop2 wire mess
+    const allLinks: SimLink[] = data.edges
       ? data.edges.map(e => ({ source: e.source, target: e.target, weight: e.weight, co_fire_count: e.co_fire_count }))
       : data.neighbors.map(n => ({ source: data.center.id, target: n.id, weight: n.weight, co_fire_count: n.co_fire_count }));
 
-    const nodeById = new Map(nodes.map(n => [n.id, n]));
+    const links = allLinks.filter(l => {
+      const sNode = nodeById.get(typeof l.source === 'object' ? (l.source as SimNode).id : l.source as number);
+      const tNode = nodeById.get(typeof l.target === 'object' ? (l.target as SimNode).id : l.target as number);
+      return (sNode?.isCenter || sNode?.hop === 1) || (tNode?.isCenter || tNode?.hop === 1);
+    });
 
-    // Organic layout — stronger repulsion for more spread, looser radial constraint
+    // Layout — strong repulsion and wide radii to avoid clustering
     const sim = d3.forceSimulation(nodes)
       .force('link', d3.forceLink<SimNode, SimLink>(links).id(d => d.id).distance(d => {
         const s = nodeById.get((d.source as SimNode).id);
         const t = nodeById.get((d.target as SimNode).id);
-        if (s?.isCenter || t?.isCenter) return 140;
-        return 90;
-      }).strength(0.3))
-      .force('radial', d3.forceRadial<SimNode>(d => d.isCenter ? 0 : d.hop === 1 ? 140 : 220, cx, cy).strength(0.4))
-      .force('collide', d3.forceCollide(24))
-      .force('charge', d3.forceManyBody().strength(-80))
+        if (s?.isCenter || t?.isCenter) return 160;
+        return 120;
+      }).strength(0.25))
+      .force('radial', d3.forceRadial<SimNode>(d => d.isCenter ? 0 : d.hop === 1 ? 150 : 280, cx, cy).strength(0.5))
+      .force('collide', d3.forceCollide<SimNode>(d => d.hop >= 2 ? 20 : 30))
+      .force('charge', d3.forceManyBody().strength(-150))
       .stop();
 
     for (let i = 0; i < 200; i++) sim.tick();
@@ -160,8 +168,8 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
         const dept = s?.isCenter ? t?.department : s?.department;
         return DEPT_COLORS[dept ?? ''] ?? '#8892a8';
       })
-      .attr('stroke-width', d => weightScale(d.weight) + 3)
-      .attr('stroke-opacity', d => opacityScale(d.weight) * 0.3)
+      .attr('stroke-width', d => weightScale(d.weight) + 2)
+      .attr('stroke-opacity', d => opacityScale(d.weight) * 0.2)
       .attr('filter', 'url(#wire-glow)');
 
     // Core wire layer
@@ -206,12 +214,12 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
       })
       .on('mouseleave', () => tooltip.style('opacity', 0));
 
-    // Glow behind nodes
+    // Glow behind nodes (subtle halo)
     nodeG.append('circle')
-      .attr('r', d => d.isCenter ? 22 : d.hop === 1 ? 14 : 10)
+      .attr('r', d => d.isCenter ? 18 : d.hop === 1 ? 11 : 7)
       .attr('fill', d => {
         const color = DEPT_COLORS[d.department ?? ''] ?? '#8892a8';
-        return color + '30';
+        return color + '20';
       })
       .attr('filter', 'url(#node-glow)');
 
@@ -237,15 +245,6 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
       .attr('fill', 'var(--text)')
       .attr('font-size', '0.7rem')
       .text(d => d.label.length > 30 ? d.label.slice(0, 27) + '...' : d.label);
-
-    // Hop-1 labels (short, only for nodes with enough space)
-    nodeG.filter(d => !d.isCenter && d.hop === 1)
-      .append('text')
-      .attr('text-anchor', 'middle')
-      .attr('dy', 18)
-      .attr('fill', 'var(--text-dim, #999)')
-      .attr('font-size', '0.55rem')
-      .text(d => d.label.length > 20 ? d.label.slice(0, 17) + '...' : d.label);
 
     return () => { tooltip.remove(); };
   }, [data, onSelectNeuron]);
