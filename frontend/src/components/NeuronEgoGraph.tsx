@@ -43,12 +43,31 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
-    const width = svgRef.current.clientWidth || 500;
-    const height = 400;
+    const width = svgRef.current.clientWidth || 600;
+    const height = 500;
     const cx = width / 2;
     const cy = height / 2;
 
     svg.attr('viewBox', `0 0 ${width} ${height}`);
+
+    // SVG filter for node glow
+    const defs = svg.append('defs');
+    const glowFilter = defs.append('filter').attr('id', 'node-glow');
+    glowFilter.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'blur');
+    glowFilter.append('feMerge')
+      .selectAll('feMergeNode')
+      .data(['blur', 'SourceGraphic'])
+      .join('feMergeNode')
+      .attr('in', d => d);
+
+    // Subtle glow for wires
+    const wireGlow = defs.append('filter').attr('id', 'wire-glow');
+    wireGlow.append('feGaussianBlur').attr('stdDeviation', '1.5').attr('result', 'blur');
+    wireGlow.append('feMerge')
+      .selectAll('feMergeNode')
+      .data(['blur', 'SourceGraphic'])
+      .join('feMergeNode')
+      .attr('in', d => d);
 
     const nodes: SimNode[] = [
       { id: data.center.id, label: data.center.label, department: data.center.department, layer: data.center.layer, isCenter: true, hop: 0, fx: cx, fy: cy },
@@ -58,30 +77,30 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
       })),
     ];
 
-    // Use real edge list from backend if available, otherwise fall back to star topology
     const links: SimLink[] = data.edges
       ? data.edges.map(e => ({ source: e.source, target: e.target, weight: e.weight, co_fire_count: e.co_fire_count }))
       : data.neighbors.map(n => ({ source: data.center.id, target: n.id, weight: n.weight, co_fire_count: n.co_fire_count }));
 
     const nodeById = new Map(nodes.map(n => [n.id, n]));
 
-    // Concentric radial layout: hop-1 closer, hop-2 further out
+    // Organic layout — stronger repulsion for more spread, looser radial constraint
     const sim = d3.forceSimulation(nodes)
       .force('link', d3.forceLink<SimNode, SimLink>(links).id(d => d.id).distance(d => {
         const s = nodeById.get((d.source as SimNode).id);
         const t = nodeById.get((d.target as SimNode).id);
-        if (s?.isCenter || t?.isCenter) return 100;
-        return 70;
-      }))
-      .force('radial', d3.forceRadial<SimNode>(d => d.isCenter ? 0 : d.hop === 1 ? 110 : 190, cx, cy).strength(0.7))
-      .force('collide', d3.forceCollide(18))
-      .force('charge', d3.forceManyBody().strength(-30))
+        if (s?.isCenter || t?.isCenter) return 140;
+        return 90;
+      }).strength(0.3))
+      .force('radial', d3.forceRadial<SimNode>(d => d.isCenter ? 0 : d.hop === 1 ? 140 : 220, cx, cy).strength(0.4))
+      .force('collide', d3.forceCollide(24))
+      .force('charge', d3.forceManyBody().strength(-80))
       .stop();
 
-    for (let i = 0; i < 150; i++) sim.tick();
+    for (let i = 0; i < 200; i++) sim.tick();
 
     const maxWeight = d3.max(links, l => l.weight) || 1;
-    const weightScale = d3.scaleLinear().domain([0, maxWeight]).range([0.5, 4]);
+    const weightScale = d3.scaleLinear().domain([0, maxWeight]).range([0.5, 2.5]);
+    const opacityScale = d3.scaleLinear().domain([0, maxWeight]).range([0.15, 0.6]);
 
     // Tooltip
     const tooltip = d3.select(svgRef.current.parentElement!)
@@ -100,28 +119,69 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
       .style('opacity', 0)
       .style('z-index', '10');
 
-    // Determine if a link connects to center
     function linkTouchesCenter(d: SimLink): boolean {
       const sId = typeof d.source === 'object' ? (d.source as SimNode).id : d.source;
       const tId = typeof d.target === 'object' ? (d.target as SimNode).id : d.target;
       return sId === data!.center.id || tId === data!.center.id;
     }
 
-    // Edges
-    svg.append('g')
-      .selectAll('line')
-      .data(links)
-      .join('line')
-      .attr('x1', d => (nodeById.get((d.source as SimNode).id)?.x ?? cx))
-      .attr('y1', d => (nodeById.get((d.source as SimNode).id)?.y ?? cy))
-      .attr('x2', d => (nodeById.get((d.target as SimNode).id)?.x ?? cx))
-      .attr('y2', d => (nodeById.get((d.target as SimNode).id)?.y ?? cy))
-      .attr('stroke', d => linkTouchesCenter(d) ? '#475569' : '#334155')
-      .attr('stroke-width', d => weightScale(d.weight))
-      .attr('stroke-dasharray', d => linkTouchesCenter(d) ? 'none' : '4,3')
-      .attr('stroke-opacity', d => linkTouchesCenter(d) ? 0.8 : 0.5);
+    // --- Curved wire edges ---
+    const edgeG = svg.append('g');
 
-    // Nodes
+    // Generate curved path between two points with organic curvature
+    function wirePath(d: SimLink): string {
+      const s = nodeById.get((d.source as SimNode).id);
+      const t = nodeById.get((d.target as SimNode).id);
+      const x1 = s?.x ?? cx, y1 = s?.y ?? cy;
+      const x2 = t?.x ?? cx, y2 = t?.y ?? cy;
+
+      const dx = x2 - x1, dy = y2 - y1;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      // Perpendicular offset for curvature — varies by link index for organic feel
+      const linkIdx = links.indexOf(d);
+      const curvature = dist * 0.15 * (linkIdx % 2 === 0 ? 1 : -1);
+      // Midpoint offset perpendicular to the line
+      const mx = (x1 + x2) / 2 + (-dy / dist) * curvature;
+      const my = (y1 + y2) / 2 + (dx / dist) * curvature;
+
+      return `M ${x1},${y1} Q ${mx},${my} ${x2},${y2}`;
+    }
+
+    // Glow layer (thicker, more transparent — creates wire glow)
+    edgeG.selectAll('path.wire-glow')
+      .data(links)
+      .join('path')
+      .attr('class', 'wire-glow')
+      .attr('d', wirePath)
+      .attr('fill', 'none')
+      .attr('stroke', d => {
+        const s = nodeById.get((d.source as SimNode).id);
+        const t = nodeById.get((d.target as SimNode).id);
+        const dept = s?.isCenter ? t?.department : s?.department;
+        return DEPT_COLORS[dept ?? ''] ?? '#8892a8';
+      })
+      .attr('stroke-width', d => weightScale(d.weight) + 3)
+      .attr('stroke-opacity', d => opacityScale(d.weight) * 0.3)
+      .attr('filter', 'url(#wire-glow)');
+
+    // Core wire layer
+    edgeG.selectAll('path.wire-core')
+      .data(links)
+      .join('path')
+      .attr('class', 'wire-core')
+      .attr('d', wirePath)
+      .attr('fill', 'none')
+      .attr('stroke', d => {
+        const s = nodeById.get((d.source as SimNode).id);
+        const t = nodeById.get((d.target as SimNode).id);
+        const dept = s?.isCenter ? t?.department : s?.department;
+        return DEPT_COLORS[dept ?? ''] ?? '#8892a8';
+      })
+      .attr('stroke-width', d => weightScale(d.weight))
+      .attr('stroke-opacity', d => linkTouchesCenter(d) ? opacityScale(d.weight) + 0.15 : opacityScale(d.weight))
+      .attr('stroke-dasharray', d => linkTouchesCenter(d) ? 'none' : '3,4');
+
+    // --- Nodes ---
     const nodeG = svg.append('g')
       .selectAll<SVGGElement, SimNode>('g')
       .data(nodes)
@@ -146,29 +206,46 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
       })
       .on('mouseleave', () => tooltip.style('opacity', 0));
 
-    // Node circles — hop-1 solid, hop-2 with dashed stroke ring
+    // Glow behind nodes
     nodeG.append('circle')
-      .attr('r', d => d.isCenter ? 16 : d.hop === 1 ? 9 : 6)
+      .attr('r', d => d.isCenter ? 22 : d.hop === 1 ? 14 : 10)
       .attr('fill', d => {
         const color = DEPT_COLORS[d.department ?? ''] ?? '#8892a8';
-        return d.hop >= 2 ? color + 'aa' : color;  // slightly transparent for hop-2
+        return color + '30';
+      })
+      .attr('filter', 'url(#node-glow)');
+
+    // Main node circle
+    nodeG.append('circle')
+      .attr('r', d => d.isCenter ? 12 : d.hop === 1 ? 7 : 4.5)
+      .attr('fill', d => {
+        const color = DEPT_COLORS[d.department ?? ''] ?? '#8892a8';
+        return d.hop >= 2 ? color + 'bb' : color;
       })
       .attr('stroke', d => {
-        if (d.isCenter) return 'var(--accent)';
-        if (d.hop >= 2) return DEPT_COLORS[d.department ?? ''] ?? '#8892a8';
-        return 'transparent';
+        if (d.isCenter) return '#fff';
+        const color = DEPT_COLORS[d.department ?? ''] ?? '#8892a8';
+        return color + '60';
       })
-      .attr('stroke-width', d => d.isCenter ? 2 : d.hop >= 2 ? 1.5 : 0)
-      .attr('stroke-dasharray', d => d.hop >= 2 ? '2,2' : 'none');
+      .attr('stroke-width', d => d.isCenter ? 2 : 1);
 
     // Center label
     nodeG.filter(d => d.isCenter)
       .append('text')
       .attr('text-anchor', 'middle')
-      .attr('dy', 30)
+      .attr('dy', 28)
       .attr('fill', 'var(--text)')
       .attr('font-size', '0.7rem')
-      .text(d => d.label.length > 25 ? d.label.slice(0, 22) + '...' : d.label);
+      .text(d => d.label.length > 30 ? d.label.slice(0, 27) + '...' : d.label);
+
+    // Hop-1 labels (short, only for nodes with enough space)
+    nodeG.filter(d => !d.isCenter && d.hop === 1)
+      .append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dy', 18)
+      .attr('fill', 'var(--text-dim, #999)')
+      .attr('font-size', '0.55rem')
+      .text(d => d.label.length > 20 ? d.label.slice(0, 17) + '...' : d.label);
 
     return () => { tooltip.remove(); };
   }, [data, onSelectNeuron]);
@@ -182,19 +259,19 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
   return (
     <div className="detail-section" style={{ position: 'relative' }}>
       <h3>Co-Firing Neighbors</h3>
-      <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: 4 }}>
-        <span style={{ marginRight: 12 }}>
-          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#8892a8', marginRight: 4, verticalAlign: 'middle' }} />
+      <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: 4, display: 'flex', gap: 14 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#8892a8', boxShadow: '0 0 4px #8892a8' }} />
           Direct ({hop1Count})
         </span>
         {hop2Count > 0 && (
-          <span>
-            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#8892a8aa', border: '1px dashed #8892a8', marginRight: 4, verticalAlign: 'middle' }} />
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#8892a8bb', boxShadow: '0 0 3px #8892a8' }} />
             Multi-hop ({hop2Count})
           </span>
         )}
       </div>
-      <svg ref={svgRef} width="100%" height="400" />
+      <svg ref={svgRef} width="100%" height="500" style={{ background: 'rgba(0,0,0,0.15)', borderRadius: 8 }} />
     </div>
   );
 }
