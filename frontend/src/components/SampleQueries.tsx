@@ -1,51 +1,65 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { fetchQueryRunCounts } from '../api';
 
 interface SampleQuery {
   text: string;
   complexity: 'low' | 'medium' | 'high';
+  suite: 'core' | 'x-plane';
   roles: string[];
 }
 
 const SAMPLES: SampleQuery[] = [
+  // ═══════════════════════════════════════════════════════════════════
+  // CORE SUITE — existing queries
+  // ═══════════════════════════════════════════════════════════════════
+
   // --- LOW COMPLEXITY (single domain, straightforward) ---
   {
     text: 'What are the key clauses in FAR Part 15 that govern competitive negotiation procedures?',
     complexity: 'low',
+    suite: 'core',
     roles: ['Contracts Manager', 'FAR/DFARS Specialist'],
   },
   {
     text: 'What is the medallion architecture in Databricks and how does it structure ELT pipelines?',
     complexity: 'low',
+    suite: 'core',
     roles: ['Data Engineer'],
   },
   {
     text: 'What are the AS9100 Rev D requirements for document control and records management?',
     complexity: 'low',
+    suite: 'core',
     roles: ['Quality Manager', 'AS9100 Rev D'],
   },
   {
     text: 'How does earned value management (EVM) track cost and schedule performance on a contract?',
     complexity: 'low',
+    suite: 'core',
     roles: ['Program Manager', 'Financial Analyst'],
   },
   {
     text: 'What personal protective equipment standards does OSHA 29 CFR 1910 require for manufacturing facilities?',
     complexity: 'low',
+    suite: 'core',
     roles: ['Safety Officer', 'OSHA 29 CFR 1910'],
   },
   {
     text: 'What is the Shipley BD lifecycle and what are its major gate reviews?',
     complexity: 'low',
+    suite: 'core',
     roles: ['BD Director', 'Capture Manager'],
   },
   {
     text: 'What are the NADCAP special process categories and how does accreditation work?',
     complexity: 'low',
+    suite: 'core',
     roles: ['Quality Manager', 'NADCAP'],
   },
   {
     text: 'What cost pools and allocation bases does CAS 418 require for independent R&D and B&P costs?',
     complexity: 'low',
+    suite: 'core',
     roles: ['Cost Accountant', 'Cost Estimator'],
   },
 
@@ -53,51 +67,61 @@ const SAMPLES: SampleQuery[] = [
   {
     text: 'How should a program manager coordinate with contracts and finance when a customer requests an equitable adjustment on a cost-plus contract?',
     complexity: 'medium',
+    suite: 'core',
     roles: ['Program Manager', 'Contracts Manager', 'Financial Analyst'],
   },
   {
     text: 'What is the interaction between ITAR export controls and the NADCAP audit process when a foreign national auditor needs facility access?',
     complexity: 'medium',
+    suite: 'core',
     roles: ['Export Control Officer', 'Quality Manager', 'ITAR/EAR Export Controls', 'NADCAP'],
   },
   {
     text: 'How do manufacturing engineering and quality management jointly develop a process control plan that satisfies both AS9100 and customer-specific requirements?',
     complexity: 'medium',
+    suite: 'core',
     roles: ['Manufacturing Engineer', 'Quality Manager', 'AS9100 Rev D'],
   },
   {
     text: 'What steps should the capture manager and proposal manager take to transition a qualified opportunity into a compliant proposal response?',
     complexity: 'medium',
+    suite: 'core',
     roles: ['Capture Manager', 'Proposal Manager', 'BD Director'],
   },
   {
     text: 'How does the CFO work with program management to establish indirect rate structures that remain competitive while covering overhead?',
     complexity: 'medium',
+    suite: 'core',
     roles: ['Chief Financial Officer', 'Program Manager', 'Cost Estimator'],
   },
   {
     text: 'What are the implications of DFARS 252.204-7012 (NIST SP 800-171) for the IT infrastructure supporting a manufacturing execution system?',
     complexity: 'medium',
+    suite: 'core',
     roles: ['IT Support Specialist', 'NIST/CMMC', 'Production Manager'],
   },
   {
     text: 'How should industrial engineering and facilities management coordinate when designing a new production cell layout for a defense contract?',
     complexity: 'medium',
+    suite: 'core',
     roles: ['Industrial Engineer', 'Facilities Manager', 'Production Manager'],
   },
   {
     text: 'What data quality checks should a data engineer implement when ingesting EVM performance data from multiple program managers into a central lakehouse?',
     complexity: 'medium',
+    suite: 'core',
     roles: ['Data Engineer', 'Program Control Analyst', 'Financial Analyst'],
   },
   {
     text: 'How do GD&T callouts per ASME Y14.5 flow from the mechanical engineer\'s design intent through manufacturing process planning to final inspection?',
     complexity: 'medium',
+    suite: 'core',
     roles: ['Mechanical Engineer', 'Manufacturing Engineer', 'ASME Y14.5'],
   },
   {
     text: 'What should the contracts manager and export control officer verify before issuing a technical assistance agreement for an international teaming arrangement?',
     complexity: 'medium',
+    suite: 'core',
     roles: ['Contracts Manager', 'Export Control Officer', 'ITAR/EAR Export Controls'],
   },
 
@@ -105,42 +129,236 @@ const SAMPLES: SampleQuery[] = [
   {
     text: 'A prime contractor is flowing down CMMC Level 2 requirements to our company as a sub-tier supplier. What changes are needed across IT infrastructure, contracts, manufacturing data handling, and employee training to achieve compliance?',
     complexity: 'high',
+    suite: 'core',
     roles: ['NIST/CMMC', 'IT Support Specialist', 'Contracts Manager', 'Production Manager', 'HR Generalist'],
   },
   {
     text: 'We won a new CPFF development contract requiring NADCAP-accredited special processes, ITAR-controlled technical data, and AS9100 compliance. Map out the cross-functional launch sequence from contract award through first article inspection.',
     complexity: 'high',
+    suite: 'core',
     roles: ['Program Manager', 'Quality Manager', 'Export Control Officer', 'Manufacturing Engineer', 'Contracts Manager', 'NADCAP', 'AS9100 Rev D', 'ITAR/EAR Export Controls'],
   },
   {
     text: 'The CEO wants a strategic assessment: if we acquire a small composites shop with NADCAP accreditation, what are the integration risks across quality systems, export controls, cost accounting, and facility operations?',
     complexity: 'high',
+    suite: 'core',
     roles: ['Chief Executive Officer', 'VP Strategy', 'Quality Manager', 'Export Control Officer', 'Cost Accountant', 'Facilities Manager', 'NADCAP'],
   },
   {
     text: 'How should the VP of Engineering, CTO, and VP of Operations evaluate whether to invest in an automated NDT inspection cell versus continuing manual NAS 410 qualified inspectors, considering throughput, compliance, and workforce impacts?',
     complexity: 'high',
+    suite: 'core',
     roles: ['VP Engineering', 'Chief Technology Officer', 'VP Operations', 'Industrial Engineer', 'NAS 410', 'Test Engineer'],
   },
   {
     text: 'A government audit has flagged potential CAS 401/402 noncompliance in how we allocate engineering labor between direct and indirect cost pools. What is the remediation path involving finance, contracts, program management, and executive leadership?',
     complexity: 'high',
+    suite: 'core',
     roles: ['Chief Financial Officer', 'Cost Accountant', 'Contracts Manager', 'FAR/DFARS Specialist', 'Program Manager', 'Chief Executive Officer'],
   },
   {
     text: 'Design a data pipeline architecture that ingests real-time production floor data (MES, quality inspection, material tracking) into a Databricks lakehouse and surfaces it as EVM-compatible cost/schedule metrics for program managers and financial analysts.',
     complexity: 'high',
+    suite: 'core',
     roles: ['Data Engineer', 'Production Manager', 'Quality Manager', 'Program Control Analyst', 'Financial Analyst'],
   },
   {
     text: 'We are bidding on a classified program requiring DO-178C Level A software, MIL-STD-810 environmental testing, and ITAR-restricted data handling. What proposal volume structure and compliance matrix should the proposal team build, and what organizational capabilities need to be demonstrated?',
     complexity: 'high',
+    suite: 'core',
     roles: ['Proposal Manager', 'Software Engineer', 'Test Engineer', 'Export Control Officer', 'DO-178C/DO-254/DO-160G', 'MIL-STD Series', 'ITAR/EAR Export Controls'],
   },
   {
     text: 'The supply chain manager reports a sole-source critical casting supplier is at risk of losing NADCAP accreditation. What is the cross-functional response plan across supply chain, quality, engineering, program management, and contracts to mitigate delivery risk on active programs?',
     complexity: 'high',
+    suite: 'core',
     roles: ['Supply Chain Manager', 'Quality Manager', 'Manufacturing Engineer', 'Program Manager', 'Contracts Manager', 'NADCAP'],
+  },
+
+  // ═══════════════════════════════════════════════════════════════════
+  // X-PLANE BACKTEST SUITE — derived from historical X-plane programs
+  // Tests whether the neuron graph could support experimental aircraft
+  // development from cradle to grave.
+  // ═══════════════════════════════════════════════════════════════════
+
+  // --- Acquisition & Contract Strategy ---
+  {
+    text: 'What contract type is most appropriate for a DARPA technology demonstration program where the core propulsion system is at TRL 3? What risk-sharing mechanisms should be built into the contract structure?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['Contracts Manager', 'Program Manager', 'FAR/DFARS Specialist'],
+  },
+  {
+    text: 'How does an Other Transaction Authority (OTA) agreement differ from a traditional FAR-based contract for an experimental aircraft program, and what are the implications for cost accounting, IP rights, and audit requirements?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['Contracts Manager', 'FAR/DFARS Specialist', 'Cost Accountant'],
+  },
+  {
+    text: 'A DARPA program has experienced manufacturing cost overruns that exceed the remaining budget. What co-investment models exist where the contractor shares cost risk with the government to keep the program alive, and what are the contractual mechanisms?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['Contracts Manager', 'Chief Financial Officer', 'Program Manager', 'FAR/DFARS Specialist'],
+  },
+
+  // --- Technology Readiness & Systems Engineering ---
+  {
+    text: 'How should a program manager assess whether a subsystem at TRL 4 is ready to integrate into a flight vehicle, and what gates should exist between TRL advancement and system-level integration decisions?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['Program Manager', 'VP Engineering', 'Test Engineer'],
+  },
+  {
+    text: 'When integrating off-the-shelf components from different legacy platforms into a novel airframe (e.g., landing gear from one aircraft, stabilizers from another), what systems engineering processes prevent late-stage integration failures?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['VP Engineering', 'Mechanical Engineer', 'Manufacturing Engineer', 'Quality Manager'],
+  },
+  {
+    text: 'What is the Manufacturing Readiness Level (MRL) assessment process, and how does it interact with TRL gates when transitioning a prototype subsystem from lab demonstration to flight-ready hardware?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['Manufacturing Engineer', 'VP Engineering', 'Program Manager'],
+  },
+
+  // --- Test Planning & Envelope Expansion ---
+  {
+    text: 'What is the standard phased approach to flight test envelope expansion for an experimental aircraft, and how do you structure the gate reviews between ground test, taxi, first flight, and performance envelope expansion?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['Test Engineer', 'Program Manager', 'Safety Officer'],
+  },
+  {
+    text: 'An unmanned experimental aircraft crashed on its first flight with a new wing configuration. What should the accident investigation process look like, and how do findings feed forward into resuming flight test with the backup airframe?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['Test Engineer', 'Safety Officer', 'Quality Manager', 'VP Engineering', 'Program Manager'],
+  },
+  {
+    text: 'How do you structure a test readiness review (TRR) for the first powered flight of an experimental propulsion system that has only been validated in ground test facilities? What risk acceptance criteria should the review board evaluate?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['Test Engineer', 'Program Manager', 'Safety Officer', 'VP Engineering'],
+  },
+
+  // --- Thermal Management & Materials ---
+  {
+    text: 'What thermal protection system qualification tests are required for sustained flight above Mach 4, and how does the test campaign account for the difference between ground facility simulation and actual flight thermal loads?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['Test Engineer', 'Manufacturing Engineer', 'Mechanical Engineer', 'VP Engineering'],
+  },
+  {
+    text: 'A novel composite material is being used for an experimental airframe with no production heritage. What qualification path should manufacturing engineering follow, and what AS9100/NADCAP considerations apply to a one-off prototype vehicle?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['Manufacturing Engineer', 'Quality Manager', 'NADCAP', 'AS9100 Rev D'],
+  },
+
+  // --- Risk Management & Redundancy ---
+  {
+    text: 'For an experimental unmanned aircraft program, what is the cost-benefit analysis of building two airframes versus one? How does the risk calculus change if the vehicle uses an unproven flight control architecture?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['Program Manager', 'Cost Estimator', 'VP Engineering', 'Safety Officer'],
+  },
+  {
+    text: 'A late-stage propulsion system failure mode has been discovered that poses safety risks to ground personnel during test operations. What is the decision framework for continuing the program versus cancellation, and what roles are involved?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['Program Manager', 'Safety Officer', 'VP Engineering', 'Chief Executive Officer', 'Contracts Manager'],
+  },
+
+  // --- EMI & Subsystem Integration ---
+  {
+    text: 'How should electromagnetic interference (EMI) requirements be specified and flowed down to subsystem vendors from program inception, and what happens when EMI requirements are omitted from initial subcontracts?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['VP Engineering', 'Contracts Manager', 'Manufacturing Engineer', 'Quality Manager'],
+  },
+  {
+    text: 'An experimental aircraft uses electric motor controllers that generate electromagnetic interference affecting avionics and flight control sensors. Individual subsystems passed component-level EMI testing but fail at system integration. What is the remediation path?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['VP Engineering', 'Test Engineer', 'Manufacturing Engineer', 'Quality Manager', 'Program Manager'],
+  },
+
+  // --- Autonomous Systems & Flight Control ---
+  {
+    text: 'What are the unique flight control law development and verification challenges when an aircraft uses active flow control (pressurized air jets) instead of traditional mechanical control surfaces?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['VP Engineering', 'Software Engineer', 'Test Engineer'],
+  },
+  {
+    text: 'How does a triple-redundant autonomous navigation system handle fault detection and mode reversion during a carrier-based autonomous landing, and what are the verification and validation requirements?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['Software Engineer', 'VP Engineering', 'Test Engineer', 'Safety Officer'],
+  },
+
+  // --- Cost & Schedule Management ---
+  {
+    text: 'An experimental aircraft program has doubled in cost from initial estimates due to integration complexity and supply chain delays. What EVM indicators should have flagged this trajectory earlier, and what corrective actions can the PMO take?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['Program Manager', 'Financial Analyst', 'Cost Estimator', 'Chief Financial Officer'],
+  },
+  {
+    text: 'How should a cost estimate be structured for a one-of-a-kind experimental vehicle when there is no production baseline or analogous program to reference? What estimating methodologies apply?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['Cost Estimator', 'Program Manager', 'Financial Analyst'],
+  },
+
+  // --- Regulatory & Airworthiness ---
+  {
+    text: 'What is the process for obtaining an experimental airworthiness certificate for a novel unmanned aircraft, and how do MIL-STD-882 system safety requirements apply to experimental flight test programs?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['Safety Officer', 'Test Engineer', 'Program Manager', 'MIL-STD Series'],
+  },
+  {
+    text: 'An experimental supersonic aircraft program needs to fly over populated areas to collect community noise response data. What regulatory approvals, instrumentation requirements, and stakeholder coordination are needed before overflights can begin?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['Program Manager', 'Safety Officer', 'Test Engineer', 'VP Engineering'],
+  },
+
+  // --- Lessons Learned & Knowledge Transfer ---
+  {
+    text: 'A technology demonstration program has been canceled before first flight, but produced hundreds of technical papers and test datasets. How should the organization formally capture lessons learned and preserve knowledge value for future programs?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['Program Manager', 'VP Engineering', 'Chief Technology Officer'],
+  },
+  {
+    text: 'A successful flight test program demonstrated a novel propulsion technology across four flights with two failures and two successes. How should the test data and lessons learned be packaged to enable a follow-on weapons development program to build on the results?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['Program Manager', 'Test Engineer', 'VP Engineering', 'BD Director', 'Chief Technology Officer'],
+  },
+
+  // --- Supply Chain & Manufacturing for Prototypes ---
+  {
+    text: 'What unique supply chain challenges arise when manufacturing a one-off experimental aircraft versus a production program, and how should the procurement strategy differ for specialty components with no second source?',
+    complexity: 'medium',
+    suite: 'x-plane',
+    roles: ['Supply Chain Manager', 'Manufacturing Engineer', 'Program Manager'],
+  },
+
+  // --- Cross-Cutting Program Scenarios ---
+  {
+    text: 'We are proposing on a DARPA program to build and fly an experimental unmanned aircraft demonstrating a novel control technology at TRL 3. The program requires phased design reviews, flight test at a government range, and delivery of flight data. Build the proposal technical volume outline covering systems engineering approach, test strategy, risk management, and schedule.',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['Proposal Manager', 'VP Engineering', 'Test Engineer', 'Program Manager', 'Safety Officer', 'Contracts Manager'],
+  },
+  {
+    text: 'An experimental aircraft program is transitioning from land-based flight test to operations from a Navy carrier. What cross-functional coordination is required across engineering (EMI hardening, corrosion protection, structural reinforcement for catapult/arrested landing), logistics (carrier deck handling, maintenance), safety, and program management?',
+    complexity: 'high',
+    suite: 'x-plane',
+    roles: ['VP Engineering', 'Program Manager', 'Safety Officer', 'Manufacturing Engineer', 'Test Engineer', 'Quality Manager'],
   },
 ];
 
@@ -150,11 +368,26 @@ const COMPLEXITY_COLORS: Record<string, string> = {
   high: '#ef4444',
 };
 
-export default function SampleQueries() {
-  const [filter, setFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
-  const [copied, setCopied] = useState<number | null>(null);
+const SUITE_CONFIG: Record<string, { label: string; color: string }> = {
+  core: { label: 'Core', color: '#60a5fa' },
+  'x-plane': { label: 'X-Plane Backtest', color: '#c084fc' },
+};
 
-  const filtered = filter === 'all' ? SAMPLES : SAMPLES.filter(s => s.complexity === filter);
+export default function SampleQueries() {
+  const [complexityFilter, setComplexityFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
+  const [suiteFilter, setSuiteFilter] = useState<'all' | 'core' | 'x-plane'>('all');
+  const [copied, setCopied] = useState<number | null>(null);
+  const [runCounts, setRunCounts] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    fetchQueryRunCounts(SAMPLES.map(s => s.text)).then(setRunCounts).catch(() => {});
+  }, []);
+
+  const filtered = SAMPLES.filter(s => {
+    if (complexityFilter !== 'all' && s.complexity !== complexityFilter) return false;
+    if (suiteFilter !== 'all' && s.suite !== suiteFilter) return false;
+    return true;
+  });
 
   const copy = (text: string, idx: number) => {
     navigator.clipboard.writeText(text);
@@ -162,36 +395,62 @@ export default function SampleQueries() {
     setTimeout(() => setCopied(null), 1500);
   };
 
-  const counts = {
+  const complexityCounts = {
     low: SAMPLES.filter(s => s.complexity === 'low').length,
     medium: SAMPLES.filter(s => s.complexity === 'medium').length,
     high: SAMPLES.filter(s => s.complexity === 'high').length,
+  };
+
+  const suiteCounts = {
+    core: SAMPLES.filter(s => s.suite === 'core').length,
+    'x-plane': SAMPLES.filter(s => s.suite === 'x-plane').length,
   };
 
   return (
     <div className="sample-queries">
       <h2>Sample Queries</h2>
       <p className="sample-queries-intro">
-        Pre-built queries for testing the neuron scoring pipeline. Each query is tagged by complexity
-        and the roles it should activate. Click any query to copy it to clipboard, then paste into the Query Lab.
+        Pre-built queries for testing the neuron scoring pipeline. Click any query to copy it to clipboard, then paste into the Query Lab.
       </p>
 
+      {/* Suite filter */}
       <div className="sample-filter-bar">
+        <span style={{ color: '#888', fontSize: '0.8rem', marginRight: 4 }}>Suite:</span>
+        {(['all', 'core', 'x-plane'] as const).map(suite => (
+          <button
+            key={suite}
+            className={`sample-filter-btn${suiteFilter === suite ? ' active' : ''}`}
+            style={suite !== 'all' ? { '--filter-color': SUITE_CONFIG[suite].color } as React.CSSProperties : undefined}
+            onClick={() => setSuiteFilter(suite)}
+          >
+            {suite === 'all' ? `All (${SAMPLES.length})` : `${SUITE_CONFIG[suite].label} (${suiteCounts[suite]})`}
+          </button>
+        ))}
+      </div>
+
+      {/* Complexity filter */}
+      <div className="sample-filter-bar">
+        <span style={{ color: '#888', fontSize: '0.8rem', marginRight: 4 }}>Complexity:</span>
         {(['all', 'low', 'medium', 'high'] as const).map(level => (
           <button
             key={level}
-            className={`sample-filter-btn${filter === level ? ' active' : ''}`}
+            className={`sample-filter-btn${complexityFilter === level ? ' active' : ''}`}
             style={level !== 'all' ? { '--filter-color': COMPLEXITY_COLORS[level] } as React.CSSProperties : undefined}
-            onClick={() => setFilter(level)}
+            onClick={() => setComplexityFilter(level)}
           >
-            {level === 'all' ? `All (${SAMPLES.length})` : `${level.charAt(0).toUpperCase() + level.slice(1)} (${counts[level]})`}
+            {level === 'all' ? `All (${SAMPLES.length})` : `${level.charAt(0).toUpperCase() + level.slice(1)} (${complexityCounts[level]})`}
           </button>
         ))}
+      </div>
+
+      <div style={{ color: '#888', fontSize: '0.85rem', margin: '4px 0 12px' }}>
+        Showing {filtered.length} of {SAMPLES.length} queries
       </div>
 
       <div className="sample-list">
         {filtered.map((q) => {
           const globalIdx = SAMPLES.indexOf(q);
+          const suiteInfo = SUITE_CONFIG[q.suite];
           return (
             <div
               key={globalIdx}
@@ -199,15 +458,30 @@ export default function SampleQueries() {
               onClick={() => copy(q.text, globalIdx)}
             >
               <div className="sample-card-header">
-                <span
-                  className="sample-complexity-badge"
-                  style={{ background: COMPLEXITY_COLORS[q.complexity] }}
-                >
-                  {q.complexity}
-                </span>
-                <span className="sample-copy-hint">
-                  {copied === globalIdx ? 'Copied!' : 'Click to copy'}
-                </span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <span
+                    className="sample-complexity-badge"
+                    style={{ background: COMPLEXITY_COLORS[q.complexity] }}
+                  >
+                    {q.complexity}
+                  </span>
+                  <span
+                    className="sample-complexity-badge"
+                    style={{ background: suiteInfo.color }}
+                  >
+                    {suiteInfo.label}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {(runCounts[q.text] ?? 0) > 0 && (
+                    <span style={{ color: '#888', fontSize: '0.75rem' }}>
+                      Ran {runCounts[q.text]}×
+                    </span>
+                  )}
+                  <span className="sample-copy-hint">
+                    {copied === globalIdx ? 'Copied!' : 'Click to copy'}
+                  </span>
+                </div>
               </div>
               <p className="sample-text">{q.text}</p>
               <div className="sample-roles">

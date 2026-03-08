@@ -17,7 +17,7 @@ from app.services.executor import execute_query
 from app.services.claude_cli import claude_chat, estimate_cost
 from app.services.neuron_service import get_system_state, score_candidates
 from app.services.scoring_engine import update_impact_ema
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 router = APIRouter(tags=["query"])
 
@@ -64,6 +64,20 @@ def _parse_modes(query: Query) -> list[str]:
     if query.run_opus:
         modes.append("opus_raw")
     return modes
+
+
+@router.post("/queries/run-counts")
+async def query_run_counts(texts: list[str], db: AsyncSession = Depends(get_db)):
+    """Return {text: count} for each provided query text."""
+    if not texts:
+        return {}
+    result = await db.execute(
+        select(Query.user_message, func.count())
+        .where(Query.user_message.in_(texts))
+        .group_by(Query.user_message)
+    )
+    counts = {row[0]: row[1] for row in result.all()}
+    return {t: counts.get(t, 0) for t in texts}
 
 
 @router.get("/queries", response_model=list[QuerySummary])

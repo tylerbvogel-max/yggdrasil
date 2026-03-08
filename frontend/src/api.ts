@@ -56,6 +56,14 @@ export function fetchQueryDetail(id: number): Promise<QueryDetail> {
   return json<QueryDetail>(`/queries/${id}`);
 }
 
+export function fetchQueryRunCounts(texts: string[]): Promise<Record<string, number>> {
+  return json<Record<string, number>>('/queries/run-counts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(texts),
+  });
+}
+
 export interface SlotSpec {
   mode: string;
   token_budget: number;
