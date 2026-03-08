@@ -10,8 +10,8 @@ interface Props {
 
 function matchesSearch(node: TreeNode, term: string): boolean {
   if (!term) return true;
-  // Support #id search (e.g. "#2576")
-  const idMatch = term.match(/^#(\d+)$/);
+  // Support id search (e.g. "#2576" or "2576")
+  const idMatch = term.match(/^#?(\d+)$/);
   if (idMatch) {
     const targetId = Number(idMatch[1]);
     if (node.id === targetId) return true;
