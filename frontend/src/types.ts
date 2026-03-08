@@ -303,11 +303,20 @@ export interface EgoNeighbor {
   node_type: string;
   weight: number;
   co_fire_count: number;
+  hop: number;
+}
+
+export interface EgoEdge {
+  source: number;
+  target: number;
+  weight: number;
+  co_fire_count: number;
 }
 
 export interface EgoGraphResponse {
   center: { id: number; label: string; department: string | null; layer: number };
   neighbors: EgoNeighbor[];
+  edges?: EgoEdge[];
 }
 
 export interface SpreadTrailNode {

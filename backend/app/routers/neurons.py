@@ -336,46 +336,110 @@ async def spread_trail(query_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{neuron_id}/edges")
-async def neuron_edges(neuron_id: int, limit: int = 15, db: AsyncSession = Depends(get_db)):
-    """Top-N neighbors by edge weight for a neuron."""
+async def neuron_edges(neuron_id: int, limit: int = 15, hops: int = 2, db: AsyncSession = Depends(get_db)):
+    """Multi-hop neighbors by edge weight for a neuron.
+
+    Returns neighbors with hop distance (1 = direct co-fire, 2+ = reached
+    through intermediate nodes).  Edges between all returned nodes are
+    included so the frontend can draw the full subgraph.
+    """
     neuron = await get_neuron(db, neuron_id)
     if not neuron:
         raise HTTPException(status_code=404, detail="Neuron not found")
 
-    # Get edges where this neuron is source or target, ordered by weight
-    result = await db.execute(
-        select(NeuronEdge)
-        .where(or_(NeuronEdge.source_id == neuron_id, NeuronEdge.target_id == neuron_id))
-        .order_by(NeuronEdge.weight.desc())
-        .limit(limit)
-    )
-    edges = result.scalars().all()
+    hops = min(hops, 3)  # cap at 3
 
-    neighbor_ids = set()
-    for e in edges:
-        neighbor_ids.add(e.source_id if e.target_id == neuron_id else e.target_id)
+    # --- multi-hop BFS through edge graph ---
+    # node_id → (hop_distance, best_weight_product)
+    discovered: dict[int, tuple[int, float]] = {neuron_id: (0, 1.0)}
+    frontier = {neuron_id}
+    all_edge_pairs: list[tuple[int, int, float, int]] = []  # src, tgt, weight, co_fire
 
-    # Fetch neighbor neurons
-    if neighbor_ids:
-        n_result = await db.execute(select(Neuron).where(Neuron.id.in_(neighbor_ids)))
-        neighbor_map = {n.id: n for n in n_result.scalars().all()}
+    for hop in range(1, hops + 1):
+        if not frontier:
+            break
+        # fetch edges touching any frontier node
+        frontier_list = list(frontier)
+        result = await db.execute(
+            select(NeuronEdge)
+            .where(or_(
+                NeuronEdge.source_id.in_(frontier_list),
+                NeuronEdge.target_id.in_(frontier_list),
+            ))
+            .order_by(NeuronEdge.weight.desc())
+        )
+        edges = result.scalars().all()
+
+        next_frontier: set[int] = set()
+        for e in edges:
+            all_edge_pairs.append((e.source_id, e.target_id, e.weight, e.co_fire_count))
+            for nid in (e.source_id, e.target_id):
+                if nid not in discovered:
+                    parent = e.target_id if nid == e.source_id else e.source_id
+                    parent_weight = discovered[parent][1] if parent in discovered else 1.0
+                    discovered[nid] = (hop, parent_weight * e.weight)
+                    next_frontier.add(nid)
+        frontier = next_frontier
+
+    # Remove center from neighbor list
+    neighbor_entries = {nid: info for nid, info in discovered.items() if nid != neuron_id}
+
+    # Rank by hop then weight product, take top `limit` per hop
+    hop1 = [(nid, info) for nid, info in neighbor_entries.items() if info[0] == 1]
+    hop1.sort(key=lambda x: x[1][1], reverse=True)
+    hop1 = hop1[:limit]
+
+    hop2plus = [(nid, info) for nid, info in neighbor_entries.items() if info[0] >= 2]
+    hop2plus.sort(key=lambda x: x[1][1], reverse=True)
+    hop2plus = hop2plus[:limit]
+
+    keep_ids = {neuron_id} | {nid for nid, _ in hop1} | {nid for nid, _ in hop2plus}
+
+    # Fetch neuron details for all kept nodes
+    if keep_ids:
+        n_result = await db.execute(select(Neuron).where(Neuron.id.in_(keep_ids)))
+        neuron_map = {n.id: n for n in n_result.scalars().all()}
     else:
-        neighbor_map = {}
+        neuron_map = {}
 
     neighbors = []
-    for e in edges:
-        nid = e.source_id if e.target_id == neuron_id else e.target_id
-        n = neighbor_map.get(nid)
-        if n:
-            neighbors.append({
-                "id": n.id,
-                "label": n.label,
-                "department": n.department,
-                "layer": n.layer,
-                "node_type": n.node_type,
-                "weight": e.weight,
-                "co_fire_count": e.co_fire_count,
-            })
+    for nid, (hop_dist, weight_product) in list(hop1) + list(hop2plus):
+        n = neuron_map.get(nid)
+        if not n:
+            continue
+        # Find best direct edge weight and co_fire_count for this neighbor
+        best_weight = 0.0
+        best_cofire = 0
+        for src, tgt, w, cf in all_edge_pairs:
+            if (src == nid or tgt == nid):
+                if w > best_weight:
+                    best_weight = w
+                    best_cofire = cf
+        neighbors.append({
+            "id": n.id,
+            "label": n.label,
+            "department": n.department,
+            "layer": n.layer,
+            "node_type": n.node_type,
+            "weight": best_weight,
+            "co_fire_count": best_cofire,
+            "hop": hop_dist,
+        })
+
+    # Build edge list between kept nodes only
+    seen_edges: set[tuple[int, int]] = set()
+    graph_edges = []
+    for src, tgt, w, cf in all_edge_pairs:
+        if src in keep_ids and tgt in keep_ids:
+            key = (min(src, tgt), max(src, tgt))
+            if key not in seen_edges:
+                seen_edges.add(key)
+                graph_edges.append({
+                    "source": src,
+                    "target": tgt,
+                    "weight": w,
+                    "co_fire_count": cf,
+                })
 
     return {
         "center": {
@@ -385,6 +449,7 @@ async def neuron_edges(neuron_id: int, limit: int = 15, db: AsyncSession = Depen
             "layer": neuron.layer,
         },
         "neighbors": neighbors,
+        "edges": graph_edges,
     }
 
 
