@@ -211,6 +211,7 @@ class QueryDetail(BaseModel):
     eval_winner: str | None = None
     neuron_hits: list[NeuronHit]
     refinements: list[RefinementOut] = []
+    pending_refine: "RefineResponse | None" = None
     created_at: str | None
 
 
@@ -248,6 +249,10 @@ class RefineResponse(BaseModel):
     reasoning: str
     updates: list[NeuronUpdateSuggestion] = []
     new_neurons: list[NewNeuronSuggestion] = []
+
+
+# Resolve forward reference now that RefineResponse is defined
+QueryDetail.model_rebuild()
 
 
 class ApplyRefineRequest(BaseModel):

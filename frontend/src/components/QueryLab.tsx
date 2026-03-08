@@ -153,9 +153,10 @@ function EvalScoreTable({ scores, winner, slots }: { scores: EvalScoreOut[]; win
 
 type RefinePhase = 'idle' | 'ready' | 'loading' | 'has-suggestions' | 'applying' | 'applied';
 
-function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }: {
+function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange, initialRefineResult }: {
   queryId: number; hasEval: boolean; hasNeurons: boolean;
   onRunAgain?: () => void; onPhaseChange?: (phase: RefinePhase) => void;
+  initialRefineResult?: RefineResponse | null;
 }) {
   const [refineModel, setRefineModel] = useState<'haiku' | 'sonnet' | 'opus'>('haiku');
   const [refineMaxTokens, setRefineMaxTokens] = useState(4096);
@@ -167,6 +168,15 @@ function RefinePanel({ queryId, hasEval, hasNeurons, onRunAgain, onPhaseChange }
   const [applyLoading, setApplyLoading] = useState(false);
   const [applyResult, setApplyResult] = useState<{ updated: number; created: number } | null>(null);
   const [userContext, setUserContext] = useState('');
+
+  // Restore saved refine results (e.g. backend finished while user was on another tab)
+  useEffect(() => {
+    if (initialRefineResult && !refineResult && !refineLoading) {
+      setRefineResult(initialRefineResult);
+      setCheckedUpdates(new Set(initialRefineResult.updates.map((_, i) => i)));
+      setCheckedNewNeurons(new Set(initialRefineResult.new_neurons.map((_, i) => i)));
+    }
+  }, [initialRefineResult]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!onPhaseChange || !hasEval || !hasNeurons) return;
@@ -683,11 +693,22 @@ export default function QueryLab() {
 
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [refinePhase, setRefinePhase] = useState<RefinePhase>('idle');
+  const [liveRefineRestore, setLiveRefineRestore] = useState<RefineResponse | null>(null);
 
   useEffect(() => {
     loadHistory();
     fetchGraphCapacity().then(setGraphCapacity).catch(() => {});
   }, []);
+
+  // When returning to a live result, check if backend has saved refine results
+  useEffect(() => {
+    if (!result || refinePhase !== 'idle' || liveRefineRestore) return;
+    fetchQueryDetail(result.query_id)
+      .then(detail => {
+        if (detail.pending_refine) setLiveRefineRestore(detail.pending_refine);
+      })
+      .catch(() => {});
+  }, [result, refinePhase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function loadHistory() {
     fetchQueryHistory().then(setHistory).catch(() => {});
@@ -720,6 +741,7 @@ export default function QueryLab() {
     setEvalWinner(null);
     setRated(false);
     setRefinePhase('idle');
+    setLiveRefineRestore(null);
     setView('new');
     setSelectedQuery(null);
     // Mark all slots as loading
@@ -885,6 +907,7 @@ export default function QueryLab() {
             evalModel={evalModel} setEvalModel={setEvalModel}
             evalLoading={evalLoading} onEval={handleEval}
             onRunAgain={handleSubmit} onRefinePhaseChange={setRefinePhase}
+            initialRefineResult={liveRefineRestore}
           />
         )}
 
@@ -910,7 +933,7 @@ export default function QueryLab() {
 
 // ────────── Live Result ──────────
 
-function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalText, evalMdl, evalIn, evalOut, evalScores, evalWinner, evalModel, setEvalModel, evalLoading, onEval, onRunAgain, onRefinePhaseChange }: {
+function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalText, evalMdl, evalIn, evalOut, evalScores, evalWinner, evalModel, setEvalModel, evalLoading, onEval, onRunAgain, onRefinePhaseChange, initialRefineResult }: {
   result: QueryResponse; baseline: string;
   rating: number; setRating: (v: number) => void; rated: boolean; onRate: () => void;
   evalText: string | null; evalMdl: string | null; evalIn: number; evalOut: number;
@@ -918,6 +941,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
   evalModel: 'haiku' | 'sonnet' | 'opus'; setEvalModel: (v: 'haiku' | 'sonnet' | 'opus') => void;
   evalLoading: boolean; onEval: () => void;
   onRunAgain: () => void; onRefinePhaseChange: (phase: RefinePhase) => void;
+  initialRefineResult?: RefineResponse | null;
 }) {
   const hasNeurons = result.neuron_scores.length > 0;
 
@@ -1001,7 +1025,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
         </Section>
       )}
 
-      <RefinePanel queryId={result.query_id} hasEval={!!evalText} hasNeurons={hasNeurons} onRunAgain={onRunAgain} onPhaseChange={onRefinePhaseChange} />
+      <RefinePanel queryId={result.query_id} hasEval={!!evalText} hasNeurons={hasNeurons} onRunAgain={onRunAgain} onPhaseChange={onRefinePhaseChange} initialRefineResult={initialRefineResult} />
 
       {result.slots.length >= 1 && (
         <Section title="Export for External Review">
@@ -1322,7 +1346,7 @@ function HistoryDetail({ query, baseline }: { query: QueryDetail; baseline: stri
         </Section>
       )}
 
-      <RefinePanel queryId={query.id} hasEval={!!localEvalText} hasNeurons={hasNeurons} />
+      <RefinePanel queryId={query.id} hasEval={!!localEvalText} hasNeurons={hasNeurons} initialRefineResult={query.pending_refine} />
 
       {query.refinements && query.refinements.length > 0 && (
         <Section title={`Applied Refinements (${query.refinements.length})`} defaultOpen={true}>

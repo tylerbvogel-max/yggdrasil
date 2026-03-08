@@ -165,6 +165,7 @@ export interface QueryDetail {
   eval_winner: string | null;
   neuron_hits: NeuronHit[];
   refinements: RefinementOut[];
+  pending_refine: RefineResponse | null;
   created_at: string | null;
 }
 

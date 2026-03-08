@@ -182,6 +182,14 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
             neuron_label=neuron.label if neuron else None,
         ))
 
+    # Parse pending (unapplied) refine suggestions if present
+    pending_refine = None
+    if query.refine_json:
+        try:
+            pending_refine = json.loads(query.refine_json)
+        except json.JSONDecodeError:
+            pass
+
     return QueryDetail(
         id=query.id,
         user_message=query.user_message,
@@ -204,6 +212,7 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
         eval_winner=eval_winner,
         neuron_hits=hits,
         refinements=refinements,
+        pending_refine=pending_refine,
         created_at=query.created_at.isoformat() if query.created_at else None,
     )
 
