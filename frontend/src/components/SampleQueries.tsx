@@ -4,7 +4,7 @@ import { fetchQueryRunCounts } from '../api';
 interface SampleQuery {
   text: string;
   complexity: 'low' | 'medium' | 'high';
-  suite: 'core' | 'x-plane';
+  suite: 'core' | 'x-plane' | 'proto-ready';
   roles: string[];
 }
 
@@ -360,6 +360,110 @@ const SAMPLES: SampleQuery[] = [
     suite: 'x-plane',
     roles: ['VP Engineering', 'Program Manager', 'Safety Officer', 'Manufacturing Engineer', 'Test Engineer', 'Quality Manager'],
   },
+
+  // ═══════════════════════════════════════════════════════════════════
+  // PROTOTYPE READINESS SUITE — organizational and cultural competencies
+  // for executing experimental aircraft programs. Tests whether the
+  // graph captures skunkworks-style practices beyond pure technical domains.
+  // ═══════════════════════════════════════════════════════════════════
+
+  // --- Rapid SE Under Uncertainty ---
+  {
+    text: 'How should a systems engineering process be adapted for a prototype aircraft program where requirements are expected to evolve during flight test, rather than being frozen at PDR? What MBSE practices support this iterative approach?',
+    complexity: 'medium',
+    suite: 'proto-ready',
+    roles: ['VP Engineering', 'Systems Engineer', 'Program Manager'],
+  },
+  {
+    text: 'What is the role of hardware-in-the-loop simulation and digital twin models during early development of an experimental aircraft, and how do they reduce risk compared to traditional analysis-only approaches?',
+    complexity: 'medium',
+    suite: 'proto-ready',
+    roles: ['VP Engineering', 'Systems Engineer', 'Test Engineer', 'Software Engineer'],
+  },
+
+  // --- Small Elite Team Operations ---
+  {
+    text: 'What organizational structure enables a 50-200 person engineering team to design, build, and fly an experimental aircraft in under 3 years? How does this differ from a traditional production program IPT structure?',
+    complexity: 'medium',
+    suite: 'proto-ready',
+    roles: ['VP Engineering', 'Chief Executive Officer', 'Chief Operating Officer', 'Program Manager'],
+  },
+  {
+    text: 'How should an aerospace company staff a prototype aircraft program when individual engineers need to cover multiple technical domains (structures, thermal, integration)? What training, hiring, and team composition strategies apply?',
+    complexity: 'medium',
+    suite: 'proto-ready',
+    roles: ['VP Engineering', 'HR Generalist', 'Chief Technology Officer', 'Program Manager'],
+  },
+
+  // --- Leadership That Protects Speed ---
+  {
+    text: 'What leadership practices distinguish successful skunkworks-style prototype programs from traditional defense programs? How does leadership shield engineering teams from bureaucratic friction while maintaining safety and compliance?',
+    complexity: 'high',
+    suite: 'proto-ready',
+    roles: ['Chief Executive Officer', 'VP Engineering', 'Program Manager', 'Chief Operating Officer'],
+  },
+  {
+    text: 'A prototype program manager is under pressure to add formal gate reviews, additional documentation, and oversight layers that mirror the organization\'s production program processes. What is the risk to schedule and innovation, and how should leadership arbitrate?',
+    complexity: 'high',
+    suite: 'proto-ready',
+    roles: ['Program Manager', 'VP Engineering', 'Chief Executive Officer', 'Quality Manager'],
+  },
+
+  // --- Configuration Agility ---
+  {
+    text: 'How should configuration management be adapted for a one-off experimental aircraft where design changes happen daily during build? What is the right balance between traceability and speed, and how does this differ from AS9100 production CM?',
+    complexity: 'medium',
+    suite: 'proto-ready',
+    roles: ['VP Engineering', 'Quality Manager', 'Manufacturing Engineer', 'AS9100 Rev D'],
+  },
+  {
+    text: 'An experimental aircraft program needs to implement a design change in 48 hours that would take 6 weeks through the normal ECO/CCB process. What expedited engineering authority structure allows rapid changes while preserving safety-critical traceability?',
+    complexity: 'high',
+    suite: 'proto-ready',
+    roles: ['VP Engineering', 'Program Manager', 'Quality Manager', 'Safety Officer', 'Manufacturing Engineer'],
+  },
+
+  // --- Learning Rate & Failure Tolerance ---
+  {
+    text: 'How should an aerospace organization measure and optimize its learning rate during a prototype development program? What metrics capture whether design-build-test cycles are generating actionable knowledge versus just consuming schedule?',
+    complexity: 'high',
+    suite: 'proto-ready',
+    roles: ['VP Engineering', 'Chief Technology Officer', 'Program Manager', 'Chief Executive Officer'],
+  },
+  {
+    text: 'An X-plane prototype program has experienced two flight test failures but generated critical data that advances the state of the art. How should the organization frame the program\'s value to stakeholders, and what knowledge capture processes preserve the learning even if the program is canceled?',
+    complexity: 'high',
+    suite: 'proto-ready',
+    roles: ['Chief Executive Officer', 'Program Manager', 'VP Engineering', 'Chief Technology Officer', 'BD Director'],
+  },
+
+  // --- Advanced Prototype Manufacturing ---
+  {
+    text: 'What manufacturing capabilities differentiate a prototype aircraft shop from a production facility? How should tooling, fabrication, and assembly processes be structured when building one or two vehicles with no production baseline?',
+    complexity: 'medium',
+    suite: 'proto-ready',
+    roles: ['Manufacturing Engineer', 'VP Operations', 'Production Manager', 'Quality Manager'],
+  },
+  {
+    text: 'During build of an experimental airframe, structural testing reveals a joint design that needs rework. The hardware is partially assembled with limited disassembly options. What engineering and manufacturing processes enable rapid in-situ redesign and repair without restarting the build?',
+    complexity: 'high',
+    suite: 'proto-ready',
+    roles: ['Mechanical Engineer', 'Manufacturing Engineer', 'VP Engineering', 'Quality Manager', 'Test Engineer'],
+  },
+
+  // --- Government-Industry Integration for Prototypes ---
+  {
+    text: 'How does a DARPA-sponsored prototype program differ from a traditional FAR-based development contract in terms of sponsor technical engagement, milestone structure, and reporting requirements? What organizational capabilities enable success in this environment?',
+    complexity: 'medium',
+    suite: 'proto-ready',
+    roles: ['Program Manager', 'Contracts Manager', 'VP Engineering', 'BD Director'],
+  },
+  {
+    text: 'A prototype aircraft program operates under both ITAR restrictions and a classified program environment, with a government sponsor who wants embedded engineers on the contractor floor. What security, export control, and facility arrangements are required, and how do they interact with the need for development speed?',
+    complexity: 'high',
+    suite: 'proto-ready',
+    roles: ['Program Manager', 'Export Control Officer', 'Facilities Manager', 'Safety Officer', 'VP Engineering', 'ITAR/EAR Export Controls'],
+  },
 ];
 
 const COMPLEXITY_COLORS: Record<string, string> = {
@@ -371,11 +475,12 @@ const COMPLEXITY_COLORS: Record<string, string> = {
 const SUITE_CONFIG: Record<string, { label: string; color: string }> = {
   core: { label: 'Core', color: '#60a5fa' },
   'x-plane': { label: 'X-Plane Backtest', color: '#c084fc' },
+  'proto-ready': { label: 'Prototype Readiness', color: '#34d399' },
 };
 
 export default function SampleQueries() {
   const [complexityFilter, setComplexityFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
-  const [suiteFilter, setSuiteFilter] = useState<'all' | 'core' | 'x-plane'>('all');
+  const [suiteFilter, setSuiteFilter] = useState<'all' | 'core' | 'x-plane' | 'proto-ready'>('all');
   const [copied, setCopied] = useState<number | null>(null);
   const [runCounts, setRunCounts] = useState<Record<string, number>>({});
 
@@ -404,6 +509,7 @@ export default function SampleQueries() {
   const suiteCounts = {
     core: SAMPLES.filter(s => s.suite === 'core').length,
     'x-plane': SAMPLES.filter(s => s.suite === 'x-plane').length,
+    'proto-ready': SAMPLES.filter(s => s.suite === 'proto-ready').length,
   };
 
   return (
@@ -416,7 +522,7 @@ export default function SampleQueries() {
       {/* Suite filter */}
       <div className="sample-filter-bar">
         <span style={{ color: '#888', fontSize: '0.8rem', marginRight: 4 }}>Suite:</span>
-        {(['all', 'core', 'x-plane'] as const).map(suite => (
+        {(['all', 'core', 'x-plane', 'proto-ready'] as const).map(suite => (
           <button
             key={suite}
             className={`sample-filter-btn${suiteFilter === suite ? ' active' : ''}`}
