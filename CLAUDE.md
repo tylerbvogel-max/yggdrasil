@@ -3,7 +3,7 @@
 Biomimetic neuron graph for prompt preparation. Two-stage Haiku pipeline: classify intent → score neurons → assemble context → execute with enriched prompt.
 
 ## Stack
-- Python FastAPI + SQLite (async SQLAlchemy + aiosqlite) + Anthropic Python SDK
+- Python FastAPI + PostgreSQL (async SQLAlchemy + asyncpg) + Anthropic Python SDK
 - Port 8002
 
 ## Dev Commands

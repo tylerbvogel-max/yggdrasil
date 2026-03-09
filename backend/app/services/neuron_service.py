@@ -41,7 +41,7 @@ async def get_neurons_by_filter(
     SQL-side keyword hits, limited to candidate_limit. Full content is only
     loaded later for the final top-K during prompt assembly.
     """
-    conditions = ["is_active = 1"]
+    conditions = ["is_active = true"]
     params: dict = {}
 
     # OR between dept and role_key
@@ -93,7 +93,7 @@ async def get_neurons_by_filter(
             SELECT id, label, summary, department, role_key, avg_utility,
                    invocations, created_at_query_count, ({kw_expr}) AS keyword_hits
             FROM neurons
-            WHERE is_active = 1
+            WHERE is_active = true
             ORDER BY keyword_hits DESC, avg_utility DESC
             LIMIT :lim
         """

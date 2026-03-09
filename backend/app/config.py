@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite+aiosqlite:///./yggdrasil.db"
+    database_url: str = "postgresql+asyncpg://yggdrasil:yggdrasil@localhost:5432/yggdrasil"
     anthropic_api_key: str = ""
     haiku_model: str = "claude-haiku-4-5-20251001"
     token_budget: int = 4000

@@ -91,6 +91,7 @@ function SetupGuide() {
           </thead>
           <tbody>
             <tr><td>Python</td><td>3.11+</td><td>Async SQLAlchemy requires 3.10+; tested on 3.11.2</td></tr>
+            <tr><td>PostgreSQL</td><td>15+</td><td>Database backend (asyncpg driver)</td></tr>
             <tr><td>Node.js</td><td>20+</td><td>For frontend build (Vite + React 19)</td></tr>
             <tr><td>npm</td><td>10+</td><td>Comes with Node 20</td></tr>
             <tr><td>Git</td><td>Any</td><td>For cloning and checkpoint commits</td></tr>
@@ -107,24 +108,32 @@ function SetupGuide() {
 cd yggdrasil`}</CodeBlock>
         </StepCard>
 
-        <StepCard number={2} title="Create your environment file">
+        <StepCard number={2} title="Set up PostgreSQL">
+          <p>Create the database and user:</p>
+          <CodeBlock>{`sudo -u postgres psql -c "CREATE USER yggdrasil WITH PASSWORD 'yggdrasil';"
+sudo -u postgres psql -c "CREATE DATABASE yggdrasil OWNER yggdrasil;"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE yggdrasil TO yggdrasil;"`}</CodeBlock>
+        </StepCard>
+
+        <StepCard number={3} title="Create your environment file">
           <p>Copy the example and add your Anthropic API key:</p>
           <CodeBlock>{`cp .env.example .env
 # Edit .env and set ANTHROPIC_API_KEY=sk-ant-...`}</CodeBlock>
           <p style={{ marginTop: 8 }}>
             The only required variable is <code style={{ color: '#60a5fa' }}>ANTHROPIC_API_KEY</code>.
+            The default <code>DATABASE_URL</code> connects to the local PostgreSQL instance created above.
             All other settings (model, token budget, scoring weights) have sensible defaults in <code>backend/app/config.py</code>.
           </p>
         </StepCard>
 
-        <StepCard number={3} title="Set up the backend">
+        <StepCard number={4} title="Set up the backend">
           <CodeBlock>{`cd backend
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt`}</CodeBlock>
         </StepCard>
 
-        <StepCard number={4} title="Start the backend">
+        <StepCard number={5} title="Start the backend">
           <CodeBlock>{`cd backend
 source venv/bin/activate
 uvicorn app.main:app --port 8002 --reload`}</CodeBlock>
@@ -132,20 +141,20 @@ uvicorn app.main:app --port 8002 --reload`}</CodeBlock>
             On first start, the backend will automatically:
           </p>
           <ul style={{ margin: '4px 0 0 16px', lineHeight: 1.8 }}>
-            <li>Create the SQLite database (<code>yggdrasil.db</code>)</li>
+            <li>Create all tables in the PostgreSQL database</li>
             <li>Run schema migrations</li>
             <li>Seed the neuron graph (2,031 neurons across 9 departments, 51 roles, 6 layers)</li>
             <li>Load regulatory reference patterns (~150 neurons)</li>
           </ul>
         </StepCard>
 
-        <StepCard number={5} title="Set up the frontend">
+        <StepCard number={6} title="Set up the frontend">
           <p>In a second terminal:</p>
           <CodeBlock>{`cd frontend
 npm install`}</CodeBlock>
         </StepCard>
 
-        <StepCard number={6} title="Run in development mode">
+        <StepCard number={7} title="Run in development mode">
           <CodeBlock>{`cd frontend
 npm run dev`}</CodeBlock>
           <p style={{ marginTop: 8 }}>
@@ -154,7 +163,7 @@ npm run dev`}</CodeBlock>
           </p>
         </StepCard>
 
-        <StepCard number={7} title="Or build for production">
+        <StepCard number={8} title="Or build for production">
           <CodeBlock>{`cd frontend
 npm run build`}</CodeBlock>
           <p style={{ marginTop: 8 }}>
@@ -183,7 +192,7 @@ cd backend && pytest tests/ -v`}</CodeBlock>
 │   ├── app/
 │   │   ├── main.py              # FastAPI app, startup, migrations
 │   │   ├── config.py            # Settings (scoring weights, model, etc.)
-│   │   ├── database.py          # SQLAlchemy async engine + SQLite pragmas
+│   │   ├── database.py          # SQLAlchemy async engine + PostgreSQL pool
 │   │   ├── models.py            # ORM models (Neuron, Query, Edge, etc.)
 │   │   ├── schemas.py           # Pydantic request/response types
 │   │   ├── routers/
@@ -225,7 +234,7 @@ cd backend && pytest tests/ -v`}</CodeBlock>
           </thead>
           <tbody>
             <tr><td><code>ANTHROPIC_API_KEY</code></td><td>&mdash;</td><td>Required. Anthropic API key for Haiku/Sonnet/Opus</td></tr>
-            <tr><td><code>DATABASE_URL</code></td><td><code>sqlite+aiosqlite:///./yggdrasil.db</code></td><td>Database connection string</td></tr>
+            <tr><td><code>DATABASE_URL</code></td><td><code>postgresql+asyncpg://yggdrasil:yggdrasil@localhost:5432/yggdrasil</code></td><td>PostgreSQL connection string</td></tr>
             <tr><td><code>HAIKU_MODEL</code></td><td><code>claude-haiku-4-5-20251001</code></td><td>Model for classification &amp; scoring</td></tr>
             <tr><td><code>TOKEN_BUDGET</code></td><td><code>4000</code></td><td>Max tokens for assembled system prompt</td></tr>
             <tr><td><code>TOP_K_NEURONS</code></td><td><code>30</code></td><td>Neurons selected per query</td></tr>

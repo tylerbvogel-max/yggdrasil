@@ -21,7 +21,7 @@ class Neuron(Base):
     role_key: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     invocations: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     avg_utility: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5")
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     cross_ref_departments: Mapped[str | None] = mapped_column(Text, nullable=True)
     standard_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at_query_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -89,8 +89,8 @@ class Query(Base):
     opus_response_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     opus_input_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     opus_output_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    run_neuron: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
-    run_opus: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    run_neuron: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    run_opus: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     results_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of slot results
     eval_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     eval_model: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -167,7 +167,7 @@ class AutopilotConfig(Base):
     __tablename__ = "autopilot_config"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     directive: Mapped[str] = mapped_column(Text, default="", server_default="")
     interval_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     focus_neuron_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=True)
@@ -183,7 +183,7 @@ class AutopilotRun(Base):
     query_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("queries.id"), nullable=True)
     generated_query: Mapped[str] = mapped_column(Text, nullable=False)
     directive: Mapped[str] = mapped_column(Text, nullable=False)
-    focus_neuron_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    focus_neuron_label: Mapped[str | None] = mapped_column(String(500), nullable=True)
     gap_source: Mapped[str | None] = mapped_column(String(30), nullable=True)  # emergent_queue|low_eval|thin_neuron|sparse_subtree|directive
     gap_target: Mapped[str | None] = mapped_column(Text, nullable=True)  # Human-readable gap description
     neurons_activated: Mapped[int] = mapped_column(Integer, default=0)

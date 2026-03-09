@@ -1,6 +1,7 @@
 """GET /admin/performance — Pure SQL analytics, no LLM invocation."""
 
 import math
+from decimal import Decimal
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,15 @@ import numpy as np
 from scipy import stats as sp_stats
 
 from app.database import get_db
+
+
+def _num(val):
+    """Convert Decimal/None to float for JSON serialization and arithmetic."""
+    if val is None:
+        return 0
+    if isinstance(val, Decimal):
+        return float(val)
+    return val
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -46,17 +56,18 @@ async def performance_report(db: AsyncSession = Depends(get_db)):
         FROM queries
     """))).fetchone()
 
+    r = [_num(v) for v in row]
     cost_summary = {
-        "total_queries": row[0],
-        "total_cost": round(row[1], 4),
-        "avg_cost": round(row[2], 4),
-        "min_cost": round(row[3] or 0, 4),
-        "max_cost": round(row[4] or 0, 4),
-        "classify_tokens": {"input": row[5], "output": row[6]},
-        "execute_tokens": {"input": row[7], "output": row[8]},
-        "eval_tokens": {"input": row[9], "output": row[10]},
-        "total_input_tokens": row[5] + row[7] + row[9],
-        "total_output_tokens": row[6] + row[8] + row[10],
+        "total_queries": r[0],
+        "total_cost": round(r[1], 4),
+        "avg_cost": round(r[2], 4),
+        "min_cost": round(r[3], 4),
+        "max_cost": round(r[4], 4),
+        "classify_tokens": {"input": r[5], "output": r[6]},
+        "execute_tokens": {"input": r[7], "output": r[8]},
+        "eval_tokens": {"input": r[9], "output": r[10]},
+        "total_input_tokens": r[5] + r[7] + r[9],
+        "total_output_tokens": r[6] + r[8] + r[10],
     }
 
     # --- 2. Cost modeling: Haiku+Neurons vs alternatives ---
@@ -69,10 +80,10 @@ async def performance_report(db: AsyncSession = Depends(get_db)):
         FROM queries WHERE execute_input_tokens > 0
     """))).fetchone()
 
-    avg_cls_in = row2[0] or 0
-    avg_cls_out = row2[1] or 0
-    avg_exe_in = row2[2] or 0
-    avg_exe_out = row2[3] or 0
+    avg_cls_in = float(row2[0] or 0)
+    avg_cls_out = float(row2[1] or 0)
+    avg_exe_in = float(row2[2] or 0)
+    avg_exe_out = float(row2[3] or 0)
 
     h = PRICING["haiku"]
     s = PRICING["sonnet"]
@@ -111,26 +122,26 @@ async def performance_report(db: AsyncSession = Depends(get_db)):
     # --- 3. Quality by answer mode ---
     rows = (await db.execute(text("""
         SELECT answer_mode, COUNT(*) as n,
-            ROUND(AVG(accuracy), 2) as acc,
-            ROUND(AVG(completeness), 2) as comp,
-            ROUND(AVG(clarity), 2) as clar,
-            ROUND(AVG(faithfulness), 2) as faith,
-            ROUND(AVG(overall), 2) as overall
+            ROUND(AVG(accuracy)::numeric, 2) as acc,
+            ROUND(AVG(completeness)::numeric, 2) as comp,
+            ROUND(AVG(clarity)::numeric, 2) as clar,
+            ROUND(AVG(faithfulness)::numeric, 2) as faith,
+            ROUND(AVG(overall)::numeric, 2) as overall
         FROM eval_scores GROUP BY answer_mode ORDER BY overall DESC
     """))).fetchall()
 
     quality_by_mode = [
         {
-            "mode": r[0], "n": r[1],
-            "accuracy": r[2], "completeness": r[3],
-            "clarity": r[4], "faithfulness": r[5], "overall": r[6],
+            "mode": r[0], "n": _num(r[1]),
+            "accuracy": _num(r[2]), "completeness": _num(r[3]),
+            "clarity": _num(r[4]), "faithfulness": _num(r[5]), "overall": _num(r[6]),
         }
         for r in rows
     ]
 
     # Haiku+Neurons vs Opus Raw quality ratio
-    haiku_n_overall = next((r[6] for r in rows if r[0] == "haiku_neuron"), None)
-    opus_r_overall = next((r[6] for r in rows if r[0] == "opus_raw"), None)
+    haiku_n_overall = next((_num(r[6]) for r in rows if r[0] == "haiku_neuron"), None)
+    opus_r_overall = next((_num(r[6]) for r in rows if r[0] == "opus_raw"), None)
     quality_ratio = round(haiku_n_overall / opus_r_overall * 100) if haiku_n_overall and opus_r_overall else None
 
     # --- 4. Reliability: score distribution for haiku_neuron ---
@@ -156,18 +167,18 @@ async def performance_report(db: AsyncSession = Depends(get_db)):
         SELECT
             CASE WHEN q.id <= {median_id} THEN 'early' ELSE 'late' END as period,
             COUNT(DISTINCT q.id) as queries,
-            ROUND(AVG(e.overall), 2) as avg_overall,
-            ROUND(AVG(e.accuracy), 2) as avg_acc,
-            ROUND(AVG(e.completeness), 2) as avg_comp
+            ROUND(AVG(e.overall)::numeric, 2) as avg_overall,
+            ROUND(AVG(e.accuracy)::numeric, 2) as avg_acc,
+            ROUND(AVG(e.completeness)::numeric, 2) as avg_comp
         FROM queries q JOIN eval_scores e ON e.query_id = q.id
         WHERE e.answer_mode = 'haiku_neuron'
         GROUP BY CASE WHEN q.id <= {median_id} THEN 'early' ELSE 'late' END
     """))).fetchall()
 
-    quality_trend = {r[0]: {"queries": r[1], "overall": r[2], "accuracy": r[3], "completeness": r[4]} for r in rows}
+    quality_trend = {r[0]: {"queries": _num(r[1]), "overall": _num(r[2]), "accuracy": _num(r[3]), "completeness": _num(r[4])} for r in rows}
 
     # --- 6. Neuron graph stats ---
-    row = (await db.execute(text("SELECT COUNT(*) FROM neurons WHERE is_active = 1"))).fetchone()
+    row = (await db.execute(text("SELECT COUNT(*) FROM neurons WHERE is_active = true"))).fetchone()
     active_neurons = row[0]
 
     row = (await db.execute(text("SELECT COUNT(*) FROM neurons WHERE invocations = 0"))).fetchone()
@@ -181,7 +192,7 @@ async def performance_report(db: AsyncSession = Depends(get_db)):
                 WHEN invocations BETWEEN 6 AND 20 THEN '6_to_20'
                 ELSE 'over_20'
             END as bucket, COUNT(*) as n
-        FROM neurons WHERE is_active = 1 GROUP BY bucket
+        FROM neurons WHERE is_active = true GROUP BY bucket
     """))).fetchall()
     utilization = {r[0]: r[1] for r in rows}
 
@@ -190,13 +201,13 @@ async def performance_report(db: AsyncSession = Depends(get_db)):
 
     # Layer distribution
     rows = (await db.execute(text("""
-        SELECT layer, COUNT(*) FROM neurons WHERE is_active = 1 GROUP BY layer ORDER BY layer
+        SELECT layer, COUNT(*) FROM neurons WHERE is_active = true GROUP BY layer ORDER BY layer
     """))).fetchall()
     layer_dist = {f"L{r[0]}": r[1] for r in rows}
 
     # Department distribution
     rows = (await db.execute(text("""
-        SELECT department, COUNT(*) FROM neurons WHERE is_active = 1 AND department IS NOT NULL
+        SELECT department, COUNT(*) FROM neurons WHERE is_active = true AND department IS NOT NULL
         GROUP BY department ORDER BY COUNT(*) DESC
     """))).fetchall()
     dept_dist = {r[0]: r[1] for r in rows}
@@ -243,24 +254,24 @@ async def performance_report(db: AsyncSession = Depends(get_db)):
     # --- 8. Autopilot stats ---
     rows = (await db.execute(text("""
         SELECT status, COUNT(*) as n,
-            ROUND(AVG(eval_overall), 2) as avg_score,
+            ROUND(AVG(eval_overall)::numeric, 2) as avg_score,
             COALESCE(SUM(neurons_created), 0) as created,
             COALESCE(SUM(updates_applied), 0) as updated,
-            ROUND(COALESCE(SUM(cost_usd), 0), 4) as cost
+            ROUND(COALESCE(SUM(cost_usd), 0)::numeric, 4) as cost
         FROM autopilot_runs GROUP BY status
     """))).fetchall()
 
     autopilot = [
-        {"status": r[0], "runs": r[1], "avg_score": r[2],
-         "created": r[3], "updated": r[4], "cost": r[5]}
+        {"status": r[0], "runs": _num(r[1]), "avg_score": _num(r[2]),
+         "created": _num(r[3]), "updated": _num(r[4]), "cost": _num(r[5])}
         for r in rows
     ]
 
     # --- 9. Total investment ---
     row = (await db.execute(text("SELECT COALESCE(SUM(cost_usd), 0) FROM queries"))).fetchone()
-    query_spend = round(row[0], 2)
+    query_spend = round(_num(row[0]), 2)
     row = (await db.execute(text("SELECT COALESCE(SUM(cost_usd), 0) FROM autopilot_runs"))).fetchone()
-    autopilot_spend = round(row[0], 2)
+    autopilot_spend = round(_num(row[0]), 2)
 
     investment = {
         "query_pipeline": query_spend,
@@ -272,33 +283,33 @@ async def performance_report(db: AsyncSession = Depends(get_db)):
     rows = (await db.execute(text("""
         SELECT
             CASE
-                WHEN json_array_length(q.selected_neuron_ids) <= 5 THEN '1-5'
-                WHEN json_array_length(q.selected_neuron_ids) <= 15 THEN '6-15'
-                WHEN json_array_length(q.selected_neuron_ids) <= 30 THEN '16-30'
+                WHEN json_array_length(q.selected_neuron_ids::json) <= 5 THEN '1-5'
+                WHEN json_array_length(q.selected_neuron_ids::json) <= 15 THEN '6-15'
+                WHEN json_array_length(q.selected_neuron_ids::json) <= 30 THEN '16-30'
                 ELSE '31+'
             END as bucket,
             COUNT(DISTINCT q.id) as queries,
-            ROUND(AVG(e.overall), 2) as avg_score
+            ROUND(AVG(e.overall)::numeric, 2) as avg_score
         FROM queries q
         JOIN eval_scores e ON e.query_id = q.id
         WHERE e.answer_mode = 'haiku_neuron'
         GROUP BY bucket
-        ORDER BY MIN(json_array_length(q.selected_neuron_ids))
+        ORDER BY MIN(json_array_length(q.selected_neuron_ids::json))
     """))).fetchall()
 
-    neuron_quality_corr = [{"bucket": r[0], "queries": r[1], "avg_score": r[2]} for r in rows]
+    neuron_quality_corr = [{"bucket": r[0], "queries": _num(r[1]), "avg_score": _num(r[2])} for r in rows]
 
     # --- 11. Per-query timeline (for chart) ---
     rows = (await db.execute(text("""
-        SELECT q.id, ROUND(q.cost_usd, 4) as cost,
-            json_array_length(q.selected_neuron_ids) as neurons,
-            (SELECT ROUND(AVG(overall), 2) FROM eval_scores WHERE query_id = q.id AND answer_mode = 'haiku_neuron') as score,
+        SELECT q.id, ROUND(q.cost_usd::numeric, 4) as cost,
+            json_array_length(q.selected_neuron_ids::json) as neurons,
+            (SELECT ROUND(AVG(overall)::numeric, 2) FROM eval_scores WHERE query_id = q.id AND answer_mode = 'haiku_neuron') as score,
             q.created_at
         FROM queries q ORDER BY q.id
     """))).fetchall()
 
     query_timeline = [
-        {"id": r[0], "cost": r[1], "neurons": r[2], "score": r[3], "created_at": r[4]}
+        {"id": r[0], "cost": _num(r[1]), "neurons": _num(r[2]), "score": _num(r[3]), "created_at": r[4]}
         for r in rows
     ]
 

@@ -16,59 +16,62 @@ from app.seed.loader import load_seed
 from app.seed.regulatory_seed import seed_regulatory
 
 
+async def _column_exists(conn, table: str, column: str) -> bool:
+    result = await conn.execute(text(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = :table AND column_name = :col"
+    ), {"table": table, "col": column})
+    return result.fetchone() is not None
+
+
+async def _index_exists(conn, index_name: str) -> bool:
+    result = await conn.execute(text(
+        "SELECT 1 FROM pg_indexes WHERE indexname = :name"
+    ), {"name": index_name})
+    return result.fetchone() is not None
+
+
+async def _table_exists(conn, table: str) -> bool:
+    result = await conn.execute(text(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_name = :table AND table_schema = 'public'"
+    ), {"table": table})
+    return result.fetchone() is not None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # Migrate: make neuron_refinements.query_id nullable (SQLite workaround)
+    # Migrate: make neuron_refinements.query_id nullable
     async with engine.begin() as conn:
         try:
-            rows = await conn.execute(text("PRAGMA table_info(neuron_refinements)"))
-            for row in rows:
-                if row[1] == "query_id" and row[3] == 1:  # notnull == 1
-                    # Rebuild table with nullable query_id
+            if await _table_exists(conn, "neuron_refinements"):
+                result = await conn.execute(text(
+                    "SELECT is_nullable FROM information_schema.columns "
+                    "WHERE table_name = 'neuron_refinements' AND column_name = 'query_id'"
+                ))
+                row = result.fetchone()
+                if row and row[0] == "NO":
                     await conn.execute(text(
-                        "CREATE TABLE IF NOT EXISTS _nr_tmp AS SELECT * FROM neuron_refinements"
+                        "ALTER TABLE neuron_refinements ALTER COLUMN query_id DROP NOT NULL"
                     ))
-                    await conn.execute(text("DROP TABLE neuron_refinements"))
-                    await conn.execute(text("""
-                        CREATE TABLE neuron_refinements (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            query_id INTEGER REFERENCES queries(id),
-                            neuron_id INTEGER NOT NULL REFERENCES neurons(id),
-                            action VARCHAR(20) NOT NULL,
-                            field VARCHAR(50),
-                            old_value TEXT,
-                            new_value TEXT,
-                            reason TEXT,
-                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                        )
-                    """))
-                    await conn.execute(text("CREATE INDEX ix_neuron_refinements_query_id ON neuron_refinements(query_id)"))
-                    await conn.execute(text("CREATE INDEX ix_neuron_refinements_neuron_id ON neuron_refinements(neuron_id)"))
-                    await conn.execute(text(
-                        "INSERT INTO neuron_refinements SELECT * FROM _nr_tmp"
-                    ))
-                    await conn.execute(text("DROP TABLE _nr_tmp"))
                     print("Migrated: neuron_refinements.query_id is now nullable")
-                    break
         except Exception as e:
             print(f"Migration check skipped: {e}")
 
     # Migrate: add new columns to autopilot_config if missing
     async with engine.begin() as conn:
         try:
-            rows = await conn.execute(text("PRAGMA table_info(autopilot_config)"))
-            columns = {row[1] for row in rows}
-            if columns:  # table exists
-                if "eval_model" not in columns:
+            if await _table_exists(conn, "autopilot_config"):
+                if not await _column_exists(conn, "autopilot_config", "eval_model"):
                     await conn.execute(text(
                         "ALTER TABLE autopilot_config ADD COLUMN eval_model VARCHAR(20) DEFAULT 'haiku'"
                     ))
                     print("Migrated: added autopilot_config.eval_model")
-                if "max_layer" not in columns:
+                if not await _column_exists(conn, "autopilot_config", "max_layer"):
                     await conn.execute(text(
                         "ALTER TABLE autopilot_config ADD COLUMN max_layer INTEGER DEFAULT 5"
                     ))
@@ -79,14 +82,12 @@ async def lifespan(app: FastAPI):
     # Migrate: add cross_ref_departments and standard_date columns to neurons if missing
     async with engine.begin() as conn:
         try:
-            rows = await conn.execute(text("PRAGMA table_info(neurons)"))
-            columns = {row[1] for row in rows}
-            if "cross_ref_departments" not in columns:
+            if not await _column_exists(conn, "neurons", "cross_ref_departments"):
                 await conn.execute(text(
                     "ALTER TABLE neurons ADD COLUMN cross_ref_departments TEXT"
                 ))
                 print("Migrated: added neurons.cross_ref_departments")
-            if "standard_date" not in columns:
+            if not await _column_exists(conn, "neurons", "standard_date"):
                 await conn.execute(text(
                     "ALTER TABLE neurons ADD COLUMN standard_date VARCHAR(20)"
                 ))
@@ -97,26 +98,21 @@ async def lifespan(app: FastAPI):
     # Migrate: add edge indexes and last_updated_query column for scaling
     async with engine.begin() as conn:
         try:
-            rows = await conn.execute(text("PRAGMA table_info(neuron_edges)"))
-            columns = {row[1] for row in rows}
-            if "last_updated_query" not in columns:
-                await conn.execute(text(
-                    "ALTER TABLE neuron_edges ADD COLUMN last_updated_query INTEGER DEFAULT 0"
-                ))
-                print("Migrated: added neuron_edges.last_updated_query")
+            if await _table_exists(conn, "neuron_edges"):
+                if not await _column_exists(conn, "neuron_edges", "last_updated_query"):
+                    await conn.execute(text(
+                        "ALTER TABLE neuron_edges ADD COLUMN last_updated_query INTEGER DEFAULT 0"
+                    ))
+                    print("Migrated: added neuron_edges.last_updated_query")
 
-            # Add reverse index for target_id lookups in spread activation
-            idx = await conn.execute(text(
-                "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_neuron_edges_target_weight'"
-            ))
-            if not idx.fetchone():
-                await conn.execute(text(
-                    "CREATE INDEX ix_neuron_edges_target_weight ON neuron_edges(target_id, weight)"
-                ))
-                await conn.execute(text(
-                    "CREATE INDEX ix_neuron_edges_source_weight ON neuron_edges(source_id, weight)"
-                ))
-                print("Migrated: added neuron_edges target/source weight indexes")
+                if not await _index_exists(conn, "ix_neuron_edges_target_weight"):
+                    await conn.execute(text(
+                        "CREATE INDEX ix_neuron_edges_target_weight ON neuron_edges(target_id, weight)"
+                    ))
+                    await conn.execute(text(
+                        "CREATE INDEX ix_neuron_edges_source_weight ON neuron_edges(source_id, weight)"
+                    ))
+                    print("Migrated: added neuron_edges target/source weight indexes")
         except Exception as e:
             print(f"Edge scaling migration skipped: {e}")
 
@@ -128,19 +124,17 @@ async def lifespan(app: FastAPI):
             print(f"Auto-seeded: {result}")
 
     # Seed regulatory department — force re-seed if neuron count below v2 threshold
+    async with async_session() as db:
+        rcount = (await db.execute(
+            select(func.count(Neuron.id)).where(Neuron.department == "Regulatory")
+        )).scalar() or 0
+        force_reseed = rcount < 150
+        if force_reseed:
+            print(f"Regulatory neuron count ({rcount}) below v2 threshold — will force re-seed")
+
     import asyncio
-    import sqlite3 as _sqlite3
-    _reg_db = Path(__file__).parent.parent / "yggdrasil.db"
-    _force_reseed = False
-    if _reg_db.exists():
-        _rconn = _sqlite3.connect(str(_reg_db))
-        _rcount = _rconn.execute("SELECT COUNT(*) FROM neurons WHERE department = 'Regulatory'").fetchone()[0]
-        _rconn.close()
-        if _rcount < 150:
-            _force_reseed = True
-            print(f"Regulatory neuron count ({_rcount}) below v2 threshold — will force re-seed")
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, lambda: seed_regulatory(force=_force_reseed))
+    await loop.run_in_executor(None, lambda: seed_regulatory(force=force_reseed))
 
     yield
 

@@ -274,8 +274,9 @@ async def _batch_update_edges(db: AsyncSession, neuron_ids: list[int], query_off
     # Batch insert new edges (ignore if already exist)
     for src, tgt in pairs:
         await db.execute(text(
-            "INSERT OR IGNORE INTO neuron_edges (source_id, target_id, co_fire_count, weight, last_updated_query) "
-            "VALUES (:src, :tgt, 0, 0.0, 0)"
+            "INSERT INTO neuron_edges (source_id, target_id, co_fire_count, weight, last_updated_query) "
+            "VALUES (:src, :tgt, 0, 0.0, 0) "
+            "ON CONFLICT (source_id, target_id) DO NOTHING"
         ), {"src": src, "tgt": tgt})
 
     # Batch update all pairs in one statement per pair
