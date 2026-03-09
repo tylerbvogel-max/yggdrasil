@@ -1,13 +1,28 @@
 """Neuron CRUD, candidate pre-filtering, and firing record management."""
 
 import json
+from dataclasses import dataclass
 
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, and_, or_, text, literal_column, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import Neuron, NeuronEdge, NeuronFiring, SystemState
 from app.services.scoring_engine import compute_score, NeuronScoreBreakdown
+
+
+@dataclass
+class NeuronCandidate:
+    """Lightweight neuron representation for scoring (no content blob)."""
+    id: int
+    label: str
+    summary: str | None
+    department: str | None
+    role_key: str | None
+    avg_utility: float
+    invocations: int
+    created_at_query_count: int
+    keyword_hits: int = 0
 
 
 async def get_neuron(db: AsyncSession, neuron_id: int) -> Neuron | None:
@@ -19,48 +34,80 @@ async def get_neurons_by_filter(
     departments: list[str] | None = None,
     role_keys: list[str] | None = None,
     keywords: list[str] | None = None,
-) -> list[Neuron]:
+) -> list[NeuronCandidate]:
     """Pre-filter candidate neurons by classification results.
 
-    Uses OR between department and role_key filters so that a neuron matching
-    either the classified departments or role_keys is included. This prevents
-    misclassified departments from excluding neurons with correct role_keys.
+    Returns lightweight NeuronCandidate objects (no content blob) ranked by
+    SQL-side keyword hits, limited to candidate_limit. Full content is only
+    loaded later for the final top-K during prompt assembly.
     """
-    base = [Neuron.is_active == True]
+    conditions = ["is_active = 1"]
+    params: dict = {}
 
-    # OR between dept and role_key: match either classification signal
-    match_conditions = []
+    # OR between dept and role_key
+    match_parts = []
     if departments:
-        match_conditions.append(Neuron.department.in_(departments))
+        placeholders = ", ".join(f":dept_{i}" for i in range(len(departments)))
+        match_parts.append(f"department IN ({placeholders})")
+        for i, d in enumerate(departments):
+            params[f"dept_{i}"] = d
     if role_keys:
-        match_conditions.append(Neuron.role_key.in_(role_keys))
+        placeholders = ", ".join(f":role_{i}" for i in range(len(role_keys)))
+        match_parts.append(f"role_key IN ({placeholders})")
+        for i, r in enumerate(role_keys):
+            params[f"role_{i}"] = r
+    if match_parts:
+        conditions.append(f"({' OR '.join(match_parts)})")
 
-    if match_conditions:
-        base.append(or_(*match_conditions))
-
-    # Keyword filtering via SQL LIKE — avoids loading full content blobs into Python
+    # Build keyword hit count expression for SQL-side ranking
+    kw_parts = []
     if keywords:
-        keyword_conditions = []
-        for kw in keywords:
-            pattern = f"%{kw.lower()}%"
-            keyword_conditions.append(
-                or_(
-                    func.lower(Neuron.label).like(pattern),
-                    func.lower(Neuron.content).like(pattern),
-                    func.lower(Neuron.summary).like(pattern),
-                )
+        for i, kw in enumerate(keywords):
+            param_name = f"kw_{i}"
+            params[param_name] = f"%{kw.lower()}%"
+            kw_parts.append(
+                f"(CASE WHEN lower(label) LIKE :{param_name} THEN 1 ELSE 0 END + "
+                f"CASE WHEN lower(summary) LIKE :{param_name} THEN 1 ELSE 0 END + "
+                f"CASE WHEN lower(content) LIKE :{param_name} THEN 1 ELSE 0 END)"
             )
-        # Try with keyword filter first
-        stmt_filtered = select(Neuron).where(and_(*base, or_(*keyword_conditions)))
-        result_filtered = await db.execute(stmt_filtered)
-        filtered = list(result_filtered.scalars().all())
-        if filtered:
-            return filtered
 
-    # Fall back to all candidates (no keywords, or keyword filter too aggressive)
-    stmt = select(Neuron).where(and_(*base))
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    kw_expr = " + ".join(kw_parts) if kw_parts else "0"
+    where_clause = " AND ".join(conditions)
+
+    sql = f"""
+        SELECT id, label, summary, department, role_key, avg_utility,
+               invocations, created_at_query_count, ({kw_expr}) AS keyword_hits
+        FROM neurons
+        WHERE {where_clause}
+        ORDER BY keyword_hits DESC, avg_utility DESC
+        LIMIT :lim
+    """
+    params["lim"] = settings.candidate_limit
+
+    result = await db.execute(text(sql), params)
+    rows = result.all()
+
+    if not rows and (departments or role_keys):
+        # Fallback: no matches with dept/role filter — try without
+        sql_fallback = f"""
+            SELECT id, label, summary, department, role_key, avg_utility,
+                   invocations, created_at_query_count, ({kw_expr}) AS keyword_hits
+            FROM neurons
+            WHERE is_active = 1
+            ORDER BY keyword_hits DESC, avg_utility DESC
+            LIMIT :lim
+        """
+        result = await db.execute(text(sql_fallback), params)
+        rows = result.all()
+
+    return [
+        NeuronCandidate(
+            id=r[0], label=r[1], summary=r[2], department=r[3], role_key=r[4],
+            avg_utility=r[5] or 0.5, invocations=r[6] or 0,
+            created_at_query_count=r[7] or 0, keyword_hits=r[8] or 0,
+        )
+        for r in rows
+    ]
 
 
 async def get_system_state(db: AsyncSession) -> SystemState:
@@ -75,7 +122,7 @@ async def get_system_state(db: AsyncSession) -> SystemState:
 
 async def score_candidates(
     db: AsyncSession,
-    candidates: list[Neuron],
+    candidates: list[Neuron] | list[NeuronCandidate],
     total_queries: int,
     keywords: list[str],
     classified_departments: list[str] | None = None,
@@ -83,6 +130,7 @@ async def score_candidates(
 ) -> list[NeuronScoreBreakdown]:
     """Score all candidate neurons using 6 biomimetic signals.
 
+    Accepts either full Neuron ORM objects or lightweight NeuronCandidate.
     Batches all DB lookups into 3 aggregate queries instead of 4 per candidate.
     """
     if not candidates:
@@ -149,7 +197,8 @@ async def score_candidates(
         last_offset = last_offset_map.get(neuron.id)
         queries_since_last = total_queries - last_offset if last_offset is not None else total_queries
 
-        neuron_text = f"{neuron.label} {neuron.summary or ''} {neuron.content or ''}"
+        content = getattr(neuron, 'content', None) or ''
+        neuron_text = f"{neuron.label} {neuron.summary or ''} {content}"
         dept_match = bool(classified_departments and neuron.department in classified_departments)
         role_match = bool(classified_role_keys and neuron.role_key in classified_role_keys)
 
@@ -203,24 +252,34 @@ async def spread_activation(
     frontier: dict[int, float] = {s.neuron_id: s.combined for s in top_k}
     visited: set[int] = set(top_k_ids)
 
-    # Pre-fetch all edges above weight threshold (one query for all hops)
-    edge_result = await db.execute(
-        select(NeuronEdge).where(
-            NeuronEdge.weight >= settings.spread_min_edge_weight,
-        )
-    )
-    all_edges = list(edge_result.scalars().all())
-
-    if not all_edges:
-        return scored
-
-    # Build adjacency lookup: node_id → [(neighbor_id, weight), ...]
-    adjacency: dict[int, list[tuple[int, float]]] = {}
-    for edge in all_edges:
-        adjacency.setdefault(edge.source_id, []).append((edge.target_id, edge.weight))
-        adjacency.setdefault(edge.target_id, []).append((edge.source_id, edge.weight))
-
     for hop in range(settings.spread_max_hops):
+        frontier_ids = list(frontier.keys())
+        if not frontier_ids:
+            break
+
+        # Fetch only edges touching the current frontier (not the entire table)
+        edge_result = await db.execute(
+            select(NeuronEdge).where(
+                and_(
+                    NeuronEdge.weight >= settings.spread_min_edge_weight,
+                    or_(
+                        NeuronEdge.source_id.in_(frontier_ids),
+                        NeuronEdge.target_id.in_(frontier_ids),
+                    ),
+                )
+            )
+        )
+        hop_edges = list(edge_result.scalars().all())
+
+        if not hop_edges:
+            break
+
+        # Build adjacency for this hop only
+        adjacency: dict[int, list[tuple[int, float]]] = {}
+        for edge in hop_edges:
+            adjacency.setdefault(edge.source_id, []).append((edge.target_id, edge.weight))
+            adjacency.setdefault(edge.target_id, []).append((edge.source_id, edge.weight))
+
         next_frontier: dict[int, float] = {}
 
         for source_id, source_activation in frontier.items():
@@ -468,13 +527,20 @@ async def get_neuron_tree(
     db: AsyncSession,
     department: str | None = None,
     role_key: str | None = None,
+    max_depth: int | None = None,
 ) -> list[dict]:
-    """Build nested tree structure for neurons."""
+    """Build nested tree structure for neurons.
+
+    If max_depth is set, only builds tree to that depth (0=roots only, 2=roots+children+grandchildren).
+    At 200K neurons, callers should use max_depth=2 or the /neurons/children endpoint.
+    """
     conditions = []
     if department:
         conditions.append(Neuron.department == department)
     if role_key:
         conditions.append(Neuron.role_key == role_key)
+    if max_depth is not None:
+        conditions.append(Neuron.layer <= max_depth)
 
     stmt = select(Neuron).where(*conditions) if conditions else select(Neuron)
     stmt = stmt.order_by(Neuron.layer, Neuron.id)

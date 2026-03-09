@@ -94,6 +94,32 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Neurons migration skipped: {e}")
 
+    # Migrate: add edge indexes and last_updated_query column for scaling
+    async with engine.begin() as conn:
+        try:
+            rows = await conn.execute(text("PRAGMA table_info(neuron_edges)"))
+            columns = {row[1] for row in rows}
+            if "last_updated_query" not in columns:
+                await conn.execute(text(
+                    "ALTER TABLE neuron_edges ADD COLUMN last_updated_query INTEGER DEFAULT 0"
+                ))
+                print("Migrated: added neuron_edges.last_updated_query")
+
+            # Add reverse index for target_id lookups in spread activation
+            idx = await conn.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_neuron_edges_target_weight'"
+            ))
+            if not idx.fetchone():
+                await conn.execute(text(
+                    "CREATE INDEX ix_neuron_edges_target_weight ON neuron_edges(target_id, weight)"
+                ))
+                await conn.execute(text(
+                    "CREATE INDEX ix_neuron_edges_source_weight ON neuron_edges(source_id, weight)"
+                ))
+                print("Migrated: added neuron_edges target/source weight indexes")
+        except Exception as e:
+            print(f"Edge scaling migration skipped: {e}")
+
     # Auto-seed on first run
     async with async_session() as db:
         count = (await db.execute(select(func.count(Neuron.id)))).scalar() or 0

@@ -7,7 +7,8 @@ export interface TreeNode {
   role_key: string | null;
   invocations: number;
   avg_utility: number;
-  children: TreeNode[];
+  children?: TreeNode[];
+  child_count?: number;
 }
 
 export interface NeuronDetail {

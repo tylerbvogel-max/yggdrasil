@@ -71,6 +71,7 @@ class NeuronEdge(Base):
     target_id: Mapped[int] = mapped_column(Integer, ForeignKey("neurons.id"), primary_key=True)
     co_fire_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     weight: Mapped[float] = mapped_column(Float, default=0.0, server_default="0.0")
+    last_updated_query: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class Query(Base):

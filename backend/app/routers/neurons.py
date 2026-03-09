@@ -25,9 +25,62 @@ router = APIRouter(prefix="/neurons", tags=["neurons"])
 async def neurons_tree(
     department: str | None = None,
     role_key: str | None = None,
+    max_depth: int | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_neuron_tree(db, department, role_key)
+    return await get_neuron_tree(db, department, role_key, max_depth=max_depth)
+
+
+@router.get("/children")
+async def neuron_children(
+    parent_id: int | None = None,
+    department: str | None = None,
+    offset: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch direct children of a neuron (or roots if parent_id is None).
+
+    Returns flat list with child_count for lazy-load tree rendering.
+    """
+    conditions = [Neuron.is_active == True]
+    if parent_id is not None:
+        conditions.append(Neuron.parent_id == parent_id)
+    else:
+        conditions.append(Neuron.parent_id.is_(None))
+    if department:
+        conditions.append(Neuron.department == department)
+
+    # Subquery for child count using aliased child table
+    from sqlalchemy.orm import aliased
+    Child = aliased(Neuron)
+    child_count_sub = (
+        select(sa_func.count(Child.id))
+        .where(Child.parent_id == Neuron.id)
+        .correlate(Neuron)
+        .scalar_subquery()
+    )
+
+    stmt = (
+        select(
+            Neuron.id, Neuron.layer, Neuron.node_type, Neuron.label,
+            Neuron.department, Neuron.role_key, Neuron.invocations,
+            Neuron.avg_utility, Neuron.parent_id, child_count_sub.label("child_count"),
+        )
+        .where(and_(*conditions))
+        .order_by(Neuron.layer, Neuron.id)
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return [
+        {
+            "id": r[0], "layer": r[1], "node_type": r[2], "label": r[3],
+            "department": r[4], "role_key": r[5], "invocations": r[6],
+            "avg_utility": r[7], "parent_id": r[8], "child_count": r[9] or 0,
+        }
+        for r in result.all()
+    ]
 
 
 @router.get("/stats")

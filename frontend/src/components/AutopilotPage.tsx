@@ -581,7 +581,7 @@ function FocusTreeNode({ node, onSelect, depth }: {
         className={`focus-tree-row layer-${node.layer}`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
-        {node.children.length > 0 ? (
+        {(node.children ?? []).length > 0 ? (
           <span
             className={`tree-toggle ${expanded ? 'open' : ''}`}
             onClick={e => { e.stopPropagation(); setExpanded(!expanded); }}
@@ -603,9 +603,9 @@ function FocusTreeNode({ node, onSelect, depth }: {
           Select
         </button>
       </div>
-      {expanded && node.children.length > 0 && (
+      {expanded && (node.children ?? []).length > 0 && (
         <div className="focus-tree-children">
-          {node.children.map(child => (
+          {(node.children ?? []).map(child => (
             <FocusTreeNode key={child.id} node={child} onSelect={onSelect} depth={depth + 1} />
           ))}
         </div>

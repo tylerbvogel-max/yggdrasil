@@ -27,9 +27,30 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function fetchTree(department?: string): Promise<TreeNode[]> {
-  const params = department ? `?department=${encodeURIComponent(department)}` : '';
+export function fetchTree(department?: string, maxDepth?: number): Promise<TreeNode[]> {
+  const parts: string[] = [];
+  if (department) parts.push(`department=${encodeURIComponent(department)}`);
+  if (maxDepth != null) parts.push(`max_depth=${maxDepth}`);
+  const params = parts.length ? `?${parts.join('&')}` : '';
   return json<TreeNode[]>(`/neurons/tree${params}`);
+}
+
+export interface ChildNode {
+  id: number;
+  layer: number;
+  node_type: string;
+  label: string;
+  department: string | null;
+  role_key: string | null;
+  invocations: number;
+  avg_utility: number;
+  parent_id: number | null;
+  child_count: number;
+}
+
+export function fetchChildren(parentId: number | null, limit = 200): Promise<ChildNode[]> {
+  const params = parentId != null ? `?parent_id=${parentId}&limit=${limit}` : `?limit=${limit}`;
+  return json<ChildNode[]>(`/neurons/children${params}`);
 }
 
 export function fetchNeuron(id: number): Promise<NeuronDetail> {

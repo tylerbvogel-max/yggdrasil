@@ -168,9 +168,9 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
         const dept = s?.isCenter ? t?.department : s?.department;
         return DEPT_COLORS[dept ?? ''] ?? '#8892a8';
       })
-      .attr('stroke-width', d => weightScale(d.weight) + 2)
-      .attr('stroke-opacity', d => opacityScale(d.weight) * 0.2)
-      .attr('filter', 'url(#wire-glow)');
+      .attr('stroke-width', d => linkTouchesCenter(d) ? weightScale(d.weight) + 2 : weightScale(d.weight) + 0.5)
+      .attr('stroke-opacity', d => linkTouchesCenter(d) ? opacityScale(d.weight) * 0.2 : opacityScale(d.weight) * 0.06)
+      .attr('filter', d => linkTouchesCenter(d) ? 'url(#wire-glow)' : null);
 
     // Core wire layer
     edgeG.selectAll('path.wire-core')
@@ -185,9 +185,9 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
         const dept = s?.isCenter ? t?.department : s?.department;
         return DEPT_COLORS[dept ?? ''] ?? '#8892a8';
       })
-      .attr('stroke-width', d => weightScale(d.weight))
-      .attr('stroke-opacity', d => linkTouchesCenter(d) ? opacityScale(d.weight) + 0.15 : opacityScale(d.weight))
-      .attr('stroke-dasharray', d => linkTouchesCenter(d) ? 'none' : '3,4');
+      .attr('stroke-width', d => linkTouchesCenter(d) ? weightScale(d.weight) : Math.max(0.3, weightScale(d.weight) * 0.4))
+      .attr('stroke-opacity', d => linkTouchesCenter(d) ? opacityScale(d.weight) + 0.15 : opacityScale(d.weight) * 0.35)
+      .attr('stroke-dasharray', d => linkTouchesCenter(d) ? 'none' : '2,5');
 
     // --- Nodes ---
     const nodeG = svg.append('g')

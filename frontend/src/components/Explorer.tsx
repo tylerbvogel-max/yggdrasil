@@ -14,6 +14,20 @@ function collectDepartments(nodes: TreeNode[]): string[] {
   return Array.from(depts).sort();
 }
 
+/** Recursively find a node and set its children. Returns a new tree (immutable update). */
+function setChildrenForNode(nodes: TreeNode[], parentId: number, children: TreeNode[]): TreeNode[] {
+  return nodes.map(n => {
+    if (n.id === parentId) {
+      return { ...n, children };
+    }
+    if (n.children) {
+      const updated = setChildrenForNode(n.children, parentId, children);
+      if (updated !== n.children) return { ...n, children: updated };
+    }
+    return n;
+  });
+}
+
 export default function Explorer({ navigateToNeuronId, onNavigateHandled }: {
   navigateToNeuronId?: number | null;
   onNavigateHandled?: () => void;
@@ -56,8 +70,9 @@ export default function Explorer({ navigateToNeuronId, onNavigateHandled }: {
     };
   }, []);
 
+  // Initial load: first 2 layers only
   useEffect(() => {
-    fetchTree()
+    fetchTree(undefined, 2)
       .then(data => { setTree(data); setDepartments(collectDepartments(data)); })
       .catch(e => setError(e.message));
   }, []);
@@ -66,18 +81,40 @@ export default function Explorer({ navigateToNeuronId, onNavigateHandled }: {
   useEffect(() => {
     if (navigateToNeuronId != null) {
       setSelectedId(navigateToNeuronId);
-      setSearch(`#${navigateToNeuronId}`);
-      setDeptFilter('');
+      // For deep navigation, load full tree so search can find it
+      const dept = deptFilter || undefined;
+      fetchTree(dept)
+        .then(data => {
+          setTree(data);
+          setSearch(`#${navigateToNeuronId}`);
+        })
+        .catch(() => {});
       onNavigateHandled?.();
     }
   }, [navigateToNeuronId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Department filter change: reload with depth limit
   useEffect(() => {
     const dept = deptFilter || undefined;
-    fetchTree(dept)
+    fetchTree(dept, 2)
       .then(setTree)
       .catch(e => setError(e.message));
   }, [deptFilter]);
+
+  // When search is active and non-trivial, load full tree for that department
+  // so recursive matchesSearch can find deep nodes
+  useEffect(() => {
+    if (search.length >= 2) {
+      const dept = deptFilter || undefined;
+      fetchTree(dept)
+        .then(setTree)
+        .catch(() => {});
+    }
+  }, [search, deptFilter]);
+
+  const handleChildrenLoaded = useCallback((parentId: number, children: TreeNode[]) => {
+    setTree(prev => setChildrenForNode(prev, parentId, children));
+  }, []);
 
   const handleCheckpoint = useCallback(async () => {
     setCheckpointing(true);
@@ -123,6 +160,7 @@ export default function Explorer({ navigateToNeuronId, onNavigateHandled }: {
           search={search}
           selectedId={selectedId}
           onSelect={setSelectedId}
+          onChildrenLoaded={handleChildrenLoaded}
         />
       </div>
       <div className="explorer-resize-handle" onMouseDown={onMouseDown} />

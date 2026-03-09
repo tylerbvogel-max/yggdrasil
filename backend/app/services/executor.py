@@ -5,6 +5,8 @@ import json
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+
 from app.config import settings
 from app.models import Neuron, Query, NeuronEdge
 from app.services.classifier import classify_query
@@ -97,10 +99,12 @@ async def execute_query(
         scored = await spread_activation(db, scored, max_top_k)
         all_scored = await apply_diversity_floor(db, scored, max_top_k)
 
-        for s in all_scored:
-            neuron = await db.get(Neuron, s.neuron_id)
-            if neuron:
-                neuron_map[s.neuron_id] = neuron
+        # Only load full Neuron objects for top-K (needed for prompt assembly + metadata)
+        top_k_ids = [s.neuron_id for s in all_scored[:max_top_k]]
+        if top_k_ids:
+            result = await db.execute(select(Neuron).where(Neuron.id.in_(top_k_ids)))
+            for neuron in result.scalars().all():
+                neuron_map[neuron.id] = neuron
 
     # Stage 2: Assemble prompts per unique (budget, top_k) pair, then execute all slots
     # Cache assembled prompts to avoid redundant assembly
@@ -223,9 +227,9 @@ async def execute_query(
         for score in all_scored:
             await record_firing(db, score.neuron_id, query.id, state.global_token_counter, global_query_offset=state.total_queries)
             await propagate_activation(db, score.neuron_id, score.combined, query.id)
-        for i, s1 in enumerate(all_scored):
-            for s2 in all_scored[i + 1:]:
-                await _update_edge(db, s1.neuron_id, s2.neuron_id)
+        # Only co-fire the actual top-K neurons above the score threshold (not all scored)
+        cofire_neurons = [s for s in all_scored[:max_top_k] if s.combined >= settings.min_cofire_score]
+        await _batch_update_edges(db, [s.neuron_id for s in cofire_neurons], state.total_queries)
 
     await db.commit()
 
@@ -256,19 +260,30 @@ async def execute_query(
     }
 
 
-async def _update_edge(db: AsyncSession, id_a: int, id_b: int):
-    """Update co-firing edge between two neurons."""
-    src, tgt = min(id_a, id_b), max(id_a, id_b)
-    from sqlalchemy import select
+async def _batch_update_edges(db: AsyncSession, neuron_ids: list[int], query_offset: int):
+    """Batch update co-firing edges for a set of neurons."""
+    if len(neuron_ids) < 2:
+        return
 
-    result = await db.execute(
-        select(NeuronEdge).where(
-            NeuronEdge.source_id == src, NeuronEdge.target_id == tgt
-        )
-    )
-    edge = result.scalar_one_or_none()
-    if edge:
-        edge.co_fire_count += 1
-        edge.weight = min(1.0, edge.co_fire_count / 20.0)
-    else:
-        db.add(NeuronEdge(source_id=src, target_id=tgt, co_fire_count=1, weight=0.05))
+    from sqlalchemy import text
+
+    pairs = [(min(a, b), max(a, b))
+             for i, a in enumerate(neuron_ids)
+             for b in neuron_ids[i + 1:]]
+
+    # Batch insert new edges (ignore if already exist)
+    for src, tgt in pairs:
+        await db.execute(text(
+            "INSERT OR IGNORE INTO neuron_edges (source_id, target_id, co_fire_count, weight, last_updated_query) "
+            "VALUES (:src, :tgt, 0, 0.0, 0)"
+        ), {"src": src, "tgt": tgt})
+
+    # Batch update all pairs in one statement per pair
+    for src, tgt in pairs:
+        await db.execute(text(
+            "UPDATE neuron_edges "
+            "SET co_fire_count = co_fire_count + 1, "
+            "    weight = MIN(1.0, (co_fire_count + 1) / 20.0), "
+            "    last_updated_query = :qoff "
+            "WHERE source_id = :src AND target_id = :tgt"
+        ), {"src": src, "tgt": tgt, "qoff": query_offset})

@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     spread_decay: float = 0.5
     spread_min_activation: float = 0.15
     spread_max_hops: int = 3
+    # Candidate selection limits
+    candidate_limit: int = 500
+    # Co-firing edge management
+    min_cofire_score: float = 0.3
+    edge_prune_min_cofires: int = 2
+    edge_prune_stale_queries: int = 100
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

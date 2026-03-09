@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -290,4 +290,35 @@ async def scan_references(db: AsyncSession = Depends(get_db)):
         "top_unresolved_families": [
             {"family": f, "count": c} for f, c in top_families
         ],
+    }
+
+
+@router.post("/prune-edges")
+async def prune_edges(db: AsyncSession = Depends(get_db)):
+    """Prune stale low-weight co-firing edges to control graph density."""
+    from app.config import settings
+
+    # Count before
+    before = (await db.execute(select(func.count()).select_from(NeuronEdge))).scalar() or 0
+
+    # Get current query count for staleness check
+    state = (await db.execute(select(SystemState).where(SystemState.id == 1))).scalar_one_or_none()
+    total_queries = state.total_queries if state else 0
+    stale_threshold = total_queries - settings.edge_prune_stale_queries
+
+    # Delete edges that have fired only once and are stale
+    await db.execute(text(
+        "DELETE FROM neuron_edges "
+        "WHERE co_fire_count < :min_cofires AND last_updated_query < :stale"
+    ), {"min_cofires": settings.edge_prune_min_cofires, "stale": max(0, stale_threshold)})
+
+    await db.commit()
+
+    after = (await db.execute(select(func.count()).select_from(NeuronEdge))).scalar() or 0
+
+    return {
+        "status": "pruned",
+        "edges_before": before,
+        "edges_after": after,
+        "edges_removed": before - after,
     }
