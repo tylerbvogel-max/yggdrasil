@@ -1,7 +1,8 @@
-"""Admin endpoints: seed, reset, cost report, checkpoint."""
+"""Admin endpoints: seed, reset, cost report, checkpoint, scoring health."""
 
 import asyncio
 import json
+import math
 import os
 from datetime import datetime
 
@@ -321,4 +322,173 @@ async def prune_edges(db: AsyncSession = Depends(get_db)):
         "edges_before": before,
         "edges_after": after,
         "edges_removed": before - after,
+    }
+
+
+@router.get("/scoring-health")
+async def scoring_health(
+    baseline_window: int = 50,
+    recent_window: int = 20,
+    drift_threshold: float = 2.0,
+    db: AsyncSession = Depends(get_db),
+):
+    """Compute per-signal scoring distribution stats and detect drift.
+
+    Compares the most recent `recent_window` queries against a trailing
+    `baseline_window` (the queries just before the recent window).
+    Drift is flagged when the recent mean deviates by more than
+    `drift_threshold` standard deviations from the baseline mean.
+    """
+    SIGNALS = ["burst", "impact", "precision", "novelty", "recency", "relevance"]
+
+    # Fetch queries that have neuron_scores_json, ordered newest-first
+    needed = baseline_window + recent_window
+    result = await db.execute(
+        select(Query.id, Query.neuron_scores_json, Query.created_at)
+        .where(Query.neuron_scores_json.isnot(None))
+        .order_by(Query.id.desc())
+        .limit(needed)
+    )
+    rows = result.all()
+
+    if len(rows) < 5:
+        return {
+            "status": "insufficient_data",
+            "queries_available": len(rows),
+            "minimum_required": 5,
+            "signals": {},
+            "drift_alerts": [],
+            "per_query_timeline": [],
+        }
+
+    # Parse scores: each query -> list of neuron score dicts
+    query_scores: list[dict] = []  # [{query_id, created_at, signals: {signal: [values]}}]
+    for qid, scores_json, created_at in rows:
+        try:
+            scores = json.loads(scores_json) if scores_json else []
+        except json.JSONDecodeError:
+            continue
+        if not scores:
+            continue
+        signal_values: dict[str, list[float]] = {s: [] for s in SIGNALS}
+        for neuron_score in scores:
+            for s in SIGNALS:
+                val = neuron_score.get(s)
+                if val is not None:
+                    signal_values[s].append(float(val))
+        query_scores.append({
+            "query_id": qid,
+            "created_at": created_at.isoformat() if created_at else None,
+            "signals": signal_values,
+        })
+
+    # Reverse to chronological order (oldest first)
+    query_scores.reverse()
+    total = len(query_scores)
+
+    # Split into baseline and recent windows
+    if total <= recent_window:
+        # Not enough for a proper split — use all as baseline, no drift detection
+        baseline_qs = query_scores
+        recent_qs = query_scores
+        can_detect_drift = False
+    else:
+        recent_qs = query_scores[-recent_window:]
+        baseline_start = max(0, total - recent_window - baseline_window)
+        baseline_qs = query_scores[baseline_start:total - recent_window]
+        can_detect_drift = len(baseline_qs) >= 5
+
+    def _stats(values: list[float]) -> dict:
+        if not values:
+            return {"mean": 0, "stddev": 0, "min": 0, "max": 0, "count": 0}
+        n = len(values)
+        mean = sum(values) / n
+        variance = sum((v - mean) ** 2 for v in values) / max(1, n - 1)
+        return {
+            "mean": round(mean, 4),
+            "stddev": round(math.sqrt(variance), 4),
+            "min": round(min(values), 4),
+            "max": round(max(values), 4),
+            "count": n,
+        }
+
+    def _aggregate_signal(queries: list[dict], signal: str) -> list[float]:
+        """Collect all neuron-level values for a signal across queries."""
+        vals: list[float] = []
+        for q in queries:
+            vals.extend(q["signals"].get(signal, []))
+        return vals
+
+    def _query_means(queries: list[dict], signal: str) -> list[float]:
+        """Per-query mean for a signal."""
+        means: list[float] = []
+        for q in queries:
+            vals = q["signals"].get(signal, [])
+            if vals:
+                means.append(sum(vals) / len(vals))
+        return means
+
+    # Build per-signal stats
+    signals_report: dict = {}
+    drift_alerts: list[dict] = []
+
+    for sig in SIGNALS:
+        baseline_vals = _aggregate_signal(baseline_qs, sig)
+        recent_vals = _aggregate_signal(recent_qs, sig)
+        baseline_means = _query_means(baseline_qs, sig)
+        recent_means = _query_means(recent_qs, sig)
+
+        b_stats = _stats(baseline_vals)
+        r_stats = _stats(recent_vals)
+        bm_stats = _stats(baseline_means)
+        rm_stats = _stats(recent_means)
+
+        # Drift detection: compare per-query means
+        drifted = False
+        z_score = 0.0
+        if can_detect_drift and bm_stats["stddev"] > 0.001 and len(recent_means) >= 3:
+            z_score = (rm_stats["mean"] - bm_stats["mean"]) / bm_stats["stddev"]
+            drifted = abs(z_score) > drift_threshold
+
+        signals_report[sig] = {
+            "baseline": b_stats,
+            "recent": r_stats,
+            "baseline_query_means": bm_stats,
+            "recent_query_means": rm_stats,
+            "z_score": round(z_score, 3),
+            "drifted": drifted,
+        }
+
+        if drifted:
+            direction = "increased" if z_score > 0 else "decreased"
+            drift_alerts.append({
+                "signal": sig,
+                "direction": direction,
+                "z_score": round(z_score, 3),
+                "baseline_mean": bm_stats["mean"],
+                "recent_mean": rm_stats["mean"],
+                "message": f"{sig} has {direction} significantly (z={z_score:.1f}): "
+                           f"baseline μ={bm_stats['mean']:.3f} → recent μ={rm_stats['mean']:.3f}",
+            })
+
+    # Per-query timeline for charting (last 50 queries)
+    timeline_qs = query_scores[-50:]
+    per_query_timeline: list[dict] = []
+    for q in timeline_qs:
+        entry: dict = {"query_id": q["query_id"], "created_at": q["created_at"]}
+        for sig in SIGNALS:
+            vals = q["signals"].get(sig, [])
+            entry[sig] = round(sum(vals) / len(vals), 4) if vals else 0
+        per_query_timeline.append(entry)
+
+    return {
+        "status": "ok",
+        "queries_analyzed": total,
+        "baseline_window": len(baseline_qs),
+        "recent_window": len(recent_qs),
+        "can_detect_drift": can_detect_drift,
+        "drift_threshold": drift_threshold,
+        "signals": signals_report,
+        "drift_alerts": drift_alerts,
+        "per_query_timeline": per_query_timeline,
     }

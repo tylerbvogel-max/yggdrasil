@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchStats, fetchCostReport, fetchSpreadLog } from '../api'
-import type { SpreadLogResponse } from '../api'
+import { fetchStats, fetchCostReport, fetchSpreadLog, fetchScoringHealth } from '../api'
+import type { SpreadLogResponse, ScoringHealthResponse } from '../api'
 import type { NeuronStats, CostReport } from '../types'
 import { Chart, BarController, BarElement, BubbleController, PointElement, CategoryScale, LinearScale, LogarithmicScale, Tooltip, Legend } from 'chart.js'
 import DeptChordDiagram from './DeptChordDiagram'
@@ -26,6 +26,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState<NeuronStats | null>(null);
   const [cost, setCost] = useState<CostReport | null>(null);
   const [spreadLog, setSpreadLog] = useState<SpreadLogResponse | null>(null);
+  const [health, setHealth] = useState<ScoringHealthResponse | null>(null);
   const [error, setError] = useState('');
   const [bubbleLogX, setBubbleLogX] = useState(true);
   const [bubbleLogY, setBubbleLogY] = useState(true);
@@ -38,8 +39,8 @@ export default function Dashboard() {
   const bubbleChart = useRef<Chart | null>(null);
 
   useEffect(() => {
-    Promise.all([fetchStats(), fetchCostReport(), fetchSpreadLog()])
-      .then(([s, c, sl]) => { setStats(s); setCost(c); setSpreadLog(sl); })
+    Promise.all([fetchStats(), fetchCostReport(), fetchSpreadLog(), fetchScoringHealth()])
+      .then(([s, c, sl, h]) => { setStats(s); setCost(c); setSpreadLog(sl); setHealth(h); })
       .catch(e => setError(e.message));
   }, []);
 
@@ -197,6 +198,85 @@ export default function Dashboard() {
           <div className="card-label">Firings</div>
         </div>
       </div>
+
+      {health && health.status === 'ok' && (
+        <div className="chart-card" style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ margin: 0 }}>Scoring Health Monitor</h3>
+            <span style={{ fontSize: '0.75rem', color: '#8892a8' }}>
+              {health.queries_analyzed} queries analyzed (baseline: {health.baseline_window}, recent: {health.recent_window})
+            </span>
+          </div>
+
+          {health.drift_alerts.length > 0 && (
+            <div style={{
+              background: '#ef444420', border: '1px solid #ef4444', borderRadius: 8,
+              padding: '10px 14px', marginBottom: 16,
+            }}>
+              <strong style={{ color: '#ef4444', fontSize: '0.85rem' }}>Drift Detected</strong>
+              {health.drift_alerts.map(a => (
+                <div key={a.signal} style={{ color: '#fca5a5', fontSize: '0.8rem', marginTop: 4 }}>
+                  {a.message}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {health.drift_alerts.length === 0 && health.can_detect_drift && (
+            <div style={{
+              background: '#22c55e15', border: '1px solid #22c55e40', borderRadius: 8,
+              padding: '8px 14px', marginBottom: 16, color: '#22c55e', fontSize: '0.8rem',
+            }}>
+              All signals within normal range — no drift detected.
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+            {Object.entries(health.signals).map(([sig, data]) => {
+              const barWidth = Math.max(5, Math.min(100, data.recent_query_means.mean * 100));
+              const baselineWidth = Math.max(5, Math.min(100, data.baseline_query_means.mean * 100));
+              return (
+                <div key={sig} style={{
+                  background: 'var(--bg-input)', borderRadius: 8, padding: '10px 12px',
+                  border: data.drifted ? '1px solid #ef4444' : '1px solid transparent',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text)', textTransform: 'capitalize' }}>
+                      {sig}
+                    </span>
+                    {data.drifted && <span style={{ fontSize: '0.65rem', color: '#ef4444', fontWeight: 600 }}>DRIFT</span>}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: '#8892a8', marginBottom: 4 }}>
+                    Baseline: <strong style={{ color: '#60a5fa' }}>{data.baseline_query_means.mean.toFixed(3)}</strong>
+                    <span style={{ margin: '0 4px' }}>/</span>
+                    Recent: <strong style={{ color: data.drifted ? '#ef4444' : '#22c55e' }}>{data.recent_query_means.mean.toFixed(3)}</strong>
+                  </div>
+                  <div style={{ position: 'relative', height: 12, background: '#0f172a', borderRadius: 4, overflow: 'hidden' }}>
+                    <div style={{
+                      position: 'absolute', height: '100%', width: `${baselineWidth}%`,
+                      background: '#60a5fa30', borderRadius: 4,
+                    }} />
+                    <div style={{
+                      position: 'absolute', height: '100%', width: `${barWidth}%`,
+                      background: data.drifted ? '#ef444480' : '#22c55e60', borderRadius: 4,
+                    }} />
+                  </div>
+                  <div style={{ fontSize: '0.65rem', color: '#64748b', marginTop: 3 }}>
+                    z={data.z_score.toFixed(1)} | σ={data.baseline_query_means.stddev.toFixed(3)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {health && health.status === 'insufficient_data' && (
+        <div className="chart-card" style={{ marginBottom: 24, color: '#8892a8', fontSize: '0.85rem' }}>
+          <h3>Scoring Health Monitor</h3>
+          <p>Insufficient data for drift detection ({health.queries_available} queries, need 5+).</p>
+        </div>
+      )}
 
       <div className="charts-grid">
         <div className="chart-card">

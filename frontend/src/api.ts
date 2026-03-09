@@ -237,3 +237,46 @@ export function fetchAutopilotStatus(): Promise<{ running: boolean; step: string
 export function fetchPerformance(): Promise<any> {
   return json<unknown>('/admin/performance');
 }
+
+export interface SignalStats {
+  mean: number;
+  stddev: number;
+  min: number;
+  max: number;
+  count: number;
+}
+
+export interface SignalHealth {
+  baseline: SignalStats;
+  recent: SignalStats;
+  baseline_query_means: SignalStats;
+  recent_query_means: SignalStats;
+  z_score: number;
+  drifted: boolean;
+}
+
+export interface DriftAlert {
+  signal: string;
+  direction: string;
+  z_score: number;
+  baseline_mean: number;
+  recent_mean: number;
+  message: string;
+}
+
+export interface ScoringHealthResponse {
+  status: string;
+  queries_analyzed: number;
+  queries_available?: number;
+  baseline_window: number;
+  recent_window: number;
+  can_detect_drift: boolean;
+  drift_threshold: number;
+  signals: Record<string, SignalHealth>;
+  drift_alerts: DriftAlert[];
+  per_query_timeline: Record<string, number | string | null>[];
+}
+
+export function fetchScoringHealth(): Promise<ScoringHealthResponse> {
+  return json<ScoringHealthResponse>('/admin/scoring-health');
+}
