@@ -53,6 +53,49 @@ export default function AboutPage() {
             </p>
           </div>
         </div>
+
+        <h4 style={{ marginTop: 24, marginBottom: 8 }}>Evolution from Static Knowledge Files</h4>
+        <p>
+          Before Yggdrasil, the standard approach to giving an LLM domain knowledge was the <code>skills.md</code> pattern:
+          large static markdown files loaded into the system prompt as-is. A role might have a 3,000-token file covering
+          its responsibilities, procedures, and reference material &mdash; and the entire file would be injected into every
+          query, regardless of whether 5% or 100% of that content was relevant.
+        </p>
+        <p>
+          This works at small scale, but it has three structural problems that compound as knowledge grows:
+        </p>
+        <ul className="about-features">
+          <li>
+            <strong>No selectivity</strong> &mdash; Every query pays the token cost for all knowledge in the file,
+            even when only a few paragraphs are relevant. At 10 roles &times; 3,000 tokens each, you&rsquo;re burning
+            30K tokens of context on every query whether or not it needs aerospace manufacturing procedures alongside
+            contract compliance guidance.
+          </li>
+          <li>
+            <strong>No learning</strong> &mdash; Static files don&rsquo;t know which parts of themselves are useful.
+            A paragraph that has never once improved an answer sits at the same priority as one that&rsquo;s critical
+            to 80% of queries. There&rsquo;s no feedback loop between query outcomes and knowledge selection.
+          </li>
+          <li>
+            <strong>No discovery</strong> &mdash; Static files only contain what someone explicitly wrote into them.
+            They can&rsquo;t discover that two pieces of knowledge from different departments are frequently needed
+            together, or that a gap exists where queries consistently get poor answers.
+          </li>
+        </ul>
+        <p>
+          Yggdrasil replaces this with <strong>active knowledge management</strong>. Instead of monolithic files,
+          knowledge is decomposed into individual neurons (typically 100&ndash;300 tokens each) organized in a
+          6-layer hierarchy. Instead of loading everything, the scoring engine selects only the neurons most
+          relevant to each query. Instead of static priority, neurons earn their relevance through usage &mdash;
+          the 5-signal scoring system tracks how often each neuron fires, how useful it has been, and how
+          recently it was needed. And instead of a closed system, the co-firing graph and emergent queue
+          discover relationships and gaps that no one designed.
+        </p>
+        <p>
+          The result is that a 2,000-neuron graph with active selection outperforms a 30,000-token static file
+          at a fraction of the per-query cost &mdash; because the system only pays for the knowledge that matters
+          for each specific question, and it gets better at that selection with every query it processes.
+        </p>
       </section>
 
       <section className="about-section">
