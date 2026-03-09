@@ -12,8 +12,8 @@ export default function SecurityPage() {
       detail: 'Contingency plan for model deprecation, vendor lock-in mitigation (model-agnostic architecture), fallback strategies documented.' },
     { id: 'GOV-2.1', title: 'Roles & Responsibilities', status: 'addressed' as const,
       detail: 'System Owner, Neuron Content Author, Query Reviewer roles defined with separation of concerns matrix.' },
-    { id: 'GOV-2.2', title: 'Personnel Training', status: 'missing' as const,
-      detail: 'No formal training program. Single-developer system currently. Required before multi-user deployment.' },
+    { id: 'GOV-2.2', title: 'Personnel Training', status: 'partial' as const,
+      detail: 'Getting Started page provides setup guide (prerequisites, installation, configuration) and training walkthrough (query lab, explorer, health monitoring, autopilot, evaluation). Operational checklist included. Missing: role-based training paths, assessment/certification, video walkthroughs.' },
     { id: 'GOV-4.1', title: 'Critical Thinking & Safety Culture', status: 'partial' as const,
       detail: 'Refine process requires human review before commit. No formal red-teaming or adversarial testing process.' },
     { id: 'GOV-4.3', title: 'Incident Response', status: 'addressed' as const,
@@ -92,7 +92,7 @@ export default function SecurityPage() {
   const statusLabel = (s: 'addressed' | 'partial' | 'missing') =>
     s === 'addressed' ? 'Addressed' : s === 'partial' ? 'Partial' : 'Gap';
 
-  const renderSection = (title: string, description: string, items: typeof governItems) => (
+  const renderSection = (title: string, description: string, items: { id: string; title: string; status: 'addressed' | 'partial' | 'missing'; detail: string }[]) => (
     <section className="security-section">
       <h3>{title}</h3>
       <p className="security-section-desc">{description}</p>

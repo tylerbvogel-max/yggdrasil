@@ -12,12 +12,13 @@ import AboutPage from './components/AboutPage'
 import MonetizationPage from './components/MonetizationPage'
 import SampleQueries from './components/SampleQueries'
 import DeptChordDiagram from './components/DeptChordDiagram'
+import GettingStartedPage from './components/GettingStartedPage'
 import SecurityPage from './components/SecurityPage'
 import Aiuc1Page from './components/Aiuc1Page'
 import PerformancePage from './components/PerformancePage'
 import PerformanceExplanationPage from './components/PerformanceExplanationPage'
 
-type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'nextsteps' | 'about' | 'monetization' | 'security' | 'aiuc1' | 'performance' | 'perf-explain';
+type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'nextsteps' | 'about' | 'getting-started' | 'monetization' | 'security' | 'aiuc1' | 'performance' | 'perf-explain';
 
 interface NavItem {
   key: Tab;
@@ -60,6 +61,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: 'About',
     items: [
+      { key: 'getting-started', label: 'Getting Started' },
       { key: 'about', label: 'Overview' },
       { key: 'pipeline', label: 'Pipeline' },
       { key: 'security', label: 'NIST AI RMF' },
@@ -121,6 +123,7 @@ export default function App() {
         {tab === 'samples' && <SampleQueries />}
         {tab === 'autopilot' && <AutopilotPage />}
         {tab === 'nextsteps' && <NextSteps />}
+        {tab === 'getting-started' && <GettingStartedPage />}
         {tab === 'about' && <AboutPage />}
         {tab === 'monetization' && <MonetizationPage />}
         {tab === 'security' && <SecurityPage />}
