@@ -93,6 +93,27 @@ export interface NeuronScoreResponse {
   layer: number;
 }
 
+export interface InputGuardOut {
+  verdict: string;
+  flags: { description: string; severity: string; pattern?: string }[];
+  flag_count: number;
+}
+
+export interface GroundingOut {
+  grounded: boolean | null;
+  confidence: number | null;
+  overlap_terms?: number;
+  response_terms?: number;
+  ungrounded_references?: string[];
+  reason: string;
+}
+
+export interface OutputCheckOut {
+  mode: string | null;
+  risk_flags: { category: string; description: string; excerpt: string }[];
+  grounding: GroundingOut | null;
+}
+
 export interface QueryResponse {
   query_id: number;
   intent: string | null;
@@ -106,6 +127,8 @@ export interface QueryResponse {
   classify_output_tokens: number;
   slots: SlotResult[];
   total_cost: number;
+  input_guard?: InputGuardOut | null;
+  output_checks?: OutputCheckOut[];
 }
 
 export interface QuerySummary {

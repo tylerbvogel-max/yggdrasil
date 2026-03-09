@@ -45,6 +45,9 @@ async def claude_chat(
     input_tokens = usage.get("input_tokens", 0) + usage.get("cache_creation_input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
     output_tokens = usage.get("output_tokens", 0)
 
+    # Capture model version string if available
+    model_version = data.get("model", None)
+
     # Calculate cost from token pricing rather than CLI's total_cost_usd,
     # which doesn't reflect per-model API rates on personal subscription.
     cost_usd = estimate_cost(model, input_tokens, output_tokens)
@@ -54,6 +57,7 @@ async def claude_chat(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "cost_usd": cost_usd,
+        "model_version": model_version,
     }
 
 

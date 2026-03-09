@@ -45,6 +45,27 @@ class NeuronScoreResponse(BaseModel):
     layer: int = 0
 
 
+class InputGuardOut(BaseModel):
+    verdict: str = "pass"  # "pass" | "warn" | "block"
+    flags: list[dict] = []
+    flag_count: int = 0
+
+
+class GroundingOut(BaseModel):
+    grounded: bool | None = None
+    confidence: float | None = None
+    overlap_terms: int | None = None
+    response_terms: int | None = None
+    ungrounded_references: list[str] = []
+    reason: str = ""
+
+
+class OutputCheckOut(BaseModel):
+    mode: str | None = None
+    risk_flags: list[dict] = []
+    grounding: GroundingOut | None = None
+
+
 class QueryResponse(BaseModel):
     query_id: int
     intent: str | None = None
@@ -58,6 +79,8 @@ class QueryResponse(BaseModel):
     classify_output_tokens: int = 0
     slots: list[SlotResult] = []
     total_cost: float = 0
+    input_guard: InputGuardOut | None = None
+    output_checks: list[OutputCheckOut] = []
 
 
 class EvalRequest(BaseModel):

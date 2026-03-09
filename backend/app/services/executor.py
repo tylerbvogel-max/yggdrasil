@@ -186,6 +186,7 @@ async def execute_query(
             "token_budget": budget if mode in NEURON_MODES else None,
             "top_k": slot_top_k if mode in NEURON_MODES else None,
             "label": spec.get("label"),
+            "model_version": result.get("model_version"),
         })
 
     query.results_json = json.dumps(slot_results)
@@ -214,6 +215,13 @@ async def execute_query(
     # Cost — sum of all slots + classify
     total_cost = sum(s["cost_usd"] for s in slot_results) + classify_result.get("cost_usd", 0)
     query.cost_usd = total_cost
+
+    # Capture model version from first slot for API change tracking
+    for slot in slot_results:
+        mv = slot.get("model_version")
+        if mv:
+            query.model_version = mv
+            break
 
     # Update global counters + fire neurons
     state = await get_system_state(db)

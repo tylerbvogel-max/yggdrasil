@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchStats, fetchCostReport, fetchSpreadLog, fetchScoringHealth } from '../api'
-import type { SpreadLogResponse, ScoringHealthResponse } from '../api'
+import { fetchStats, fetchCostReport, fetchSpreadLog, fetchScoringHealth, fetchHealthCheck, acknowledgeAlert, acknowledgeAllAlerts } from '../api'
+import type { SpreadLogResponse, ScoringHealthResponse, HealthCheckResponse } from '../api'
 import type { NeuronStats, CostReport } from '../types'
 import { Chart, BarController, BarElement, BubbleController, PointElement, CategoryScale, LinearScale, LogarithmicScale, Tooltip, Legend } from 'chart.js'
 import DeptChordDiagram from './DeptChordDiagram'
@@ -27,6 +27,7 @@ export default function Dashboard() {
   const [cost, setCost] = useState<CostReport | null>(null);
   const [spreadLog, setSpreadLog] = useState<SpreadLogResponse | null>(null);
   const [health, setHealth] = useState<ScoringHealthResponse | null>(null);
+  const [healthCheck, setHealthCheck] = useState<HealthCheckResponse | null>(null);
   const [error, setError] = useState('');
   const [bubbleLogX, setBubbleLogX] = useState(true);
   const [bubbleLogY, setBubbleLogY] = useState(true);
@@ -42,6 +43,8 @@ export default function Dashboard() {
     Promise.all([fetchStats(), fetchCostReport(), fetchSpreadLog(), fetchScoringHealth()])
       .then(([s, c, sl, h]) => { setStats(s); setCost(c); setSpreadLog(sl); setHealth(h); })
       .catch(e => setError(e.message));
+    // Health check fetched independently — don't let it break the dashboard if endpoint is unavailable
+    fetchHealthCheck().then(setHealthCheck).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -275,6 +278,89 @@ export default function Dashboard() {
         <div className="chart-card" style={{ marginBottom: 24, color: '#8892a8', fontSize: '0.85rem' }}>
           <h3>Scoring Health Monitor</h3>
           <p>Insufficient data for drift detection ({health.queries_available} queries, need 5+).</p>
+        </div>
+      )}
+
+      {healthCheck && (
+        <div className="chart-card" style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ margin: 0 }}>Production Health Check</h3>
+            <span style={{
+              fontSize: '0.75rem', fontWeight: 600, padding: '2px 10px', borderRadius: 4,
+              background: healthCheck.circuit_breaker_tripped ? '#ef444433' : '#22c55e22',
+              color: healthCheck.circuit_breaker_tripped ? '#ef4444' : '#22c55e',
+              border: `1px solid ${healthCheck.circuit_breaker_tripped ? '#ef444466' : '#22c55e44'}`,
+            }}>
+              {healthCheck.circuit_breaker_tripped ? 'CIRCUIT BREAKER TRIPPED' : 'SYSTEM OK'}
+            </span>
+          </div>
+
+          {healthCheck.circuit_breaker_tripped && (
+            <div style={{ background: '#ef444422', border: '1px solid #ef444444', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: '0.8rem', color: '#fca5a5' }}>
+              {healthCheck.reasons.map((r, i) => <div key={i}>{r}</div>)}
+            </div>
+          )}
+
+          <div className="stat-cards" style={{ marginBottom: 12 }}>
+            <div className="stat-card">
+              <div className="card-value" style={{ color: healthCheck.avg_eval_overall !== null && healthCheck.avg_eval_overall < 2.5 ? '#ef4444' : '#22c55e' }}>
+                {healthCheck.avg_eval_overall !== null ? healthCheck.avg_eval_overall.toFixed(2) : '—'}
+              </div>
+              <div className="card-label">Avg Eval ({healthCheck.eval_count})</div>
+            </div>
+            <div className="stat-card">
+              <div className="card-value" style={{ color: healthCheck.avg_user_rating !== null && healthCheck.avg_user_rating < 0.3 ? '#ef4444' : '#22c55e' }}>
+                {healthCheck.avg_user_rating !== null ? healthCheck.avg_user_rating.toFixed(2) : '—'}
+              </div>
+              <div className="card-label">Avg Rating ({healthCheck.rating_count})</div>
+            </div>
+            <div className="stat-card">
+              <div className="card-value">{healthCheck.drift_alerts_count}</div>
+              <div className="card-label">Drift Alerts</div>
+            </div>
+            <div className="stat-card">
+              <div className="card-value" style={{ color: healthCheck.model_version_changed ? '#fb923c' : undefined }}>
+                {healthCheck.model_versions.length > 0 ? healthCheck.model_versions[0] : '—'}
+              </div>
+              <div className="card-label">Model Version{healthCheck.model_version_changed ? ' (changed!)' : ''}</div>
+            </div>
+          </div>
+
+          {healthCheck.active_alerts.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text)' }}>Active Alerts ({healthCheck.active_alerts.length})</span>
+                <button className="btn btn-sm" style={{ fontSize: '0.7rem' }} onClick={async () => {
+                  await acknowledgeAllAlerts();
+                  const hc = await fetchHealthCheck();
+                  setHealthCheck(hc);
+                }}>Acknowledge All</button>
+              </div>
+              {healthCheck.active_alerts.map(a => (
+                <div key={a.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', marginBottom: 4, borderRadius: 4, fontSize: '0.75rem',
+                  background: a.severity === 'critical' ? '#ef444418' : a.severity === 'warning' ? '#fb923c18' : '#3b82f618',
+                  border: `1px solid ${a.severity === 'critical' ? '#ef444433' : a.severity === 'warning' ? '#fb923c33' : '#3b82f633'}`,
+                }}>
+                  <span style={{ fontWeight: 600, color: a.severity === 'critical' ? '#ef4444' : a.severity === 'warning' ? '#fb923c' : '#3b82f6', textTransform: 'uppercase', fontSize: '0.65rem' }}>
+                    {a.severity}
+                  </span>
+                  <span style={{ color: 'var(--text-dim)', flex: 1 }}>{a.message}</span>
+                  <button style={{ background: 'none', border: 'none', color: '#8892a8', cursor: 'pointer', fontSize: '0.7rem' }} onClick={async () => {
+                    await acknowledgeAlert(a.id);
+                    const hc = await fetchHealthCheck();
+                    setHealthCheck(hc);
+                  }}>dismiss</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {healthCheck.active_alerts.length === 0 && !healthCheck.circuit_breaker_tripped && (
+            <div style={{ fontSize: '0.8rem', color: '#22c55e', marginTop: 4 }}>
+              No active alerts. All systems nominal.
+            </div>
+          )}
         </div>
       )}
 

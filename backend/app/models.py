@@ -104,6 +104,7 @@ class Query(Base):
     refine_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     neuron_scores_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    model_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -208,6 +209,22 @@ class PropagationLog(Base):
     source_neuron_id: Mapped[int] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=False)
     target_neuron_id: Mapped[int] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=False)
     activation_value: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+
+class SystemAlert(Base):
+    __tablename__ = "system_alerts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    alert_type: Mapped[str] = mapped_column(String(50), nullable=False)  # "drift" | "quality_drop" | "api_change" | "circuit_breaker"
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)    # "info" | "warning" | "critical"
+    signal: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    detail_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    acknowledged: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    acknowledged_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()
     )

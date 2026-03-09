@@ -280,3 +280,164 @@ export interface ScoringHealthResponse {
 export function fetchScoringHealth(): Promise<ScoringHealthResponse> {
   return json<ScoringHealthResponse>('/admin/scoring-health');
 }
+
+// ── Health Check & Alerts ──
+
+export interface SystemAlertOut {
+  id: number;
+  type: string;
+  severity: string;
+  signal: string | null;
+  message: string;
+  detail?: Record<string, unknown> | null;
+  acknowledged: boolean;
+  created_at: string | null;
+}
+
+export interface HealthCheckResponse {
+  status: string;
+  circuit_breaker_tripped: boolean;
+  reasons: string[];
+  avg_eval_overall: number | null;
+  avg_user_rating: number | null;
+  eval_count: number;
+  rating_count: number;
+  model_versions: string[];
+  model_version_changed: boolean;
+  drift_alerts_count: number;
+  active_alerts: SystemAlertOut[];
+  new_alerts: { type: string; signal?: string; message: string }[];
+  thresholds: Record<string, number>;
+}
+
+export function fetchHealthCheck(): Promise<HealthCheckResponse> {
+  return json<HealthCheckResponse>('/admin/health-check');
+}
+
+export function fetchAlerts(includeAcknowledged = false): Promise<SystemAlertOut[]> {
+  const params = includeAcknowledged ? '?include_acknowledged=true' : '';
+  return json<SystemAlertOut[]>(`/admin/alerts${params}`);
+}
+
+export function acknowledgeAlert(alertId: number): Promise<{ status: string }> {
+  return json<{ status: string }>(`/admin/alerts/${alertId}/acknowledge`, { method: 'POST' });
+}
+
+export function acknowledgeAllAlerts(): Promise<{ status: string; count: number }> {
+  return json<{ status: string; count: number }>('/admin/alerts/acknowledge-all', { method: 'POST' });
+}
+
+// ── Compliance Audit ──
+
+export interface PiiScanResult {
+  findings: { neuron_id: number; neuron_label: string; department: string | null; field: string; pii_type: string; match_count: number; excerpt: string }[];
+  total_findings: number;
+  neurons_with_pii: number;
+  clean: boolean;
+}
+
+export interface DeptCoverage {
+  department: string;
+  neuron_count: number;
+  pct_of_total: number;
+  total_invocations: number;
+  avg_utility: number;
+}
+
+export interface EvalDisaggregation {
+  mode: string;
+  count: number;
+  avg_accuracy: number;
+  avg_completeness: number;
+  avg_clarity: number;
+  avg_faithfulness: number;
+  avg_overall: number;
+}
+
+export interface SignalBaseline {
+  count: number;
+  mean: number;
+  stddev: number;
+  min: number;
+  max: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  p95: number;
+}
+
+export interface ComplianceAuditResponse {
+  total_neurons: number;
+  pii_scan: PiiScanResult;
+  bias_assessment: {
+    department_coverage: DeptCoverage[];
+    department_count: number;
+    coverage_cv: number;
+    coverage_imbalanced: boolean;
+    layer_distribution: Record<string, number>;
+    eval_disaggregation: EvalDisaggregation[];
+  };
+  scoring_baselines: {
+    queries_analyzed: number;
+    signals: Record<string, SignalBaseline>;
+    metric_rationale: Record<string, string>;
+  };
+  provenance_audit: {
+    source_type_distribution: Record<string, number>;
+    missing_citations: { neuron_id: number; label: string; department: string | null; source_type: string }[];
+    missing_citations_count: number;
+    missing_source_urls: { neuron_id: number; label: string; department: string | null; source_type: string }[];
+    missing_source_urls_count: number;
+    stale_neurons: { neuron_id: number; label: string; department: string | null; source_type: string; last_verified: string; days_since_verified: number }[];
+    stale_neurons_count: number;
+  };
+}
+
+export function fetchComplianceAudit(): Promise<ComplianceAuditResponse> {
+  return json<ComplianceAuditResponse>('/admin/compliance-audit');
+}
+
+// ── Governance Dashboard ──
+
+export interface GovernanceDashboardResponse {
+  totals: {
+    neurons: number;
+    queries: number;
+    evaluations: number;
+    refinements: number;
+    departments: number;
+    rated_queries: number;
+  };
+  kpis: {
+    avg_eval_overall: number | null;
+    avg_faithfulness: number | null;
+    avg_user_rating: number | null;
+    avg_cost_per_query: number;
+    total_cost_usd: number;
+    cost_per_1m_tokens: number | null;
+    run_cost_per_1m: number | null;
+    zero_hit_pct: number;
+    parity_index: number | null;
+    value_score: number | null;
+    avg_opus_eval: number | null;
+    avg_neuron_eval: number | null;
+    opus_cost_per_1m: number | null;
+  };
+  change_activity: {
+    refinements_30d: number;
+    autopilot_runs_30d: number;
+    recent_changes: {
+      id: number;
+      action: string;
+      field: string | null;
+      reason: string;
+      neuron_id: number;
+      created_at: string | null;
+    }[];
+  };
+  active_alerts: number;
+}
+
+export function fetchGovernanceDashboard(): Promise<GovernanceDashboardResponse> {
+  return json<GovernanceDashboardResponse>('/admin/governance-dashboard');
+}

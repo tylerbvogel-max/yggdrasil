@@ -17,6 +17,7 @@ from app.services.executor import execute_query
 from app.services.claude_cli import claude_chat, estimate_cost
 from app.services.neuron_service import get_system_state, score_candidates
 from app.services.scoring_engine import update_impact_ema
+from app.services.input_guard import check_input, check_output_risk, check_output_grounding
 from sqlalchemy import select, func
 
 router = APIRouter(tags=["query"])
@@ -219,6 +220,17 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("/query", response_model=QueryResponse)
 async def post_query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
+    # ── Input Guard: run before classification ──
+    guard_result = check_input(req.message)
+    if guard_result.verdict == "block":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Input blocked by safety filter",
+                "flags": guard_result.flags,
+            },
+        )
+
     if req.slots_v2:
         # v2: per-slot budgets
         for s in req.slots_v2:
@@ -234,6 +246,26 @@ async def post_query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
         if not req.modes:
             raise HTTPException(status_code=400, detail="At least one mode required")
         result = await execute_query(db, req.message, modes=req.modes, token_budget=req.token_budget)
+
+    # ── Output Checks: risk tagging + grounding ──
+    output_checks: list[dict] = []
+    for slot in result.get("slots", []):
+        response_text = slot.get("response", "")
+        risk_flags = check_output_risk(response_text)
+        grounding = check_output_grounding(
+            response_text,
+            result.get("assembled_prompt"),
+        ) if slot.get("neurons") else {"grounded": None, "confidence": None, "reason": "Raw mode — no neuron context"}
+        output_checks.append({
+            "mode": slot.get("mode"),
+            "risk_flags": risk_flags,
+            "grounding": grounding,
+        })
+
+    # Attach guard and output checks to response
+    result["input_guard"] = guard_result.to_dict()
+    result["output_checks"] = output_checks
+
     return QueryResponse(**result)
 
 

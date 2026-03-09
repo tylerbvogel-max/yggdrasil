@@ -116,6 +116,17 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Edge scaling migration skipped: {e}")
 
+    # Migrate: add model_version column to queries if missing
+    async with engine.begin() as conn:
+        try:
+            if not await _column_exists(conn, "queries", "model_version"):
+                await conn.execute(text(
+                    "ALTER TABLE queries ADD COLUMN model_version VARCHAR(100)"
+                ))
+                print("Migrated: added queries.model_version")
+        except Exception as e:
+            print(f"Query model_version migration skipped: {e}")
+
     # Auto-seed on first run
     async with async_session() as db:
         count = (await db.execute(select(func.count(Neuron.id)))).scalar() or 0

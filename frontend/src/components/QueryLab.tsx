@@ -1026,12 +1026,61 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
         </Section>
       )}
 
-      {/* Responses */}
-      {result.slots.map((slot, i) => (
-        <Section key={i} title={slotDisplayLabel(slot)} titleStyle={{ borderLeft: `3px solid ${MODE_COLORS[slot.mode] ?? '#8892a8'}`, paddingLeft: 8 }}>
-          <div className="response-text">{slot.response}</div>
-        </Section>
-      ))}
+      {/* Input Guard */}
+      {result.input_guard && result.input_guard.flag_count > 0 && (
+        <div style={{
+          padding: '8px 12px', marginBottom: 12, borderRadius: 6, fontSize: '0.8rem',
+          background: result.input_guard.verdict === 'warn' ? '#fb923c18' : '#ef444418',
+          border: `1px solid ${result.input_guard.verdict === 'warn' ? '#fb923c44' : '#ef444444'}`,
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4, color: result.input_guard.verdict === 'warn' ? '#fb923c' : '#ef4444' }}>
+            Input Guard: {result.input_guard.verdict.toUpperCase()} ({result.input_guard.flag_count} flag{result.input_guard.flag_count !== 1 ? 's' : ''})
+          </div>
+          {result.input_guard.flags.map((f, i) => (
+            <div key={i} style={{ color: 'var(--text-dim)' }}>
+              <span style={{ color: f.severity === 'warn' ? '#fb923c' : '#ef4444', fontWeight: 600, fontSize: '0.7rem', textTransform: 'uppercase' }}>{f.severity}</span>
+              {' '}{f.description}{f.pattern ? ` — "${f.pattern}"` : ''}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Responses with output checks */}
+      {result.slots.map((slot, i) => {
+        const check = result.output_checks?.[i];
+        return (
+          <Section key={i} title={slotDisplayLabel(slot)} titleStyle={{ borderLeft: `3px solid ${MODE_COLORS[slot.mode] ?? '#8892a8'}`, paddingLeft: 8 }}>
+            {check && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                {check.grounding && check.grounding.confidence !== null && (
+                  <span style={{
+                    fontSize: '0.65rem', padding: '1px 6px', borderRadius: 3, fontFamily: 'var(--font-mono, monospace)',
+                    background: check.grounding.grounded ? '#22c55e22' : '#fb923c22',
+                    color: check.grounding.grounded ? '#22c55e' : '#fb923c',
+                    border: `1px solid ${check.grounding.grounded ? '#22c55e44' : '#fb923c44'}`,
+                  }} title={check.grounding.reason}>
+                    Grounding: {(check.grounding.confidence * 100).toFixed(0)}%
+                    {check.grounding.ungrounded_references && check.grounding.ungrounded_references.length > 0 &&
+                      ` (${check.grounding.ungrounded_references.length} unverified ref${check.grounding.ungrounded_references.length !== 1 ? 's' : ''})`
+                    }
+                  </span>
+                )}
+                {check.risk_flags.map((rf, j) => (
+                  <span key={j} style={{
+                    fontSize: '0.65rem', padding: '1px 6px', borderRadius: 3, fontFamily: 'var(--font-mono, monospace)',
+                    background: rf.category === 'dual_use' ? '#ef444422' : rf.category === 'safety_critical' ? '#fb923c22' : '#3b82f622',
+                    color: rf.category === 'dual_use' ? '#ef4444' : rf.category === 'safety_critical' ? '#fb923c' : '#3b82f6',
+                    border: `1px solid ${rf.category === 'dual_use' ? '#ef444444' : rf.category === 'safety_critical' ? '#fb923c44' : '#3b82f644'}`,
+                  }} title={rf.excerpt}>
+                    {rf.category}: {rf.description}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="response-text">{slot.response}</div>
+          </Section>
+        );
+      })}
 
       {/* Token Charts */}
       <Section title="Cost & Tokens">
@@ -1152,10 +1201,30 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
       )}
 
       <Section title="Rate Response">
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <button
+            className="btn btn-sm"
+            style={{ fontSize: '1.1rem', padding: '4px 12px', background: rated && rating >= 0.7 ? '#22c55e33' : undefined, border: rated && rating >= 0.7 ? '1px solid #22c55e' : undefined }}
+            onClick={() => { setRating(0.85); }}
+            disabled={rated}
+            title="Good response (0.85)"
+          >
+            {'👍'}
+          </button>
+          <button
+            className="btn btn-sm"
+            style={{ fontSize: '1.1rem', padding: '4px 12px', background: rated && rating < 0.3 ? '#ef444433' : undefined, border: rated && rating < 0.3 ? '1px solid #ef4444' : undefined }}
+            onClick={() => { setRating(0.15); }}
+            disabled={rated}
+            title="Poor response (0.15)"
+          >
+            {'👎'}
+          </button>
+          <button className="btn btn-sm" onClick={onRate} disabled={rated} style={{ marginLeft: 'auto' }}>{rated ? 'Rated!' : 'Submit Rating'}</button>
+        </div>
         <div className="rating-row">
           <input type="range" min="0" max="1" step="0.05" value={rating} onChange={e => setRating(parseFloat(e.target.value))} disabled={rated} />
           <span className="rating-value">{rating.toFixed(2)}</span>
-          <button className="btn btn-sm" onClick={onRate} disabled={rated}>{rated ? 'Rated!' : 'Submit Rating'}</button>
         </div>
       </Section>
     </>
