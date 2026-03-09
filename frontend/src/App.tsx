@@ -13,10 +13,11 @@ import MonetizationPage from './components/MonetizationPage'
 import SampleQueries from './components/SampleQueries'
 import DeptChordDiagram from './components/DeptChordDiagram'
 import SecurityPage from './components/SecurityPage'
+import Aiuc1Page from './components/Aiuc1Page'
 import PerformancePage from './components/PerformancePage'
 import PerformanceExplanationPage from './components/PerformanceExplanationPage'
 
-type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'nextsteps' | 'about' | 'monetization' | 'security' | 'performance' | 'perf-explain';
+type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'nextsteps' | 'about' | 'monetization' | 'security' | 'aiuc1' | 'performance' | 'perf-explain';
 
 interface NavItem {
   key: Tab;
@@ -62,6 +63,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { key: 'about', label: 'Overview' },
       { key: 'pipeline', label: 'Pipeline' },
       { key: 'security', label: 'NIST AI RMF' },
+      { key: 'aiuc1', label: 'AIUC-1' },
       { key: 'nextsteps', label: 'Next Steps' },
       { key: 'monetization', label: 'Monetization', className: 'nav-monetization' },
     ],
@@ -122,6 +124,7 @@ export default function App() {
         {tab === 'about' && <AboutPage />}
         {tab === 'monetization' && <MonetizationPage />}
         {tab === 'security' && <SecurityPage />}
+        {tab === 'aiuc1' && <Aiuc1Page />}
         {tab === 'performance' && <PerformancePage />}
         {tab === 'perf-explain' && <PerformanceExplanationPage />}
       </main>
