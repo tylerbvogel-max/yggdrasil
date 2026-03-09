@@ -18,15 +18,22 @@ export default function NextSteps() {
             <tr><th>Component</th><th>Description</th></tr>
           </thead>
           <tbody>
-            <tr><td>Neuron Graph</td><td>1,800+-node 6-layer hierarchy (Department &rarr; Role &rarr; Task &rarr; System &rarr; Decision &rarr; Output) with 5-signal scoring (Burst, Impact, Precision, Novelty, Recency)</td></tr>
+            <tr><td>Neuron Graph</td><td>2,031-node 6-layer hierarchy (Department &rarr; Role &rarr; Task &rarr; System &rarr; Decision &rarr; Output) with 5-signal scoring (Burst, Impact, Precision, Novelty, Recency). 9 departments, 51 roles.</td></tr>
             <tr><td>Multi-Hop Spread Activation</td><td>Frontier-based BFS through co-firing graph with compounding decay (Collins &amp; Loftus 1975, SA-RAG). Up to 3 hops, max-path aggregation to prevent hub bias.</td></tr>
-            <tr><td>Co-Firing Edge Graph</td><td>Hebbian edges form when neurons fire together. Weighted by frequency. Feeds spread activation and cross-domain discovery.</td></tr>
+            <tr><td>Co-Firing Edge Graph</td><td>224,920 Hebbian edges formed when neurons fire together. Weighted by frequency. Feeds spread activation and cross-domain discovery.</td></tr>
             <tr><td>Blind A/B Evaluation</td><td>Multi-slot parallel execution, blind scoring (accuracy, completeness, clarity, faithfulness, overall), external export for ChatGPT review. BH-FDR statistical correction.</td></tr>
             <tr><td>Bolster &amp; Autopilot</td><td>LLM-proposed neuron expansion with human review (bolster) and autonomous training loop (autopilot). Source origin tracking per neuron.</td></tr>
             <tr><td>Utility Feedback</td><td>User ratings flow back to neurons via EMA. Neurons that contribute to good answers rise; bad answers sink them.</td></tr>
             <tr><td>Source-Typed Neurons</td><td>5 source types (operational, regulatory primary/interpretive, technical primary/pattern) with provenance fields: citation, effective date, source version, verification timestamp.</td></tr>
             <tr><td>External Reference Detection</td><td>Regex-based scanner for 18 regulatory families + 6 technical families. Runs on every neuron create/update. 1,129 references detected across 596 neurons.</td></tr>
             <tr><td>Emergent Queue</td><td>293 unresolved references auto-queued with detection counts, neuron tracking, and dismiss workflow. Data model and API complete; UI in Phase 2.</td></tr>
+            <tr><td>PostgreSQL Migration</td><td>Migrated from SQLite/aiosqlite to PostgreSQL/asyncpg. Full async ORM layer with JSONB for scoring breakdowns, row-level locking, and production backup/restore.</td></tr>
+            <tr><td>Compliance Framework</td><td>NIST AI RMF, ISO 42001, and custom AIUC-1 audit standard mapped to system components. Compliance matrix with 15+ requirements tracked across 4 statuses.</td></tr>
+            <tr><td>Governance Dashboard</td><td>Live KPI monitoring: 13 metrics including cost/1M tokens, Parity Index, Value Score, eval scores, Coverage CV. AI Objectives table with targets and status.</td></tr>
+            <tr><td>Evaluate Suite</td><td>4-page evaluation system: Performance (mode comparison, score radar, cost analysis), Quality (CIs, cross-validation, signal robustness), Fairness (dept coverage, eval quality, remediation), Compliance (PII scan, provenance audit, scoring baselines).</td></tr>
+            <tr><td>Cost Modeling</td><td>Run cost vs training cost split. Run cost = haiku/sonnet production slots + classify overhead. Training cost = all tiers including opus benchmarks. Per-1M-token normalization.</td></tr>
+            <tr><td>Input Guard</td><td>16 adversarial pattern detectors (prompt injection, jailbreak, PII exfiltration, system prompt extraction, etc.) with risk-level classification and query blocking.</td></tr>
+            <tr><td>Scoring Health Monitor</td><td>Signal drift detection with coefficient of variation tracking. Per-signal distribution statistics across all queries for baseline documentation.</td></tr>
           </tbody>
         </table>
       </section>
@@ -39,7 +46,7 @@ export default function NextSteps() {
         <p>
           Expanding all 51 roles from skeletal (5&ndash;15 neurons) to full L2&rarr;L5 depth (60&ndash;100+ neurons each).
           Runs continuously via autopilot and manual bolster sessions, in parallel with all other phases.
-          Current total: <strong>1,800+ neurons</strong>. Target: <strong>~3,000+</strong>.
+          Current total: <strong>2,031 neurons</strong>. Target: <strong>~3,000+</strong>.
         </p>
         <p>
           Process: <code>POST /admin/bolster</code> with Sonnet, referencing government publications,
@@ -164,19 +171,27 @@ export default function NextSteps() {
 
       <section className="next-steps-section">
         <h3>Phase 6 — Maintenance &amp; Quality</h3>
-        <span className="status-badge planned">Backlog</span>
+        <span className="status-badge planned">Partial</span>
 
-        <h4>Microglia &mdash; Quality Scanner</h4>
+        <h4>Microglia &mdash; Quality Scanner <span style={{ fontSize: '0.7rem', color: '#22c55e' }}>(partial &mdash; input guard + PII scan done)</span></h4>
         <ul>
-          <li><strong>Prompt injection detection</strong> &mdash; Periodic scan for content that attempts to override system behavior. Quarantine, don&rsquo;t delete.</li>
+          <li><s>Prompt injection detection</s> &mdash; <strong>Done.</strong> Input guard with 16 adversarial pattern detectors, risk-level classification, and query blocking. PII scanning across all neuron fields with false-positive filtering.</li>
           <li><strong>Hallucination detection</strong> &mdash; Cross-neuron consistency checks. LLM-generated neurons (autopilot, bolster) get lower trust and more aggressive scanning.</li>
           <li><strong>Logical flaw detection</strong> &mdash; Devil&rsquo;s advocate pass on high-invocation declining-utility neurons.</li>
         </ul>
 
-        <h4>Ependymal &mdash; Graph Hygiene</h4>
+        <h4>Ependymal &mdash; Graph Hygiene <span style={{ fontSize: '0.7rem', color: '#22c55e' }}>(partial &mdash; fairness remediation done)</span></h4>
         <ul>
-          <li>Merge near-duplicate neurons (cosine similarity on content embeddings)</li>
-          <li>Re-parent misplaced neurons, rebalance disproportionate departments</li>
+          <li><s>Rebalance disproportionate departments</s> &mdash; <strong>Partial.</strong> Automated fairness remediation detects coverage gaps, quality gaps, and utilization gaps per department with severity-ranked action items. Coverage CV tracked as governance KPI.</li>
+          <li><strong>Alignment Check (post-ingest hygiene)</strong> &mdash; Standalone scan triggered from Governance dashboard after large ingest batches or on schedule. Scans the full graph for:
+            <ul>
+              <li>Near-duplicate neurons across all parents (label similarity + content overlap), not just within one subtree</li>
+              <li>Cross-department duplication where the same knowledge landed under different roles</li>
+              <li>Orphaned or low-relevance neurons that lost context after graph evolution</li>
+              <li>Misplaced neurons whose content better fits a different parent/department</li>
+            </ul>
+            Presents findings in a review UI (similar to emergent queue) with merge, re-parent, and deactivate actions. Intentionally decoupled from ingest &mdash; acquisition stays fast, hygiene runs as a separate whole-graph pass.
+          </li>
           <li>Prune dead branches (zero firings over N queries)</li>
         </ul>
         <p>
@@ -212,11 +227,9 @@ export default function NextSteps() {
           knowledge retrieval and system integration.
         </p>
 
-        <h4>PostgreSQL Migration</h4>
-        <p>
-          Swap <code>aiosqlite</code> for <code>asyncpg</code>. The ORM layer is already database-agnostic.
-          Triggered by concurrent write needs or shared infrastructure deployment. Enables JSONB for scoring
-          breakdowns, row-level locking, and production backup/restore.
+        <h4><s>PostgreSQL Migration</s> &mdash; Done</h4>
+        <p style={{ color: '#22c55e' }}>
+          Migrated to PostgreSQL with asyncpg. JSONB scoring breakdowns, row-level locking, and production backup/restore all operational.
         </p>
       </section>
 
@@ -254,14 +267,21 @@ export default function NextSteps() {
             </tr>
           </thead>
           <tbody>
-            <tr><td>&mdash;</td><td>Neuron graph + 5-signal scoring</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Neuron graph + 5-signal scoring (2,031 neurons)</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Multi-hop spread activation</td><td><span className="status-badge built">Built</span></td></tr>
-            <tr><td>&mdash;</td><td>Blind A/B evaluation + external export</td><td><span className="status-badge built">Built</span></td></tr>
-            <tr><td>&mdash;</td><td>Co-firing edge graph</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Blind A/B evaluation + BH-FDR correction</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Co-firing edge graph (224,920 edges)</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Bolster + Autopilot</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Source-typed neurons + reference detection</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Emergent queue (data model + API)</td><td><span className="status-badge built">Built</span></td></tr>
-            <tr><td>1</td><td>Role bolstering (~1,800 &rarr; 3,000+ neurons)</td><td><span className="status-badge planned">Active</span></td></tr>
+            <tr><td>&mdash;</td><td>PostgreSQL migration (asyncpg + JSONB)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Compliance framework (NIST/ISO/AIUC-1)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Governance dashboard (13 live KPIs)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Evaluate suite (Performance, Quality, Fairness, Compliance)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Cost modeling (run vs training split)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Input guard (16 adversarial patterns)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Scoring health monitor + drift detection</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>1</td><td>Role bolstering (2,031 &rarr; 3,000+ neurons)</td><td><span className="status-badge planned">Active</span></td></tr>
             <tr><td>2</td><td>Emergent Queue UI + ingestion pipeline</td><td><span className="status-badge planned">Next</span></td></tr>
             <tr><td>2</td><td>Source Coverage analytics + verification</td><td><span className="status-badge planned">Next</span></td></tr>
             <tr><td>3</td><td>Structured prompt assembly</td><td><span className="status-badge planned">Planned</span></td></tr>
@@ -272,12 +292,11 @@ export default function NextSteps() {
             <tr><td>5</td><td>Theme pre-scoring (Cog-RAG)</td><td><span className="status-badge planned">Backlog</span></td></tr>
             <tr><td>5</td><td>Community detection (GraphRAG Leiden)</td><td><span className="status-badge planned">Backlog</span></td></tr>
             <tr><td>5</td><td>Community summaries (GraphRAG)</td><td><span className="status-badge planned">Backlog</span></td></tr>
-            <tr><td>6</td><td>Microglia (quality scanner)</td><td><span className="status-badge planned">Backlog</span></td></tr>
-            <tr><td>6</td><td>Ependymal (graph hygiene)</td><td><span className="status-badge planned">Backlog</span></td></tr>
+            <tr><td>6</td><td>Microglia (hallucination + logical flaw detection)</td><td><span className="status-badge planned">Partial</span></td></tr>
+            <tr><td>6</td><td>Ependymal (alignment check, dedup, re-parent, prune)</td><td><span className="status-badge planned">Partial</span></td></tr>
             <tr><td>6</td><td>Answer caching</td><td><span className="status-badge planned">Backlog</span></td></tr>
             <tr><td>7</td><td>Deterministic classifier</td><td><span className="status-badge planned">Backlog</span></td></tr>
             <tr><td>7</td><td>Connector neurons</td><td><span className="status-badge planned">Backlog</span></td></tr>
-            <tr><td>7</td><td>PostgreSQL migration</td><td><span className="status-badge planned">When Needed</span></td></tr>
           </tbody>
         </table>
       </section>

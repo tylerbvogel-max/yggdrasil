@@ -272,7 +272,7 @@ export default function AboutPage() {
         </p>
         <p>
           The current configuration (3 max hops, 0.5 decay, 0.15 minimum activation) is calibrated for
-          ~1,800 paragraph-level neurons with sparse co-firing edges. The compounding decay
+          ~2,000 paragraph-level neurons with sparse co-firing edges. The compounding decay
           (activation &times; edge_weight &times; 0.5 per hop) naturally prunes weak paths, and the
           early-exit condition means unused hops cost nothing. If neuron granularity shifts (e.g., the
           planned MIT OCW ingestion at formula-level detail), the hop count should increase accordingly.
@@ -455,9 +455,9 @@ export default function AboutPage() {
             <tr><th>Component</th><th>Technology</th></tr>
           </thead>
           <tbody>
-            <tr><td>Backend</td><td>Python FastAPI + async SQLAlchemy + aiosqlite</td></tr>
+            <tr><td>Backend</td><td>Python FastAPI + async SQLAlchemy + asyncpg</td></tr>
             <tr><td>Frontend</td><td>React + Vite + TypeScript</td></tr>
-            <tr><td>Database</td><td>SQLite with WAL mode (local file)</td></tr>
+            <tr><td>Database</td><td>PostgreSQL (JSONB scoring breakdowns, row-level locking)</td></tr>
             <tr><td>LLM Provider</td><td>Anthropic API (Claude Haiku / Sonnet / Opus)</td></tr>
             <tr><td>Port</td><td>8002 (serves both API and static frontend)</td></tr>
           </tbody>
@@ -470,8 +470,11 @@ export default function AboutPage() {
           <li><strong>Query Lab</strong> &mdash; Multi-slot A/B comparison with XY plot for token budget and neuron count per slot</li>
           <li><strong>Bolster</strong> &mdash; Bulk-expand neuron knowledge by providing domain context to an LLM</li>
           <li><strong>Autopilot</strong> &mdash; Autonomous training loop that generates queries, evaluates, refines, and applies improvements</li>
+          <li><strong>Emergent Queue</strong> &mdash; Unresolved citation tracker with acquire workflow (paste source &rarr; LLM segments into proposals &rarr; review &rarr; create neurons)</li>
           <li><strong>Explorer</strong> &mdash; Browse and inspect the full neuron tree with scoring details</li>
           <li><strong>Dashboard</strong> &mdash; Visualize neuron health, firing patterns, and role coverage</li>
+          <li><strong>Governance</strong> &mdash; Live KPI dashboard with 13 metrics: Parity Index, Value Score, run/training cost split, eval scores, Coverage CV, and more</li>
+          <li><strong>Evaluate Suite</strong> &mdash; Performance (mode comparison, cost analysis), Quality (CIs, cross-validation), Fairness (dept coverage, remediation), Compliance (PII, provenance, baselines)</li>
           <li><strong>Pipeline</strong> &mdash; Step-through view of the two-stage classification and scoring process</li>
         </ul>
       </section>
@@ -484,8 +487,8 @@ export default function AboutPage() {
           </thead>
           <tbody>
             <tr>
-              <td>Google Drive</td>
-              <td>Rotating copy of SQLite DB &mdash; alternates between <code>backup_a.db</code> and <code>backup_b.db</code></td>
+              <td>PostgreSQL</td>
+              <td><code>pg_dump</code> to Google Drive &mdash; alternates between <code>backup_a.sql</code> and <code>backup_b.sql</code></td>
               <td>Every 2 weeks (Sunday 3am)</td>
             </tr>
             <tr>
@@ -495,8 +498,8 @@ export default function AboutPage() {
             </tr>
             <tr>
               <td>Local</td>
-              <td>SQLite DB file at <code>backend/yggdrasil.db</code></td>
-              <td>Live (always current)</td>
+              <td>PostgreSQL database (always current, WAL-based recovery)</td>
+              <td>Live</td>
             </tr>
           </tbody>
         </table>
@@ -515,26 +518,31 @@ export default function AboutPage() {
     app/
       main.py            # FastAPI entry point
       config.py          # Settings and env vars
-      database.py        # SQLAlchemy engine (WAL mode)
-      models.py          # Neuron, Query, NeuronFiring models
+      database.py        # SQLAlchemy engine (asyncpg)
+      models.py          # Neuron, Query, NeuronFiring, EmergentQueue, etc.
       schemas.py         # Pydantic request/response schemas
       scoring.py         # 5-signal neuron scoring engine
       routers/
-        neurons.py       # Tree, detail, stats endpoints
+        neurons.py       # Tree, detail, stats, edges endpoints
         query.py         # Query, evaluate, refine pipeline
-        admin.py         # Seed, checkpoint, bolster, cost report
+        admin.py         # Seed, checkpoint, compliance, governance, ingest
         autopilot.py     # Autonomous training loop
+      services/
+        claude_cli.py    # Claude CLI wrapper (subprocess)
+        reference_detector.py  # Regex-based citation scanner
+        reference_hooks.py     # External reference population
+        gap_detector.py        # Emergent queue + gap detection
       seed/
         yggdrasil_org.yaml  # Neuron tree definition
         loader.py           # YAML seed loader
     checkpoints/         # JSON neuron snapshots (git-tracked)
     backup.sh            # Automated backup script
-    yggdrasil.db         # SQLite database
   frontend/
     src/
       App.tsx            # Tab navigation shell
       api.ts             # Backend API client
       types.ts           # TypeScript type definitions
+      hooks/             # Shared data hooks (useComplianceAudit, etc.)
       components/        # Page components (Explorer, Dashboard, etc.)
     dist/                # Built frontend (served by FastAPI)`}</pre>
       </section>

@@ -7,7 +7,7 @@ import os
 import re
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import select, func, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -293,6 +293,630 @@ async def scan_references(db: AsyncSession = Depends(get_db)):
             {"family": f, "count": c} for f, c in top_families
         ],
     }
+
+
+@router.post("/extract-source")
+async def extract_source(
+    url: str | None = None,
+    file: UploadFile | None = File(None),
+    page_start: int = 1,
+    page_end: int | None = None,
+):
+    """Extract text from a PDF file upload or URL for use in ingest-source.
+
+    Supports:
+      - PDF file upload (multipart form)
+      - URL to a PDF or HTML page
+      - Page range selection for large PDFs
+    Returns extracted text, page count, and character count.
+    """
+    import tempfile
+
+    text = ""
+    total_pages = 0
+    source_info = ""
+
+    if file and file.filename:
+        # PDF file upload
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file")
+
+        if file.filename.lower().endswith('.pdf'):
+            import fitz
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=True) as tmp:
+                tmp.write(content)
+                tmp.flush()
+                doc = fitz.open(tmp.name)
+                total_pages = len(doc)
+                end = min(page_end or total_pages, total_pages)
+                start = max(page_start - 1, 0)  # 0-indexed
+                pages_text = []
+                for i in range(start, end):
+                    page_text = doc[i].get_text()
+                    if page_text.strip():
+                        pages_text.append(f"--- Page {i + 1} ---\n{page_text}")
+                doc.close()
+                text = "\n\n".join(pages_text)
+                source_info = f"PDF: {file.filename} (pages {start + 1}-{end} of {total_pages})"
+        else:
+            # Plain text file
+            text = content.decode('utf-8', errors='replace')
+            source_info = f"File: {file.filename}"
+
+    elif url:
+        # URL fetch
+        import httpx
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+                resp = await client.get(url, headers={
+                    'User-Agent': 'Mozilla/5.0 (compatible; Yggdrasil/1.0)',
+                })
+                resp.raise_for_status()
+
+                content_type = resp.headers.get('content-type', '')
+                if 'pdf' in content_type or url.lower().endswith('.pdf'):
+                    import fitz
+                    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=True) as tmp:
+                        tmp.write(resp.content)
+                        tmp.flush()
+                        doc = fitz.open(tmp.name)
+                        total_pages = len(doc)
+                        end = min(page_end or total_pages, total_pages)
+                        start = max(page_start - 1, 0)
+                        pages_text = []
+                        for i in range(start, end):
+                            page_text = doc[i].get_text()
+                            if page_text.strip():
+                                pages_text.append(f"--- Page {i + 1} ---\n{page_text}")
+                        doc.close()
+                        text = "\n\n".join(pages_text)
+                        source_info = f"PDF from URL (pages {start + 1}-{end} of {total_pages})"
+                else:
+                    # HTML / plain text
+                    text = resp.text
+                    source_info = f"URL: {url}"
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=502, detail=f"URL returned {e.response.status_code}. Site may block automated access — try downloading the file and uploading it instead.")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {e}")
+    else:
+        raise HTTPException(status_code=400, detail="Provide either a file upload or a URL")
+
+    return {
+        "text": text,
+        "char_count": len(text),
+        "total_pages": total_pages,
+        "source_info": source_info,
+    }
+
+
+@router.post("/ingest-source")
+async def ingest_source(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept source text + metadata and use LLM to segment into neuron proposals.
+
+    Request body:
+      - source_text: str (the raw source content to segment)
+      - citation: str (e.g. "FAR 31.205-6")
+      - source_type: str ("regulatory_primary" | "regulatory_interpretive" | "technical_primary" | "technical_pattern")
+      - source_url: str | None
+      - effective_date: str | None (YYYY-MM-DD)
+      - department: str | None (target department)
+      - role_key: str | None (target role)
+      - queue_entry_id: int | None (if resolving an emergent queue entry)
+    """
+    from app.services.claude_cli import claude_chat
+
+    source_text = body.get("source_text", "").strip()
+    citation = body.get("citation", "").strip()
+    source_type = body.get("source_type", "regulatory_primary")
+    department = body.get("department")
+    role_key = body.get("role_key")
+    queue_entry_id = body.get("queue_entry_id")
+
+    if not source_text:
+        raise HTTPException(status_code=400, detail="source_text is required")
+    if not citation:
+        raise HTTPException(status_code=400, detail="citation is required")
+
+    # Find the target parent neuron (role or department level) for placement
+    parent_neuron = None
+    if role_key:
+        result = await db.execute(
+            select(Neuron).where(Neuron.role_key == role_key, Neuron.layer == 1, Neuron.is_active == True)
+        )
+        parent_neuron = result.scalar_one_or_none()
+    if not parent_neuron and department:
+        result = await db.execute(
+            select(Neuron).where(Neuron.department == department, Neuron.layer == 0, Neuron.is_active == True)
+        )
+        parent_neuron = result.scalar_one_or_none()
+
+    # Build context about the existing graph structure for better placement
+    context_info = ""
+    if parent_neuron:
+        children_result = await db.execute(
+            select(Neuron.id, Neuron.label, Neuron.layer, Neuron.node_type)
+            .where(Neuron.parent_id == parent_neuron.id, Neuron.is_active == True)
+            .order_by(Neuron.layer, Neuron.label)
+            .limit(30)
+        )
+        children = children_result.all()
+        if children:
+            context_info = f"\n\nExisting children of '{parent_neuron.label}' (layer {parent_neuron.layer}):\n"
+            for c in children:
+                context_info += f"  - [{c.node_type} L{c.layer}] {c.label} (id={c.id})\n"
+
+    system_prompt = f"""You are a knowledge graph architect for Yggdrasil, a 6-layer neuron hierarchy:
+L0=Department, L1=Role, L2=Task, L3=System, L4=Decision, L5=Output.
+
+Your job is to segment source material into neuron proposals that fit the hierarchy.
+Each neuron should be a self-contained knowledge unit with clear content and a concise summary.
+
+Rules:
+- Create neurons at layers 3-5 (System, Decision, Output) — these are knowledge nodes
+- Each neuron needs: label (short name), content (detailed knowledge), summary (1-sentence)
+- Content should be substantive (50-300 words) and self-contained
+- Avoid duplicating what might already exist — check the existing children listed below
+- Group related content into single neurons rather than making many tiny ones
+- Include specific references, numbers, thresholds, and procedures from the source
+{context_info}
+
+Respond with a JSON array of neuron proposals. Each proposal:
+{{
+  "layer": 3|4|5,
+  "node_type": "system"|"decision"|"output",
+  "label": "Short descriptive name",
+  "content": "Detailed content from the source material...",
+  "summary": "One-sentence summary",
+  "reason": "Why this neuron is needed"
+}}
+
+Output ONLY the JSON array, no other text."""
+
+    user_msg = f"""Citation: {citation}
+Source type: {source_type}
+Department: {department or 'unspecified'}
+Role: {role_key or 'unspecified'}
+
+Source material to segment into neurons:
+
+{source_text[:8000]}"""
+
+    try:
+        result = await claude_chat(system_prompt, user_msg, max_tokens=8192, model="sonnet")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"LLM call failed: {e}")
+
+    # Parse the proposals from the LLM response
+    response_text = result["text"].strip()
+    # Extract JSON array from response (handle markdown code blocks)
+    json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+    if not json_match:
+        raise HTTPException(status_code=500, detail=f"LLM did not return valid JSON array. Response starts with: {response_text[:300]}")
+
+    try:
+        proposals = json.loads(json_match.group())
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse proposals JSON: {e}. Raw starts with: {json_match.group()[:300]}")
+
+    # Enrich proposals with metadata
+    for p in proposals:
+        p["department"] = department
+        p["role_key"] = role_key
+        p["parent_id"] = parent_neuron.id if parent_neuron else None
+        p["source_type"] = source_type
+        p["citation"] = citation
+        p["source_url"] = body.get("source_url")
+        p["effective_date"] = body.get("effective_date")
+
+    return {
+        "proposals": proposals,
+        "count": len(proposals),
+        "citation": citation,
+        "source_type": source_type,
+        "department": department,
+        "role_key": role_key,
+        "parent_id": parent_neuron.id if parent_neuron else None,
+        "parent_label": parent_neuron.label if parent_neuron else None,
+        "queue_entry_id": queue_entry_id,
+        "llm_cost": {
+            "input_tokens": result["input_tokens"],
+            "output_tokens": result["output_tokens"],
+            "cost_usd": result["cost_usd"],
+        },
+    }
+
+
+@router.post("/ingest-source/apply")
+async def apply_ingest_source(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply approved neuron proposals from ingest-source.
+
+    Request body:
+      - proposals: list of approved neuron proposals (from ingest-source response)
+      - queue_entry_id: int | None (emergent queue entry to resolve)
+    """
+    from app.services.reference_hooks import populate_external_references
+
+    proposals = body.get("proposals", [])
+    queue_entry_id = body.get("queue_entry_id")
+
+    if not proposals:
+        raise HTTPException(status_code=400, detail="No proposals to apply")
+
+    # Get current query count for created_at_query_count
+    state = (await db.execute(select(SystemState).where(SystemState.id == 1))).scalar_one_or_none()
+    query_count = state.total_queries if state else 0
+
+    created_ids = []
+    for p in proposals:
+        neuron = Neuron(
+            parent_id=p.get("parent_id"),
+            layer=p.get("layer", 3),
+            node_type=p.get("node_type", "system"),
+            label=p.get("label", ""),
+            content=p.get("content", ""),
+            summary=p.get("summary", ""),
+            department=p.get("department"),
+            role_key=p.get("role_key"),
+            is_active=True,
+            created_at_query_count=query_count,
+            source_origin="ingest",
+            source_type=p.get("source_type", "operational"),
+            citation=p.get("citation"),
+            source_url=p.get("source_url"),
+            last_verified=datetime.now(),
+        )
+        if p.get("effective_date"):
+            try:
+                from datetime import date
+                neuron.effective_date = date.fromisoformat(p["effective_date"])
+            except (ValueError, TypeError):
+                pass
+
+        populate_external_references(neuron)
+        db.add(neuron)
+        await db.flush()
+        created_ids.append(neuron.id)
+
+        # Record the refinement
+        db.add(NeuronRefinement(
+            neuron_id=neuron.id,
+            action="create",
+            field=None,
+            old_value=None,
+            new_value=p.get("label", ""),
+            reason=f"Ingested from {p.get('citation', 'unknown source')}",
+        ))
+
+    # Resolve the emergent queue entry if specified
+    if queue_entry_id and created_ids:
+        entry = await db.get(EmergentQueue, queue_entry_id)
+        if entry:
+            entry.status = "resolved"
+            entry.resolved_neuron_id = created_ids[0]
+            entry.resolved_at = datetime.now()
+            entry.notes = f"Resolved via ingest: created {len(created_ids)} neurons"
+
+    # Create edges between new neurons and neurons that reference this citation
+    edges_created = 0
+    if queue_entry_id:
+        entry = await db.get(EmergentQueue, queue_entry_id)
+        if entry:
+            referencing_ids = json.loads(entry.detected_in_neuron_ids or "[]")
+            for ref_id in referencing_ids:
+                for new_id in created_ids:
+                    if ref_id != new_id:
+                        # Check if edge already exists
+                        existing = await db.execute(
+                            select(NeuronEdge).where(
+                                NeuronEdge.source_id == ref_id,
+                                NeuronEdge.target_id == new_id,
+                            )
+                        )
+                        if not existing.scalar_one_or_none():
+                            db.add(NeuronEdge(
+                                source_id=ref_id,
+                                target_id=new_id,
+                                co_fire_count=1,
+                                weight=0.3,
+                                last_updated_query=query_count,
+                            ))
+                            edges_created += 1
+
+    await db.commit()
+
+    return {
+        "status": "applied",
+        "neurons_created": len(created_ids),
+        "neuron_ids": created_ids,
+        "edges_created": edges_created,
+        "queue_entry_resolved": queue_entry_id is not None,
+    }
+
+
+# ── Batch Ingestion (background chunked processing) ──
+
+_batch_jobs: dict[str, dict] = {}  # job_id -> state
+
+
+def _chunk_text(text: str, chunk_size: int = 18000, overlap: int = 300) -> list[str]:
+    """Split text into overlapping chunks, breaking at paragraph boundaries."""
+    chunks = []
+    pos = 0
+    while pos < len(text):
+        end = min(pos + chunk_size, len(text))
+        # Try to break at a paragraph boundary
+        if end < len(text):
+            break_at = text.rfind('\n\n', pos + chunk_size // 2, end)
+            if break_at > pos:
+                end = break_at
+        chunks.append(text[pos:end].strip())
+        pos = end - overlap if end < len(text) else end
+    return [c for c in chunks if c]
+
+
+async def _run_batch_ingest(job_id: str, chunks: list[str], system_prompt: str,
+                            citation: str, source_type: str, department: str | None,
+                            role_key: str | None, parent_id: int | None,
+                            source_url: str | None, effective_date: str | None,
+                            queue_entry_id: int | None, model: str = "haiku"):
+    """Background task: process chunks sequentially through the chosen model."""
+    from app.services.claude_cli import claude_chat
+
+    job = _batch_jobs[job_id]
+    all_proposals = []
+    total_cost = 0.0
+    total_input = 0
+    total_output = 0
+    labels_so_far: list[str] = []
+
+    for i, chunk in enumerate(chunks):
+        if job.get("cancelled"):
+            job["status"] = "cancelled"
+            return
+
+        job["current_chunk"] = i + 1
+        job["step"] = f"Processing chunk {i + 1} of {len(chunks)}"
+
+        # Include labels of already-generated proposals to avoid duplication
+        dedup_hint = ""
+        if labels_so_far:
+            dedup_hint = "\n\nNeurons already created from earlier chunks (DO NOT duplicate):\n"
+            for lbl in labels_so_far[-30:]:  # last 30 to stay within budget
+                dedup_hint += f"  - {lbl}\n"
+
+        user_msg = f"""Citation: {citation}
+Source type: {source_type}
+Department: {department or 'unspecified'}
+Role: {role_key or 'unspecified'}
+Chunk {i + 1} of {len(chunks)}
+{dedup_hint}
+Source material to segment into neurons:
+
+{chunk}"""
+
+        try:
+            result = await claude_chat(system_prompt, user_msg, max_tokens=8192, model=model)
+            response_text = result["text"].strip()
+            json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+            if json_match:
+                proposals = json.loads(json_match.group())
+                for p in proposals:
+                    p["department"] = department
+                    p["role_key"] = role_key
+                    p["parent_id"] = parent_id
+                    p["source_type"] = source_type
+                    p["citation"] = citation
+                    p["source_url"] = source_url
+                    p["effective_date"] = effective_date
+                    labels_so_far.append(p.get("label", ""))
+                all_proposals.extend(proposals)
+            total_cost += result["cost_usd"]
+            total_input += result["input_tokens"]
+            total_output += result["output_tokens"]
+        except Exception as e:
+            job["errors"].append(f"Chunk {i + 1}: {str(e)[:200]}")
+
+        job["proposals"] = all_proposals
+        job["cost_usd"] = total_cost
+        job["input_tokens"] = total_input
+        job["output_tokens"] = total_output
+
+    job["status"] = "done"
+    job["step"] = f"Complete: {len(all_proposals)} proposals from {len(chunks)} chunks"
+    job["queue_entry_id"] = queue_entry_id
+
+
+@router.post("/ingest-source/batch")
+async def start_batch_ingest(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a background batch ingestion job that processes large source texts in chunks.
+
+    Request body: same as ingest-source, but source_text can be arbitrarily large.
+    Returns a job_id to poll for progress.
+    """
+    import uuid
+
+    source_text = body.get("source_text", "").strip()
+    citation = body.get("citation", "").strip()
+    source_type = body.get("source_type", "regulatory_primary")
+    department = body.get("department")
+    role_key = body.get("role_key")
+    queue_entry_id = body.get("queue_entry_id")
+    model = body.get("model", "haiku")
+    chunk_size = body.get("chunk_size", 18000)
+
+    if not source_text:
+        raise HTTPException(status_code=400, detail="source_text is required")
+    if not citation:
+        raise HTTPException(status_code=400, detail="citation is required")
+
+    # Find parent neuron
+    parent_neuron = None
+    if role_key:
+        result = await db.execute(
+            select(Neuron).where(Neuron.role_key == role_key, Neuron.layer == 1, Neuron.is_active == True)
+        )
+        parent_neuron = result.scalar_one_or_none()
+    if not parent_neuron and department:
+        result = await db.execute(
+            select(Neuron).where(Neuron.department == department, Neuron.layer == 0, Neuron.is_active == True)
+        )
+        parent_neuron = result.scalar_one_or_none()
+
+    # Build context
+    context_info = ""
+    if parent_neuron:
+        children_result = await db.execute(
+            select(Neuron.id, Neuron.label, Neuron.layer, Neuron.node_type)
+            .where(Neuron.parent_id == parent_neuron.id, Neuron.is_active == True)
+            .order_by(Neuron.layer, Neuron.label)
+            .limit(30)
+        )
+        children = children_result.all()
+        if children:
+            context_info = f"\n\nExisting children of '{parent_neuron.label}' (layer {parent_neuron.layer}):\n"
+            for c in children:
+                context_info += f"  - [{c.node_type} L{c.layer}] {c.label} (id={c.id})\n"
+
+    system_prompt = f"""You are a knowledge graph architect for Yggdrasil, a 6-layer neuron hierarchy:
+L0=Department, L1=Role, L2=Task, L3=System, L4=Decision, L5=Output.
+
+Your job is to segment source material into neuron proposals that fit the hierarchy.
+Each neuron should be a self-contained knowledge unit with clear content and a concise summary.
+
+Rules:
+- Create neurons at layers 3-5 (System, Decision, Output) — these are knowledge nodes
+- Each neuron needs: label (short name), content (detailed knowledge), summary (1-sentence)
+- Content should be substantive (50-300 words) and self-contained
+- Avoid duplicating what might already exist — check the existing children listed below
+- Group related content into single neurons rather than making many tiny ones
+- Include specific references, numbers, thresholds, and procedures from the source
+- You are processing one chunk of a larger document — focus on this chunk's content
+{context_info}
+
+Respond with a JSON array of neuron proposals. Each proposal:
+{{
+  "layer": 3|4|5,
+  "node_type": "system"|"decision"|"output",
+  "label": "Short descriptive name",
+  "content": "Detailed content from the source material...",
+  "summary": "One-sentence summary",
+  "reason": "Why this neuron is needed"
+}}
+
+Output ONLY the JSON array, no other text."""
+
+    chunks = _chunk_text(source_text, chunk_size=chunk_size)
+    job_id = str(uuid.uuid4())[:8]
+
+    _batch_jobs[job_id] = {
+        "status": "running",
+        "step": "Starting...",
+        "total_chunks": len(chunks),
+        "current_chunk": 0,
+        "proposals": [],
+        "errors": [],
+        "cost_usd": 0.0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "citation": citation,
+        "source_type": source_type,
+        "department": department,
+        "role_key": role_key,
+        "parent_id": parent_neuron.id if parent_neuron else None,
+        "parent_label": parent_neuron.label if parent_neuron else None,
+        "queue_entry_id": queue_entry_id,
+        "total_chars": len(source_text),
+        "model": model,
+        "cancelled": False,
+    }
+
+    asyncio.ensure_future(_run_batch_ingest(
+        job_id, chunks, system_prompt, citation, source_type,
+        department, role_key,
+        parent_neuron.id if parent_neuron else None,
+        body.get("source_url"), body.get("effective_date"),
+        queue_entry_id, model=model,
+    ))
+
+    return {
+        "job_id": job_id,
+        "total_chunks": len(chunks),
+        "total_chars": len(source_text),
+        "status": "running",
+    }
+
+
+@router.get("/ingest-source/batch/{job_id}")
+async def get_batch_ingest_status(job_id: str):
+    """Poll for batch ingestion job progress."""
+    job = _batch_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "step": job["step"],
+        "total_chunks": job["total_chunks"],
+        "current_chunk": job["current_chunk"],
+        "proposals_count": len(job["proposals"]),
+        "proposals": job["proposals"] if job["status"] == "done" else [],
+        "errors": job["errors"],
+        "cost_usd": job["cost_usd"],
+        "input_tokens": job["input_tokens"],
+        "output_tokens": job["output_tokens"],
+        "citation": job["citation"],
+        "department": job["department"],
+        "role_key": job["role_key"],
+        "parent_id": job["parent_id"],
+        "parent_label": job.get("parent_label"),
+        "queue_entry_id": job.get("queue_entry_id"),
+    }
+
+
+@router.post("/ingest-source/batch/{job_id}/cancel")
+async def cancel_batch_ingest(job_id: str):
+    """Cancel a running batch ingestion job."""
+    job = _batch_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job["cancelled"] = True
+    return {"status": "cancelling", "job_id": job_id}
+
+
+@router.get("/ingest-source/batch")
+async def list_batch_jobs():
+    """List all batch ingestion jobs (active and recent)."""
+    jobs = []
+    for job_id, job in _batch_jobs.items():
+        jobs.append({
+            "job_id": job_id,
+            "status": job["status"],
+            "step": job["step"],
+            "total_chunks": job["total_chunks"],
+            "current_chunk": job["current_chunk"],
+            "proposals_count": len(job["proposals"]),
+            "errors": job["errors"],
+            "cost_usd": job["cost_usd"],
+            "input_tokens": job["input_tokens"],
+            "output_tokens": job["output_tokens"],
+            "citation": job["citation"],
+            "queue_entry_id": job.get("queue_entry_id"),
+        })
+    return {"jobs": jobs, "active_count": sum(1 for j in jobs if j["status"] == "running")}
 
 
 @router.post("/prune-edges")
@@ -951,6 +1575,213 @@ async def compliance_audit(db: AsyncSession = Depends(get_db)):
                     "days_since_verified": days_since,
                 })
 
+    # ── 5. Validity & Reliability (MET-2) ──
+    # Confidence intervals, cross-validation, and robustness metrics
+    import random as _random
+
+    # Gather all eval scores with their dimensions
+    all_evals = await db.execute(
+        select(
+            EvalScore.answer_mode,
+            EvalScore.accuracy,
+            EvalScore.completeness,
+            EvalScore.clarity,
+            EvalScore.faithfulness,
+            EvalScore.overall,
+        ).order_by(EvalScore.id)
+    )
+    eval_rows = all_evals.all()
+
+    def _ci95(values: list[float]) -> dict:
+        """Compute mean and 95% confidence interval."""
+        n = len(values)
+        if n < 2:
+            return {"mean": round(values[0], 3) if values else 0, "ci_lower": 0, "ci_upper": 0, "n": n, "stderr": 0}
+        mean = sum(values) / n
+        variance = sum((v - mean) ** 2 for v in values) / (n - 1)
+        stderr = math.sqrt(variance / n)
+        # t-approx for 95% CI (use 1.96 for large n, conservative 2.0 for small)
+        t_val = 2.0 if n < 30 else 1.96
+        margin = t_val * stderr
+        return {
+            "mean": round(mean, 3),
+            "ci_lower": round(mean - margin, 3),
+            "ci_upper": round(mean + margin, 3),
+            "n": n,
+            "stderr": round(stderr, 4),
+        }
+
+    # Per-mode confidence intervals for each dimension
+    modes_data: dict[str, dict[str, list[float]]] = {}
+    for mode, acc, comp, clar, faith, overall in eval_rows:
+        if mode not in modes_data:
+            modes_data[mode] = {"accuracy": [], "completeness": [], "clarity": [], "faithfulness": [], "overall": []}
+        modes_data[mode]["accuracy"].append(float(acc))
+        modes_data[mode]["completeness"].append(float(comp))
+        modes_data[mode]["clarity"].append(float(clar))
+        modes_data[mode]["faithfulness"].append(float(faith))
+        modes_data[mode]["overall"].append(float(overall))
+
+    confidence_intervals: dict[str, dict[str, dict]] = {}
+    for mode, dims in modes_data.items():
+        confidence_intervals[mode] = {dim: _ci95(vals) for dim, vals in dims.items()}
+
+    # Cross-validation: 5-fold stability of overall scores per mode
+    K_FOLDS = 5
+    cross_validation: dict[str, dict] = {}
+    for mode, dims in modes_data.items():
+        overall_vals = dims["overall"]
+        n = len(overall_vals)
+        if n < K_FOLDS:
+            cross_validation[mode] = {"folds": K_FOLDS, "n": n, "fold_means": [], "fold_cv": 0, "stable": True, "message": "Too few samples for cross-validation"}
+            continue
+
+        # Deterministic shuffle based on mode name for reproducibility
+        shuffled = list(overall_vals)
+        _random.Random(hash(mode)).shuffle(shuffled)
+        fold_size = n // K_FOLDS
+        fold_means = []
+        for i in range(K_FOLDS):
+            start = i * fold_size
+            end = start + fold_size if i < K_FOLDS - 1 else n
+            fold_vals = shuffled[start:end]
+            fold_means.append(round(sum(fold_vals) / len(fold_vals), 3))
+
+        fm_mean = sum(fold_means) / len(fold_means)
+        fm_var = sum((v - fm_mean) ** 2 for v in fold_means) / max(1, len(fold_means) - 1)
+        fm_cv = math.sqrt(fm_var) / fm_mean if fm_mean > 0 else 0
+
+        cross_validation[mode] = {
+            "folds": K_FOLDS,
+            "n": n,
+            "fold_means": fold_means,
+            "fold_cv": round(fm_cv, 4),
+            "stable": fm_cv < 0.10,  # CV < 10% across folds = stable
+            "message": "Stable" if fm_cv < 0.10 else "High variance across folds — results may not be robust",
+        }
+
+    # Robustness: scoring signal CV (coefficient of variation per signal)
+    signal_robustness: dict[str, dict] = {}
+    for sig in SIGNALS:
+        vals = all_signal_values[sig]
+        if not vals:
+            signal_robustness[sig] = {"cv": 0, "robust": True, "n": 0}
+            continue
+        mean = sum(vals) / len(vals)
+        variance = sum((v - mean) ** 2 for v in vals) / max(1, len(vals) - 1)
+        cv = math.sqrt(variance) / mean if mean > 0 else 0
+        signal_robustness[sig] = {
+            "cv": round(cv, 4),
+            "robust": cv < 1.5,  # CV < 150% is reasonable for scoring signals
+            "n": len(vals),
+        }
+
+    validity_reliability = {
+        "confidence_intervals": confidence_intervals,
+        "cross_validation": cross_validation,
+        "signal_robustness": signal_robustness,
+        "total_evals": len(eval_rows),
+    }
+
+    # ── 6. Fairness Analysis & Remediation (MET-4 expanded) ──
+    # Per-department eval quality — do some departments get worse answers?
+    dept_eval_result = await db.execute(text("""
+        SELECT n.department, e.answer_mode,
+               COUNT(*) as cnt,
+               AVG(e.overall) as avg_overall,
+               AVG(e.faithfulness) as avg_faith
+        FROM eval_scores e
+        JOIN queries q ON e.query_id = q.id
+        JOIN LATERAL (
+            SELECT DISTINCT n2.department
+            FROM neurons n2
+            WHERE n2.id = ANY(
+                SELECT (jsonb_array_elements_text(q.selected_neuron_ids::jsonb))::int
+            ) AND n2.department IS NOT NULL
+        ) n ON true
+        WHERE q.selected_neuron_ids IS NOT NULL
+          AND q.selected_neuron_ids != '[]'
+        GROUP BY n.department, e.answer_mode
+        ORDER BY n.department, e.answer_mode
+    """))
+    dept_eval_rows = dept_eval_result.fetchall()
+
+    dept_eval_quality: list[dict] = []
+    for row in dept_eval_rows:
+        dept_eval_quality.append({
+            "department": row[0],
+            "answer_mode": row[1],
+            "eval_count": row[2],
+            "avg_overall": round(float(row[3]), 2),
+            "avg_faithfulness": round(float(row[4]), 2),
+        })
+
+    # Invocation disparity: ratio of most-invoked to least-invoked department
+    inv_values = [v for v in dept_invocations.values() if v > 0]
+    invocation_disparity = round(max(inv_values) / min(inv_values), 1) if len(inv_values) >= 2 and min(inv_values) > 0 else None
+
+    # Utility disparity: range of avg utility across departments
+    dept_avg_utilities = [
+        sum(dept_utility[d]) / len(dept_utility[d])
+        for d in dept_utility if dept_utility[d]
+    ]
+    utility_range = round(max(dept_avg_utilities) - min(dept_avg_utilities), 4) if len(dept_avg_utilities) >= 2 else 0
+
+    # Automated remediation recommendations
+    remediation_items: list[dict] = []
+
+    if dept_cv > 0.5:
+        # Find under-represented departments
+        fair_share = total_neurons / len(dept_counts) if dept_counts else 0
+        for dept, count in dept_counts.items():
+            if count < fair_share * 0.5:
+                deficit = round(fair_share - count)
+                remediation_items.append({
+                    "type": "coverage_gap",
+                    "severity": "high" if count < fair_share * 0.25 else "medium",
+                    "department": dept,
+                    "message": f"{dept} has {count} neurons ({round(count/total_neurons*100, 1)}% of total), well below fair share of ~{round(fair_share)}. Consider adding ~{deficit} neurons.",
+                    "action": f"Use autopilot gap-driven queries targeting {dept} topics to grow coverage.",
+                })
+
+    # Check for departments with notably lower eval quality
+    if dept_eval_quality:
+        neuron_evals = [d for d in dept_eval_quality if "neuron" in d["answer_mode"]]
+        if len(neuron_evals) >= 2:
+            avg_all = sum(d["avg_overall"] for d in neuron_evals) / len(neuron_evals)
+            for d in neuron_evals:
+                if d["avg_overall"] < avg_all - 0.5 and d["eval_count"] >= 3:
+                    remediation_items.append({
+                        "type": "quality_gap",
+                        "severity": "medium",
+                        "department": d["department"],
+                        "message": f"{d['department']} neuron-assisted evals average {d['avg_overall']:.1f} vs system avg {avg_all:.1f} — content quality may need improvement.",
+                        "action": f"Review and refine neuron content in {d['department']} department. Run targeted blind evals to confirm.",
+                    })
+
+    # Check for departments with very low invocations (unused knowledge)
+    if inv_values:
+        median_inv = sorted(inv_values)[len(inv_values) // 2]
+        for dept, inv in dept_invocations.items():
+            if inv < median_inv * 0.1 and dept_counts.get(dept, 0) > 10:
+                remediation_items.append({
+                    "type": "utilization_gap",
+                    "severity": "low",
+                    "department": dept,
+                    "message": f"{dept} has {dept_counts[dept]} neurons but only {inv} invocations (median is {median_inv}). Content may not match real queries.",
+                    "action": f"Review {dept} neuron labels and summaries for relevance. Consider sample queries to test activation.",
+                })
+
+    fairness_analysis = {
+        "department_eval_quality": dept_eval_quality,
+        "invocation_disparity_ratio": invocation_disparity,
+        "utility_range": utility_range,
+        "coverage_cv": round(dept_cv, 3),
+        "remediation_plan": remediation_items,
+        "remediation_count": len(remediation_items),
+        "fairness_pass": dept_cv <= 0.5 and len(remediation_items) == 0,
+    }
+
     return {  # compliance-audit response
         "total_neurons": total_neurons,
         "pii_scan": {
@@ -988,6 +1819,8 @@ async def compliance_audit(db: AsyncSession = Depends(get_db)):
             "stale_neurons": stale_neurons,
             "stale_neurons_count": len(stale_neurons),
         },
+        "validity_reliability": validity_reliability,
+        "fairness_analysis": fairness_analysis,
     }
 
 
@@ -1061,8 +1894,8 @@ async def governance_dashboard(db: AsyncSession = Depends(get_db)):
     # Use a blended classify rate: total classify cost / total classify tokens
     classify_cost_est_result = await db.execute(text("""
         SELECT COALESCE(SUM(
-            classify_input_tokens * 0.25 / 1000000.0 +
-            classify_output_tokens * 1.25 / 1000000.0
+            classify_input_tokens * 1.00 / 1000000.0 +
+            classify_output_tokens * 5.00 / 1000000.0
         ), 0)
         FROM queries
     """))
@@ -1098,6 +1931,20 @@ async def governance_dashboard(db: AsyncSession = Depends(get_db)):
         select(func.count(func.distinct(Neuron.department)))
         .where(Neuron.department.isnot(None), Neuron.is_active == True)
     )).scalar() or 0
+
+    # Coverage CV (fairness metric)
+    dept_neuron_counts = await db.execute(
+        select(Neuron.department, func.count(Neuron.id))
+        .where(Neuron.is_active == True, Neuron.department.isnot(None))
+        .group_by(Neuron.department)
+    )
+    dept_vals = [row[1] for row in dept_neuron_counts.all()]
+    if len(dept_vals) >= 2:
+        d_mean = sum(dept_vals) / len(dept_vals)
+        d_var = sum((v - d_mean) ** 2 for v in dept_vals) / (len(dept_vals) - 1)
+        coverage_cv = round(math.sqrt(d_var) / d_mean, 3) if d_mean > 0 else 0.0
+    else:
+        coverage_cv = 0.0
 
     # Zero-hit rate (last 50 queries)
     recent_q = await db.execute(
@@ -1172,6 +2019,7 @@ async def governance_dashboard(db: AsyncSession = Depends(get_db)):
             "avg_opus_eval": round(float(avg_opus_eval), 2) if avg_opus_eval else None,
             "avg_neuron_eval": round(float(avg_neuron_eval), 2) if avg_neuron_eval else None,
             "opus_cost_per_1m": round(opus_cost_1m, 2) if opus_cost_1m else None,
+            "coverage_cv": coverage_cv,
         },
         "change_activity": {
             "refinements_30d": recent_refinements,

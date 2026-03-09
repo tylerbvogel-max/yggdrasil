@@ -15,11 +15,14 @@ import DeptChordDiagram from './components/DeptChordDiagram'
 import GettingStartedPage from './components/GettingStartedPage'
 import CompliancePage from './components/CompliancePage'
 import ComplianceAuditPage from './components/ComplianceAuditPage'
+import QualityPage from './components/QualityPage'
+import FairnessPage from './components/FairnessPage'
 import GovernancePage from './components/GovernancePage'
 import PerformancePage from './components/PerformancePage'
 import PerformanceExplanationPage from './components/PerformanceExplanationPage'
+import EmergentQueuePage from './components/EmergentQueuePage'
 
-type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'nextsteps' | 'about' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'governance' | 'performance' | 'perf-explain';
+type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain';
 
 interface NavItem {
   key: Tab;
@@ -49,15 +52,18 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { key: 'autopilot', label: 'Autopilot' },
       { key: 'refinements', label: 'Refinements' },
+      { key: 'emergent-queue', label: 'Emergent Queue' },
     ],
   },
   {
     label: 'Evaluate',
     items: [
       { key: 'performance', label: 'Performance' },
-      { key: 'perf-explain', label: 'Methodology' },
+      { key: 'quality', label: 'Quality' },
+      { key: 'fairness', label: 'Fairness' },
+      { key: 'compliance-audit', label: 'Compliance' },
       { key: 'evaluation', label: 'Evaluation' },
-      { key: 'compliance-audit', label: 'Audit' },
+      { key: 'perf-explain', label: 'Methodology' },
     ],
   },
   {
@@ -124,12 +130,15 @@ export default function App() {
         {tab === 'refinements' && <RefinementHistory />}
         {tab === 'samples' && <SampleQueries />}
         {tab === 'autopilot' && <AutopilotPage />}
+        {tab === 'emergent-queue' && <EmergentQueuePage />}
         {tab === 'nextsteps' && <NextSteps />}
         {tab === 'getting-started' && <GettingStartedPage />}
         {tab === 'about' && <AboutPage />}
         {tab === 'monetization' && <MonetizationPage />}
         {tab === 'compliance' && <CompliancePage />}
         {tab === 'compliance-audit' && <ComplianceAuditPage />}
+        {tab === 'quality' && <QualityPage />}
+        {tab === 'fairness' && <FairnessPage />}
         {tab === 'governance' && <GovernancePage />}
         {tab === 'performance' && <PerformancePage />}
         {tab === 'perf-explain' && <PerformanceExplanationPage />}

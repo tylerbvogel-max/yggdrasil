@@ -1,30 +1,19 @@
-import { useEffect, useState } from 'react';
-import { fetchComplianceAudit } from '../api';
-import type { ComplianceAuditResponse } from '../api';
+import { useComplianceAudit } from '../hooks/useComplianceAudit';
 
 export default function ComplianceAuditPage() {
-  const [data, setData] = useState<ComplianceAuditResponse | null>(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchComplianceAudit()
-      .then(setData)
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+  const { data, error, loading } = useComplianceAudit();
 
   if (error) return <div className="error-msg">{error}</div>;
-  if (loading || !data) return <div className="loading">Running compliance audit...</div>;
+  if (loading || !data) return <div className="loading">Running compliance scan...</div>;
 
-  const { pii_scan, bias_assessment, scoring_baselines, provenance_audit } = data;
+  const { pii_scan, scoring_baselines, provenance_audit, bias_assessment } = data;
 
   return (
     <div className="security-page">
-      <h2>Compliance Audit</h2>
+      <h2>Compliance Scan</h2>
       <p className="security-intro">
-        Automated compliance checks covering PII scanning (MET-3), bias assessment (MET-4),
-        scoring baselines (MET-1), and provenance audit (A007). Run on-demand against live neuron data.
+        Automated compliance checks: PII scanning (MET-3), scoring signal baselines (MET-1),
+        provenance audit (A007), and structural distribution analysis. Run on-demand against live neuron data.
       </p>
 
       {/* Summary cards */}
@@ -34,12 +23,6 @@ export default function ComplianceAuditPage() {
             {pii_scan.clean ? 'Clean' : pii_scan.total_findings}
           </div>
           <div className="card-label">PII Findings</div>
-        </div>
-        <div className="stat-card">
-          <div className="card-value" style={{ color: bias_assessment.coverage_imbalanced ? '#fb923c' : '#22c55e' }}>
-            {bias_assessment.coverage_cv.toFixed(2)}
-          </div>
-          <div className="card-label">Coverage CV{bias_assessment.coverage_imbalanced ? ' (imbalanced)' : ''}</div>
         </div>
         <div className="stat-card">
           <div className="card-value">{scoring_baselines.queries_analyzed}</div>
@@ -71,7 +54,8 @@ export default function ComplianceAuditPage() {
         </h3>
         <p className="security-section-desc">
           Scans all active neuron content, summary, and label fields for PII patterns
-          (SSN, email, credit card, phone number).
+          (SSN, email, credit card, phone number). Includes false positive filtering for
+          DFARS clause numbers and example/placeholder email domains.
         </p>
         {pii_scan.clean ? (
           <div style={{ color: '#22c55e', fontSize: '0.85rem' }}>
@@ -94,94 +78,6 @@ export default function ComplianceAuditPage() {
               ))}
             </tbody>
           </table>
-        )}
-      </section>
-
-      {/* Bias Assessment */}
-      <section className="security-section">
-        <h3>Bias & Coverage Assessment
-          <span style={{
-            marginLeft: 8, fontSize: '0.7rem', padding: '2px 8px', borderRadius: 4,
-            background: bias_assessment.coverage_imbalanced ? '#fb923c22' : '#22c55e22',
-            color: bias_assessment.coverage_imbalanced ? '#fb923c' : '#22c55e',
-            border: `1px solid ${bias_assessment.coverage_imbalanced ? '#fb923c44' : '#22c55e44'}`,
-          }}>
-            {bias_assessment.coverage_imbalanced ? 'IMBALANCED' : 'BALANCED'}
-          </span>
-        </h3>
-        <p className="security-section-desc">
-          Department neuron distribution analysis. Coefficient of Variation (CV) &gt; 0.5 indicates
-          significant imbalance that may bias query responses toward over-represented departments.
-        </p>
-
-        <h4 style={{ margin: '12px 0 6px', fontSize: '0.85rem', color: 'var(--text-dim)' }}>Department Coverage</h4>
-        <table className="about-table" style={{ fontSize: '0.8rem' }}>
-          <thead>
-            <tr><th>Department</th><th>Neurons</th><th>% of Total</th><th>Invocations</th><th>Avg Utility</th></tr>
-          </thead>
-          <tbody>
-            {bias_assessment.department_coverage.map(d => {
-              const isOutlier = d.pct_of_total > (100 / bias_assessment.department_count) * 2;
-              return (
-                <tr key={d.department}>
-                  <td>{d.department}</td>
-                  <td style={{ color: isOutlier ? '#fb923c' : undefined, fontWeight: isOutlier ? 600 : undefined }}>
-                    {d.neuron_count}
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <div style={{ width: 60, height: 8, background: '#0f172a', borderRadius: 4, overflow: 'hidden' }}>
-                        <div style={{
-                          width: `${Math.min(100, d.pct_of_total)}%`, height: '100%',
-                          background: isOutlier ? '#fb923c' : '#60a5fa', borderRadius: 4,
-                        }} />
-                      </div>
-                      <span>{d.pct_of_total}%</span>
-                    </div>
-                  </td>
-                  <td>{d.total_invocations.toLocaleString()}</td>
-                  <td>{d.avg_utility.toFixed(3)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-
-        <h4 style={{ margin: '16px 0 6px', fontSize: '0.85rem', color: 'var(--text-dim)' }}>Layer Distribution</h4>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {Object.entries(bias_assessment.layer_distribution).map(([layer, count]) => (
-            <div key={layer} style={{
-              background: 'var(--bg-input)', borderRadius: 6, padding: '6px 12px',
-              fontSize: '0.8rem', textAlign: 'center',
-            }}>
-              <div style={{ fontWeight: 600, color: '#60a5fa' }}>{count}</div>
-              <div style={{ color: '#8892a8', fontSize: '0.7rem' }}>{layer}</div>
-            </div>
-          ))}
-        </div>
-
-        {bias_assessment.eval_disaggregation.length > 0 && (
-          <>
-            <h4 style={{ margin: '16px 0 6px', fontSize: '0.85rem', color: 'var(--text-dim)' }}>Eval Score Disaggregation by Mode</h4>
-            <table className="about-table" style={{ fontSize: '0.8rem' }}>
-              <thead>
-                <tr><th>Mode</th><th>Evals</th><th>Accuracy</th><th>Completeness</th><th>Clarity</th><th>Faithfulness</th><th>Overall</th></tr>
-              </thead>
-              <tbody>
-                {bias_assessment.eval_disaggregation.map(e => (
-                  <tr key={e.mode}>
-                    <td>{e.mode}</td>
-                    <td>{e.count}</td>
-                    <td>{e.avg_accuracy.toFixed(1)}</td>
-                    <td>{e.avg_completeness.toFixed(1)}</td>
-                    <td>{e.avg_clarity.toFixed(1)}</td>
-                    <td>{e.avg_faithfulness.toFixed(1)}</td>
-                    <td style={{ fontWeight: 600 }}>{e.avg_overall.toFixed(1)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
         )}
       </section>
 
@@ -223,6 +119,25 @@ export default function ComplianceAuditPage() {
                 <strong style={{ textTransform: 'capitalize' }}>{sig}</strong>
               </div>
               <p className="security-item-detail" style={{ marginTop: 4 }}>{rationale}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Layer Distribution */}
+      <section className="security-section">
+        <h3>Structural Distribution</h3>
+        <p className="security-section-desc">
+          Neuron distribution across the 6-layer hierarchy (L0=Department through L5=Output).
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {Object.entries(bias_assessment.layer_distribution).map(([layer, count]) => (
+            <div key={layer} style={{
+              background: 'var(--bg-input)', borderRadius: 6, padding: '6px 12px',
+              fontSize: '0.8rem', textAlign: 'center',
+            }}>
+              <div style={{ fontWeight: 600, color: '#60a5fa' }}>{count}</div>
+              <div style={{ color: '#8892a8', fontSize: '0.7rem' }}>{layer}</div>
             </div>
           ))}
         </div>

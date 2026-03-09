@@ -366,6 +366,31 @@ export interface SignalBaseline {
   p95: number;
 }
 
+export interface ConfidenceInterval {
+  mean: number;
+  ci_lower: number;
+  ci_upper: number;
+  n: number;
+  stderr: number;
+}
+
+export interface CrossValidation {
+  folds: number;
+  n: number;
+  fold_means: number[];
+  fold_cv: number;
+  stable: boolean;
+  message: string;
+}
+
+export interface RemediationItem {
+  type: string;
+  severity: string;
+  department: string;
+  message: string;
+  action: string;
+}
+
 export interface ComplianceAuditResponse {
   total_neurons: number;
   pii_scan: PiiScanResult;
@@ -390,6 +415,21 @@ export interface ComplianceAuditResponse {
     missing_source_urls_count: number;
     stale_neurons: { neuron_id: number; label: string; department: string | null; source_type: string; last_verified: string; days_since_verified: number }[];
     stale_neurons_count: number;
+  };
+  validity_reliability: {
+    confidence_intervals: Record<string, Record<string, ConfidenceInterval>>;
+    cross_validation: Record<string, CrossValidation>;
+    signal_robustness: Record<string, { cv: number; robust: boolean; n: number }>;
+    total_evals: number;
+  };
+  fairness_analysis: {
+    department_eval_quality: { department: string; answer_mode: string; eval_count: number; avg_overall: number; avg_faithfulness: number }[];
+    invocation_disparity_ratio: number | null;
+    utility_range: number;
+    coverage_cv: number;
+    remediation_plan: RemediationItem[];
+    remediation_count: number;
+    fairness_pass: boolean;
   };
 }
 
@@ -422,6 +462,7 @@ export interface GovernanceDashboardResponse {
     avg_opus_eval: number | null;
     avg_neuron_eval: number | null;
     opus_cost_per_1m: number | null;
+    coverage_cv: number;
   };
   change_activity: {
     refinements_30d: number;
@@ -440,4 +481,225 @@ export interface GovernanceDashboardResponse {
 
 export function fetchGovernanceDashboard(): Promise<GovernanceDashboardResponse> {
   return json<GovernanceDashboardResponse>('/admin/governance-dashboard');
+}
+
+// ── Emergent Queue ──
+
+export interface EmergentQueueEntry {
+  id: number;
+  citation_pattern: string;
+  domain: string;
+  family: string | null;
+  detection_count: number;
+  first_detected_at: string | null;
+  last_detected_at: string | null;
+  detected_in_neuron_ids: number[];
+  detected_in_query_ids: number[];
+  status: string;
+  resolved_neuron_id: number | null;
+  resolved_at: string | null;
+  notes: string | null;
+}
+
+export interface EmergentQueueResponse {
+  total: number;
+  entries: EmergentQueueEntry[];
+}
+
+export interface ScanReferencesResponse {
+  neurons_scanned: number;
+  neurons_with_references: number;
+  total_references_found: number;
+  resolved: number;
+  unresolved: number;
+  new_queue_entries: number;
+  existing_queue_entries_incremented: number;
+  top_unresolved_families: { family: string; count: number }[];
+}
+
+export function fetchEmergentQueue(status?: string): Promise<EmergentQueueResponse> {
+  const params = status ? `?status=${encodeURIComponent(status)}` : '';
+  return json<EmergentQueueResponse>(`/admin/emergent-queue${params}`);
+}
+
+export function dismissEmergentEntry(entryId: number, notes?: string): Promise<{ status: string; id: number }> {
+  return json<{ status: string; id: number }>(`/admin/emergent-queue/${entryId}/dismiss`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes: notes || '' }),
+  });
+}
+
+export function scanReferences(): Promise<ScanReferencesResponse> {
+  return json<ScanReferencesResponse>('/admin/scan-references', { method: 'POST' });
+}
+
+export interface IngestProposal {
+  layer: number;
+  node_type: string;
+  label: string;
+  content: string;
+  summary: string;
+  reason: string;
+  department: string | null;
+  role_key: string | null;
+  parent_id: number | null;
+  source_type: string;
+  citation: string;
+  source_url: string | null;
+  effective_date: string | null;
+}
+
+export interface IngestSourceResponse {
+  proposals: IngestProposal[];
+  count: number;
+  citation: string;
+  source_type: string;
+  department: string | null;
+  role_key: string | null;
+  parent_id: number | null;
+  parent_label: string | null;
+  queue_entry_id: number | null;
+  llm_cost: { input_tokens: number; output_tokens: number; cost_usd: number };
+}
+
+export interface IngestApplyResponse {
+  status: string;
+  neurons_created: number;
+  neuron_ids: number[];
+  edges_created: number;
+  queue_entry_resolved: boolean;
+}
+
+export function ingestSource(body: {
+  source_text: string;
+  citation: string;
+  source_type: string;
+  source_url?: string;
+  effective_date?: string;
+  department?: string;
+  role_key?: string;
+  queue_entry_id?: number;
+}): Promise<IngestSourceResponse> {
+  return json<IngestSourceResponse>('/admin/ingest-source', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export interface ExtractSourceResponse {
+  text: string;
+  char_count: number;
+  total_pages: number;
+  source_info: string;
+}
+
+export async function extractSourceFromFile(file: File, pageStart?: number, pageEnd?: number): Promise<ExtractSourceResponse> {
+  const form = new FormData();
+  form.append('file', file);
+  if (pageStart) form.append('page_start', String(pageStart));
+  if (pageEnd) form.append('page_end', String(pageEnd));
+  const res = await fetch('/admin/extract-source', { method: 'POST', body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function extractSourceFromUrl(url: string, pageStart?: number, pageEnd?: number): Promise<ExtractSourceResponse> {
+  const params = new URLSearchParams({ url });
+  if (pageStart) params.set('page_start', String(pageStart));
+  if (pageEnd) params.set('page_end', String(pageEnd));
+  const res = await fetch(`/admin/extract-source?${params}`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export interface BatchIngestStartResponse {
+  job_id: string;
+  total_chunks: number;
+  total_chars: number;
+  status: string;
+}
+
+export interface BatchIngestStatusResponse {
+  job_id: string;
+  status: string;
+  step: string;
+  total_chunks: number;
+  current_chunk: number;
+  proposals_count: number;
+  proposals: IngestProposal[];
+  errors: string[];
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  citation: string;
+  department: string | null;
+  role_key: string | null;
+  parent_id: number | null;
+  parent_label: string | null;
+  queue_entry_id: number | null;
+}
+
+export function startBatchIngest(body: {
+  source_text: string;
+  citation: string;
+  source_type: string;
+  source_url?: string;
+  effective_date?: string;
+  department?: string;
+  role_key?: string;
+  queue_entry_id?: number;
+  model?: string;
+  chunk_size?: number;
+}): Promise<BatchIngestStartResponse> {
+  return json<BatchIngestStartResponse>('/admin/ingest-source/batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export function pollBatchIngest(jobId: string): Promise<BatchIngestStatusResponse> {
+  return json<BatchIngestStatusResponse>(`/admin/ingest-source/batch/${jobId}`);
+}
+
+export function cancelBatchIngest(jobId: string): Promise<{ status: string }> {
+  return json<{ status: string }>(`/admin/ingest-source/batch/${jobId}/cancel`, { method: 'POST' });
+}
+
+export interface BatchJobSummary {
+  job_id: string;
+  status: string;
+  step: string;
+  total_chunks: number;
+  current_chunk: number;
+  proposals_count: number;
+  errors: string[];
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  citation: string;
+  queue_entry_id: number | null;
+}
+
+export function listBatchJobs(): Promise<{ jobs: BatchJobSummary[]; active_count: number }> {
+  return json<{ jobs: BatchJobSummary[]; active_count: number }>('/admin/ingest-source/batch');
+}
+
+export function applyIngestSource(body: {
+  proposals: IngestProposal[];
+  queue_entry_id?: number;
+}): Promise<IngestApplyResponse> {
+  return json<IngestApplyResponse>('/admin/ingest-source/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 }

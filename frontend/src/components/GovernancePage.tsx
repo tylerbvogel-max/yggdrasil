@@ -95,6 +95,9 @@ export default function GovernancePage() {
           {kpiCard('Value Score', data.kpis.value_score !== null ? data.kpis.value_score.toFixed(2) : 'N/A',
             '\u2265 2.0 (vs Opus 0.87)', data.kpis.value_score !== null ? data.kpis.value_score >= 2.0 : null,
             'Quality-adjusted cost ratio: (neuron_eval / 5) \u00F7 (run_cost / opus_cost). Measures how much quality you get per dollar relative to Opus. Opus baseline is ~0.87. Higher = better value for money.')}
+          {kpiCard('Coverage CV', data.kpis.coverage_cv.toFixed(2),
+            '\u2264 0.50', data.kpis.coverage_cv <= 0.50,
+            'Coefficient of variation of neuron counts across departments. Measures how evenly knowledge is distributed. CV > 0.50 indicates significant imbalance that may bias responses toward over-represented departments.')}
           {kpiCard('Active Alerts', data.active_alerts,
             '0', data.active_alerts === 0,
             'Number of unacknowledged system alerts. Alerts are generated automatically when scoring drift is detected, quality drops below thresholds, or the circuit breaker trips.')}
@@ -189,6 +192,14 @@ export default function GovernancePage() {
               </td>
               <td style={{ color: data.kpis.value_score !== null && data.kpis.value_score >= 2.0 ? '#22c55e' : '#fb923c' }}>
                 {data.kpis.value_score !== null && data.kpis.value_score >= 2.0 ? 'Met' : 'Below target'}
+              </td>
+            </tr>
+            <tr>
+              <td>Coverage fairness (department balance)</td>
+              <td>{'\u2264'} 0.50 CV</td>
+              <td>{data.kpis.coverage_cv.toFixed(2)}</td>
+              <td style={{ color: data.kpis.coverage_cv <= 0.50 ? '#22c55e' : '#fb923c' }}>
+                {data.kpis.coverage_cv <= 0.50 ? 'Met' : 'Imbalanced'}
               </td>
             </tr>
             <tr>

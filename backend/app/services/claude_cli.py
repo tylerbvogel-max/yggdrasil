@@ -33,10 +33,17 @@ async def claude_chat(
         env=env,
         cwd="/tmp",
     )
-    stdout, stderr = await proc.communicate(input=prompt.encode())
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=prompt.encode()),
+            timeout=120,
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise RuntimeError("Claude CLI timed out after 120 seconds")
 
     if proc.returncode != 0:
-        raise RuntimeError(f"Claude CLI failed ({proc.returncode}): {stderr.decode()}")
+        raise RuntimeError(f"Claude CLI failed ({proc.returncode}): {stderr.decode()[:500]}")
 
     data = json.loads(stdout.decode())
 
@@ -63,9 +70,9 @@ async def claude_chat(
 
 # Anthropic API pricing per million tokens (USD)
 _PRICING = {
-    "haiku":  {"input": 0.80, "output": 4.00},
+    "haiku":  {"input": 1.00, "output": 5.00},
     "sonnet": {"input": 3.00, "output": 15.00},
-    "opus":   {"input": 15.00, "output": 75.00},
+    "opus":   {"input": 5.00, "output": 25.00},
 }
 
 
