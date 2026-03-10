@@ -28,6 +28,7 @@ export default function NeuronUniverse() {
   const [maxEdges, setMaxEdges] = useState(2000);
   const [colorBy, setColorBy] = useState<'department' | 'layer'>('department');
   const [showEdges, setShowEdges] = useState(true);
+  const [hideDisconnected, setHideDisconnected] = useState(false);
   const particleSpeed = 0.004;
   const containerRef = useRef<HTMLDivElement>(null);
   const fgRef = useRef<any>(null);
@@ -72,8 +73,14 @@ export default function NeuronUniverse() {
     const links: GraphLink[] = edges
       .filter(e => nodeIds.has(e.source) && nodeIds.has(e.target))
       .map(e => ({ source: e.source, target: e.target, weight: e.weight, co_fire_count: e.co_fire_count }));
-    return { nodes: neurons as GraphNode[], links };
-  }, [neurons, edges]);
+    if (!hideDisconnected) return { nodes: neurons as GraphNode[], links };
+    const connectedIds = new Set<number>();
+    links.forEach(l => {
+      connectedIds.add(typeof l.source === 'number' ? l.source : l.source.id);
+      connectedIds.add(typeof l.target === 'number' ? l.target : l.target.id);
+    });
+    return { nodes: neurons.filter(n => connectedIds.has(n.id)) as GraphNode[], links };
+  }, [neurons, edges, hideDisconnected]);
 
   const layerColors = ['#2dd4bf', '#60a5fa', '#a78bfa', '#f472b6', '#fb923c', '#facc15'];
 
@@ -210,7 +217,8 @@ export default function NeuronUniverse() {
           Neuron Universe
         </div>
         <div style={{ color: '#c8d0dc', marginBottom: 10, fontSize: '0.75rem' }}>
-          {neurons.length.toLocaleString()} neurons &middot; {edges.length.toLocaleString()} edges
+          {graphData.nodes.length.toLocaleString()} neurons &middot; {graphData.links.length.toLocaleString()} edges
+          {hideDisconnected && <span style={{ color: '#fb923c' }}> (of {neurons.length.toLocaleString()})</span>}
         </div>
 
         <label style={{ display: 'block', marginBottom: 8, fontSize: '0.75rem', color: '#c8d0dc' }}>
@@ -231,6 +239,11 @@ export default function NeuronUniverse() {
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontSize: '0.75rem', color: '#c8d0dc' }}>
           <input type="checkbox" checked={showEdges} onChange={e => setShowEdges(e.target.checked)} />
           Show edges
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontSize: '0.75rem', color: '#c8d0dc' }}>
+          <input type="checkbox" checked={hideDisconnected} onChange={e => setHideDisconnected(e.target.checked)} />
+          Connected only
         </label>
 
         <label style={{ display: 'block', marginBottom: 8, fontSize: '0.75rem', color: '#c8d0dc' }}>
