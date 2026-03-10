@@ -176,7 +176,7 @@ export default function DeptChordDiagram() {
 
       const color = (i: number) => {
         const dept = nameDept.get(names[i]);
-        return dept ? (DEPT_COLORS[dept] ?? '#8892a8') : '#8892a8';
+        return dept ? (DEPT_COLORS[dept] ?? '#c8d0dc') : '#c8d0dc';
       };
 
       // Tooltip
@@ -331,7 +331,7 @@ export default function DeptChordDiagram() {
 
   if (error) return <div className="error-msg">{error}</div>;
 
-  const deptColor = (dept: string) => DEPT_COLORS[dept] ?? '#8892a8';
+  const deptColor = (dept: string) => DEPT_COLORS[dept] ?? '#c8d0dc';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>

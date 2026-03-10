@@ -166,7 +166,7 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
         const s = nodeById.get((d.source as SimNode).id);
         const t = nodeById.get((d.target as SimNode).id);
         const dept = s?.isCenter ? t?.department : s?.department;
-        return DEPT_COLORS[dept ?? ''] ?? '#8892a8';
+        return DEPT_COLORS[dept ?? ''] ?? '#c8d0dc';
       })
       .attr('stroke-width', d => linkTouchesCenter(d) ? weightScale(d.weight) + 2 : weightScale(d.weight) + 0.5)
       .attr('stroke-opacity', d => linkTouchesCenter(d) ? opacityScale(d.weight) * 0.2 : opacityScale(d.weight) * 0.06)
@@ -183,7 +183,7 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
         const s = nodeById.get((d.source as SimNode).id);
         const t = nodeById.get((d.target as SimNode).id);
         const dept = s?.isCenter ? t?.department : s?.department;
-        return DEPT_COLORS[dept ?? ''] ?? '#8892a8';
+        return DEPT_COLORS[dept ?? ''] ?? '#c8d0dc';
       })
       .attr('stroke-width', d => linkTouchesCenter(d) ? weightScale(d.weight) : Math.max(0.3, weightScale(d.weight) * 0.4))
       .attr('stroke-opacity', d => linkTouchesCenter(d) ? opacityScale(d.weight) + 0.15 : opacityScale(d.weight) * 0.35)
@@ -218,7 +218,7 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
     nodeG.append('circle')
       .attr('r', d => d.isCenter ? 18 : d.hop === 1 ? 11 : 7)
       .attr('fill', d => {
-        const color = DEPT_COLORS[d.department ?? ''] ?? '#8892a8';
+        const color = DEPT_COLORS[d.department ?? ''] ?? '#c8d0dc';
         return color + '20';
       })
       .attr('filter', 'url(#node-glow)');
@@ -227,12 +227,12 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
     nodeG.append('circle')
       .attr('r', d => d.isCenter ? 12 : d.hop === 1 ? 7 : 4.5)
       .attr('fill', d => {
-        const color = DEPT_COLORS[d.department ?? ''] ?? '#8892a8';
+        const color = DEPT_COLORS[d.department ?? ''] ?? '#c8d0dc';
         return d.hop >= 2 ? color + 'bb' : color;
       })
       .attr('stroke', d => {
         if (d.isCenter) return '#fff';
-        const color = DEPT_COLORS[d.department ?? ''] ?? '#8892a8';
+        const color = DEPT_COLORS[d.department ?? ''] ?? '#c8d0dc';
         return color + '60';
       })
       .attr('stroke-width', d => d.isCenter ? 2 : 1);
@@ -260,12 +260,12 @@ export default function NeuronEgoGraph({ neuronId, onSelectNeuron }: Props) {
       <h3>Co-Firing Neighbors</h3>
       <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: 4, display: 'flex', gap: 14 }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#8892a8', boxShadow: '0 0 4px #8892a8' }} />
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#c8d0dc', boxShadow: '0 0 4px #c8d0dc' }} />
           Direct ({hop1Count})
         </span>
         {hop2Count > 0 && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#8892a8bb', boxShadow: '0 0 3px #8892a8' }} />
+            <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#c8d0dcbb', boxShadow: '0 0 3px #c8d0dc' }} />
             Multi-hop ({hop2Count})
           </span>
         )}

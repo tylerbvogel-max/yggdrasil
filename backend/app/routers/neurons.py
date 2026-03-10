@@ -206,6 +206,64 @@ async def department_chord(layer: int = 1, min_weight: float = 0.15, db: AsyncSe
         ]
 
 
+@router.get("/edges/layer-flow")
+async def layer_flow(min_weight: float = 0.15, db: AsyncSession = Depends(get_db)):
+    """Aggregate co-firing edges between layers, grouped by (layer, department).
+
+    Returns nodes (layer × department) and links (flow between them) suitable for Sankey layout.
+    """
+    if min_weight < 0 or min_weight > 1:
+        raise HTTPException(status_code=400, detail="min_weight must be 0-1")
+
+    # Get cross-layer flows aggregated by (source_layer, source_dept) → (target_layer, target_dept)
+    stmt = text("""
+        SELECT n1.layer AS source_layer, n1.department AS source_dept,
+               n2.layer AS target_layer, n2.department AS target_dept,
+               SUM(e.weight) AS total_weight, COUNT(*) AS edge_count
+        FROM neuron_edges e
+        JOIN neurons n1 ON e.source_id = n1.id
+        JOIN neurons n2 ON e.target_id = n2.id
+        WHERE e.weight >= :min_weight
+        GROUP BY n1.layer, n1.department, n2.layer, n2.department
+    """)
+    result = await db.execute(stmt, {"min_weight": min_weight})
+    rows = result.fetchall()
+
+    # Build node set and links
+    node_set: dict[str, dict] = {}
+    links = []
+    for r in rows:
+        src_key = f"L{r.source_layer}:{r.source_dept}"
+        tgt_key = f"L{r.target_layer}:{r.target_dept}"
+        if src_key not in node_set:
+            node_set[src_key] = {"key": src_key, "layer": r.source_layer, "department": r.source_dept}
+        if tgt_key not in node_set:
+            node_set[tgt_key] = {"key": tgt_key, "layer": r.target_layer, "department": r.target_dept}
+        links.append({
+            "source": src_key,
+            "target": tgt_key,
+            "total_weight": float(r.total_weight),
+            "edge_count": r.edge_count,
+        })
+
+    # Also get neuron counts per (layer, department) for node sizing
+    count_stmt = text("""
+        SELECT layer, department, COUNT(*) AS neuron_count
+        FROM neurons WHERE is_active = true
+        GROUP BY layer, department
+    """)
+    count_result = await db.execute(count_stmt)
+    for r in count_result.fetchall():
+        key = f"L{r.layer}:{r.department}"
+        if key in node_set:
+            node_set[key]["neuron_count"] = r.neuron_count
+
+    return {
+        "nodes": list(node_set.values()),
+        "links": links,
+    }
+
+
 @router.get("/edges/spread-log")
 async def spread_log(limit: int = 100, db: AsyncSession = Depends(get_db)):
     """Aggregate spread activation history across recent queries."""

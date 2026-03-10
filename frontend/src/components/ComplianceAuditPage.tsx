@@ -70,7 +70,7 @@ export default function ComplianceAuditPage() {
               {pii_scan.findings.map((f, i) => (
                 <tr key={i}>
                   <td title={`ID: ${f.neuron_id}`}>{f.neuron_label}</td>
-                  <td style={{ color: '#8892a8' }}>{f.department || '(none)'}</td>
+                  <td style={{ color: '#c8d0dc' }}>{f.department || '(none)'}</td>
                   <td><code>{f.field}</code></td>
                   <td style={{ color: '#ef4444' }}>{f.pii_type}</td>
                   <td>{f.match_count}</td>
@@ -104,8 +104,8 @@ export default function ComplianceAuditPage() {
                 <td style={{ fontWeight: 600 }}>{s.p50.toFixed(4)}</td>
                 <td>{s.p75.toFixed(4)}</td>
                 <td>{s.p95.toFixed(4)}</td>
-                <td style={{ color: '#8892a8' }}>{s.min.toFixed(4)}</td>
-                <td style={{ color: '#8892a8' }}>{s.max.toFixed(4)}</td>
+                <td style={{ color: '#c8d0dc' }}>{s.min.toFixed(4)}</td>
+                <td style={{ color: '#c8d0dc' }}>{s.max.toFixed(4)}</td>
               </tr>
             ))}
           </tbody>
@@ -137,7 +137,7 @@ export default function ComplianceAuditPage() {
               fontSize: '0.8rem', textAlign: 'center',
             }}>
               <div style={{ fontWeight: 600, color: '#60a5fa' }}>{count}</div>
-              <div style={{ color: '#8892a8', fontSize: '0.7rem' }}>{layer}</div>
+              <div style={{ color: '#c8d0dc', fontSize: '0.7rem' }}>{layer}</div>
             </div>
           ))}
         </div>
@@ -159,7 +159,7 @@ export default function ComplianceAuditPage() {
               fontSize: '0.8rem', textAlign: 'center',
             }}>
               <div style={{ fontWeight: 600, color: '#a78bfa' }}>{count}</div>
-              <div style={{ color: '#8892a8', fontSize: '0.7rem' }}>{type}</div>
+              <div style={{ color: '#c8d0dc', fontSize: '0.7rem' }}>{type}</div>
             </div>
           ))}
         </div>
@@ -178,14 +178,14 @@ export default function ComplianceAuditPage() {
                   <tr key={n.neuron_id}>
                     <td>{n.neuron_id}</td>
                     <td>{n.label}</td>
-                    <td style={{ color: '#8892a8' }}>{n.department || '(none)'}</td>
+                    <td style={{ color: '#c8d0dc' }}>{n.department || '(none)'}</td>
                     <td>{n.source_type}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {provenance_audit.missing_citations_count > 20 && (
-              <div style={{ fontSize: '0.75rem', color: '#8892a8', marginTop: 4 }}>
+              <div style={{ fontSize: '0.75rem', color: '#c8d0dc', marginTop: 4 }}>
                 ...and {provenance_audit.missing_citations_count - 20} more
               </div>
             )}
@@ -212,7 +212,7 @@ export default function ComplianceAuditPage() {
                   <tr key={n.neuron_id}>
                     <td>{n.neuron_id}</td>
                     <td>{n.label}</td>
-                    <td style={{ color: '#8892a8' }}>{n.department || '(none)'}</td>
+                    <td style={{ color: '#c8d0dc' }}>{n.department || '(none)'}</td>
                     <td>{n.last_verified.split('T')[0]}</td>
                     <td style={{ color: '#ef4444' }}>{n.days_since_verified}</td>
                   </tr>

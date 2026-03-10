@@ -53,12 +53,12 @@ export default function TokenCharts({ models, baseline }: { models: ModelTokens[
           scales: {
             y: {
               beginAtZero: true,
-              title: { display: true, text: 'Input Tokens', color: '#8892a8', font: { size: 11 } },
-              ticks: { color: '#8892a8' },
+              title: { display: true, text: 'Input Tokens', color: '#c8d0dc', font: { size: 11 } },
+              ticks: { color: '#c8d0dc' },
               grid: { color: '#1e2d4a' },
             },
             x: {
-              ticks: { color: '#e2e8f0', font: { weight: 'bold' }, maxRotation: 45, minRotation: 0 },
+              ticks: { color: '#ffffff', font: { weight: 'bold' }, maxRotation: 45, minRotation: 0 },
               grid: { display: false },
             },
           },
@@ -95,12 +95,12 @@ export default function TokenCharts({ models, baseline }: { models: ModelTokens[
           scales: {
             y: {
               beginAtZero: true,
-              title: { display: true, text: 'Output Tokens', color: '#8892a8', font: { size: 11 } },
-              ticks: { color: '#8892a8' },
+              title: { display: true, text: 'Output Tokens', color: '#c8d0dc', font: { size: 11 } },
+              ticks: { color: '#c8d0dc' },
               grid: { color: '#1e2d4a' },
             },
             x: {
-              ticks: { color: '#e2e8f0', font: { weight: 'bold' }, maxRotation: 45, minRotation: 0 },
+              ticks: { color: '#ffffff', font: { weight: 'bold' }, maxRotation: 45, minRotation: 0 },
               grid: { display: false },
             },
           },

@@ -30,7 +30,7 @@ const MODE_COLORS: Record<string, string> = {
 // Generate distinct hex colors for same-mode slots at different budgets
 // Must produce valid hex for Chart.js canvas (CSS color-mix doesn't work in canvas)
 function slotColor(mode: string, index: number, total: number): string {
-  const base = MODE_COLORS[mode] ?? '#8892a8';
+  const base = MODE_COLORS[mode] ?? '#c8d0dc';
   if (total <= 1) return base;
   // Parse hex to RGB, shift lightness per index
   const r = parseInt(base.slice(1, 3), 16);
@@ -66,7 +66,7 @@ function slotsToChartModels(slots: SlotResult[], classifyCost: number, baseline:
     models.push({
       label: slotDisplayLabel(slot),
       mode: slot.mode,
-      color: sameModeTotal > 1 ? slotColor(slot.mode, sameModeBefore, sameModeTotal) : (MODE_COLORS[slot.mode] ?? '#8892a8'),
+      color: sameModeTotal > 1 ? slotColor(slot.mode, sameModeBefore, sameModeTotal) : (MODE_COLORS[slot.mode] ?? '#c8d0dc'),
       inputTokens: slot.input_tokens,
       outputTokens: slot.output_tokens,
       cost: slot.cost_usd + (isFirstNeuron ? classifyCost : 0),
@@ -123,7 +123,7 @@ function EvalScoreTable({ scores, winner, slots }: { scores: EvalScoreOut[]; win
               const matchedSlot = slots?.[slotIndex];
               const displayLabel = matchedSlot ? slotDisplayLabel(matchedSlot) : (ALL_MODES.find(m => m.key === s.answer_mode)?.label ?? s.answer_mode);
               return (
-                <th key={s.answer_label} style={{ borderBottom: `2px solid ${MODE_COLORS[s.answer_mode] ?? '#8892a8'}` }}>
+                <th key={s.answer_label} style={{ borderBottom: `2px solid ${MODE_COLORS[s.answer_mode] ?? '#c8d0dc'}` }}>
                   {s.answer_label} — {displayLabel}
                   {winner === s.answer_label && <span style={{ marginLeft: 6, fontSize: '0.7rem', color: '#22c55e' }}>&#9733; Winner</span>}
                 </th>
@@ -530,7 +530,7 @@ function SlotBuilder({ slots, onChange, capacity }: {
         {slots.map(slot => {
           const isNeuron = NEURON_MODES.has(slot.mode);
           return (
-            <div key={slot.id} className="slot-card" style={{ borderColor: (MODE_COLORS[slot.mode] ?? '#8892a8') + '66' }}>
+            <div key={slot.id} className="slot-card" style={{ borderColor: (MODE_COLORS[slot.mode] ?? '#c8d0dc') + '66' }}>
               <div className="slot-card-header">
                 <select
                   className="slot-mode-select"
@@ -879,7 +879,7 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
                     <span className="history-modes">
                       {q.modes.map(m => {
                         const def = ALL_MODES.find(d => d.key === m);
-                        return <span key={m} className="mode-badge" style={{ background: (MODE_COLORS[m] ?? '#8892a8') + '33', color: MODE_COLORS[m] ?? '#8892a8' }}>{def?.short ?? m}</span>;
+                        return <span key={m} className="mode-badge" style={{ background: (MODE_COLORS[m] ?? '#c8d0dc') + '33', color: MODE_COLORS[m] ?? '#c8d0dc' }}>{def?.short ?? m}</span>;
                       })}
                     </span>
                     {q.cost_usd != null && <span className="history-cost">${q.cost_usd.toFixed(4)}</span>}
@@ -930,7 +930,7 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
                 <div key={sc.id} className={`slot-loading-item${done ? ' done' : ''}`}>
                   {!done && <span className="slot-spinner" />}
                   {done && <span className="slot-check">&#10003;</span>}
-                  <span className="slot-loading-label" style={{ color: MODE_COLORS[sc.mode] ?? '#8892a8' }}>{label}</span>
+                  <span className="slot-loading-label" style={{ color: MODE_COLORS[sc.mode] ?? '#c8d0dc' }}>{label}</span>
                 </div>
               );
             })}
@@ -1049,7 +1049,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
       {result.slots.map((slot, i) => {
         const check = result.output_checks?.[i];
         return (
-          <Section key={i} title={slotDisplayLabel(slot)} titleStyle={{ borderLeft: `3px solid ${MODE_COLORS[slot.mode] ?? '#8892a8'}`, paddingLeft: 8 }}>
+          <Section key={i} title={slotDisplayLabel(slot)} titleStyle={{ borderLeft: `3px solid ${MODE_COLORS[slot.mode] ?? '#c8d0dc'}`, paddingLeft: 8 }}>
             {check && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                 {check.grounding && check.grounding.confidence !== null && (
@@ -1276,7 +1276,7 @@ function HistoryDetail({ query, baseline, onNavigateToNeuron }: { query: QueryDe
           <span className="history-modes" style={{ marginLeft: 8 }}>
             {query.slots.map((s, i) => {
               const label = slotDisplayLabel(s);
-              return <span key={i} className="mode-badge" style={{ background: (MODE_COLORS[s.mode] ?? '#8892a8') + '33', color: MODE_COLORS[s.mode] ?? '#8892a8' }}>{label}</span>;
+              return <span key={i} className="mode-badge" style={{ background: (MODE_COLORS[s.mode] ?? '#c8d0dc') + '33', color: MODE_COLORS[s.mode] ?? '#c8d0dc' }}>{label}</span>;
             })}
           </span>
         </h3>
@@ -1333,7 +1333,7 @@ function HistoryDetail({ query, baseline, onNavigateToNeuron }: { query: QueryDe
 
       {/* Responses */}
       {query.slots.map((slot, i) => (
-        <Section key={i} title={slotDisplayLabel(slot)} titleStyle={{ borderLeft: `3px solid ${MODE_COLORS[slot.mode] ?? '#8892a8'}`, paddingLeft: 8 }}>
+        <Section key={i} title={slotDisplayLabel(slot)} titleStyle={{ borderLeft: `3px solid ${MODE_COLORS[slot.mode] ?? '#c8d0dc'}`, paddingLeft: 8 }}>
           <div className="response-text">{slot.response}</div>
         </Section>
       ))}

@@ -19,7 +19,7 @@ export default function GettingStartedPage() {
             padding: '6px 16px', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
             border: section === 'setup' ? '1px solid #60a5fa' : '1px solid #334155',
             background: section === 'setup' ? '#1e3a5f' : 'transparent',
-            color: section === 'setup' ? '#60a5fa' : '#8892a8',
+            color: section === 'setup' ? '#60a5fa' : '#c8d0dc',
           }}
           onClick={() => setSection('setup')}
         >
@@ -31,7 +31,7 @@ export default function GettingStartedPage() {
             padding: '6px 16px', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
             border: section === 'training' ? '1px solid #60a5fa' : '1px solid #334155',
             background: section === 'training' ? '#1e3a5f' : 'transparent',
-            color: section === 'training' ? '#60a5fa' : '#8892a8',
+            color: section === 'training' ? '#60a5fa' : '#c8d0dc',
           }}
           onClick={() => setSection('training')}
         >
@@ -50,7 +50,7 @@ function CodeBlock({ children }: { children: string }) {
     <pre style={{
       background: '#0f172a', border: '1px solid #1e2d4a', borderRadius: 8,
       padding: '12px 16px', overflowX: 'auto', fontSize: '0.8rem',
-      color: '#e2e8f0', lineHeight: 1.6, margin: '8px 0 16px',
+      color: '#ffffff', lineHeight: 1.6, margin: '8px 0 16px',
     }}>
       <code>{children}</code>
     </pre>

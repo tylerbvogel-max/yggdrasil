@@ -21,8 +21,9 @@ import GovernancePage from './components/GovernancePage'
 import PerformancePage from './components/PerformancePage'
 import PerformanceExplanationPage from './components/PerformanceExplanationPage'
 import EmergentQueuePage from './components/EmergentQueuePage'
-
-type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain';
+import LayerHeatmap from './components/LayerHeatmap'
+import MethodologicalRisks from './components/MethodologicalRisks'
+type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks';
 
 interface NavItem {
   key: Tab;
@@ -45,6 +46,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { key: 'graph', label: 'Graph' },
       { key: 'dashboard', label: 'Dashboard' },
       { key: 'cofiring', label: 'Co-Firing' },
+      { key: 'layer-heatmap', label: 'Layer Heatmap' },
     ],
   },
   {
@@ -74,6 +76,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { key: 'pipeline', label: 'Pipeline' },
       { key: 'compliance', label: 'Compliance' },
       { key: 'governance', label: 'Governance' },
+      { key: 'method-risks', label: 'Risks' },
       { key: 'nextsteps', label: 'Next Steps' },
       { key: 'monetization', label: 'Monetization', className: 'nav-monetization' },
     ],
@@ -159,6 +162,7 @@ export default function App() {
             </div>
           </div>
         )}
+        {tab === 'layer-heatmap' && <LayerHeatmap />}
         <div style={{ display: tab === 'query' ? 'contents' : 'none' }}><QueryLab onNavigateToNeuron={navigateToNeuron} /></div>
         {tab === 'pipeline' && <PipelinePage />}
         {tab === 'evaluation' && <EvaluationPage />}
@@ -177,6 +181,7 @@ export default function App() {
         {tab === 'governance' && <GovernancePage />}
         {tab === 'performance' && <PerformancePage />}
         {tab === 'perf-explain' && <PerformanceExplanationPage />}
+        {tab === 'method-risks' && <MethodologicalRisks />}
       </main>
     </div>
   )

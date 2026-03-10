@@ -8,6 +8,86 @@ export default function NextSteps() {
         Role bolstering runs continuously in parallel via autopilot.
       </p>
 
+      {/* ── Immediate — Reliability & Data Integrity ── */}
+
+      <section className="next-steps-section urgent">
+        <h3>Immediate — Reliability &amp; Data Integrity</h3>
+        <span className="status-badge planned" style={{ background: '#ef444422', color: '#ef4444', borderColor: '#ef444444' }}>Priority</span>
+        <p>
+          Gaps that affect data safety, pipeline reliability, or trust in the system.
+          These should be addressed before adding new features.
+        </p>
+
+        <table className="next-steps-table">
+          <thead>
+            <tr><th>Issue</th><th>Impact</th><th>Fix</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Batch jobs in memory</td>
+              <td>The <code>_batch_jobs</code> dict lives in process memory. Server restart mid-ingest loses all job state &mdash; tokens spent, no record, no way to resume.</td>
+              <td>Persist batch job state to a <code>batch_jobs</code> table. Track status, progress, token spend. Enable resume-on-restart.</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>No automated backups</td>
+              <td>PostgreSQL has no scheduled <code>pg_dump</code>. A bad migration, accidental truncate, or disk failure loses 2,055 neurons, 40K edges, and all query/eval history.</td>
+              <td>Cron job running daily <code>pg_dump</code> with retention. Store locally + optional offsite sync.</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>No authentication</td>
+              <td>Every endpoint is open. The <code>user_id</code> columns exist but nothing populates them. Blocks any real multi-user transition and leaves the system exposed on any non-localhost network.</td>
+              <td>Add basic auth (API key or session-based) to gate write endpoints at minimum. Populate <code>user_id</code> from auth context.</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>No scoring pipeline tests</td>
+              <td>The classify &rarr; score &rarr; assemble &rarr; execute chain is the core IP. Zero automated tests cover it. A refactor could silently break signal weights, spread activation math, or prompt assembly.</td>
+              <td>Integration tests for each pipeline stage. Mock the LLM calls, verify scoring math, spread activation, and token budget assembly.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section className="next-steps-section">
+        <h3>Near-Term — Quality &amp; Observability</h3>
+        <span className="status-badge planned" style={{ background: '#fb923c22', color: '#fb923c', borderColor: '#fb923c44' }}>Important</span>
+        <p>
+          Gaps that degrade value over time or reduce visibility into system behavior.
+        </p>
+
+        <table className="next-steps-table">
+          <thead>
+            <tr><th>Issue</th><th>Impact</th><th>Fix</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Write-time deduplication</td>
+              <td>Ingest and bolster endpoints don&rsquo;t check for existing similar neurons before inserting. Duplicates accumulate silently, diluting scores and wasting token budget during assembly.</td>
+              <td>Label similarity + content overlap check before insert. Flag near-duplicates for merge rather than creating new rows. Complements the Ependymal post-hoc scan (Phase 6).</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Neuron content versioning</td>
+              <td>Refinement history exists in <code>neuron_refinements</code> but there&rsquo;s no clean way to see the full edit timeline of a single neuron or roll back to a prior version. For regulatory neurons, you need to know what it said on a specific date.</td>
+              <td>Version column on neurons + snapshot-on-write to a <code>neuron_versions</code> table. Enable point-in-time recall and rollback.</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Full-text search</td>
+              <td>2,055 neurons and growing, but no search endpoint. Explorer relies on tree browsing. Users can&rsquo;t type &ldquo;ITAR&rdquo; and see every neuron mentioning it &mdash; only the ones with matching tags.</td>
+              <td>PostgreSQL <code>tsvector</code> index on neuron label + content + summary. Search API endpoint + Explorer search bar.</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Activity feed / changelog</td>
+              <td>Data exists across refinements, autopilot runs, and firings tables, but no unified &ldquo;what happened to the graph today&rdquo; view. Hard to trust autonomous processes without visibility.</td>
+              <td>Unified activity log page pulling from refinements, autopilot runs, ingest jobs, and alert tables. Filterable by date, action type, and source.</td>
+            </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>CLI subprocess fragility</td>
+              <td>The <code>claude -p --output-format json</code> contract is undocumented and untested. If the CLI binary updates, changes output format, or the node path shifts, the entire system breaks silently.</td>
+              <td>Health-check endpoint that validates CLI availability and output format. Version pinning. Graceful error surfacing when the CLI contract breaks.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
       {/* ── Completed ── */}
 
       <section className="next-steps-section">
@@ -34,6 +114,7 @@ export default function NextSteps() {
             <tr><td>Cost Modeling</td><td>Run cost vs training cost split. Run cost = haiku/sonnet production slots + classify overhead. Training cost = all tiers including opus benchmarks. Per-1M-token normalization.</td></tr>
             <tr><td>Input Guard</td><td>16 adversarial pattern detectors (prompt injection, jailbreak, PII exfiltration, system prompt extraction, etc.) with risk-level classification and query blocking.</td></tr>
             <tr><td>Scoring Health Monitor</td><td>Signal drift detection with coefficient of variation tracking. Per-signal distribution statistics across all queries for baseline documentation.</td></tr>
+            <tr><td>Ingest Placement Validation</td><td>Department required (dropdown) before ingestion runs. Backend rejects proposals missing department, role_key, or parent_id at apply time. Prevents orphaned neurons from entering the graph.</td></tr>
           </tbody>
         </table>
       </section>
@@ -271,6 +352,111 @@ export default function NextSteps() {
         </p>
       </section>
 
+      {/* ── Phase 9: Conversational Context Handoff ── */}
+
+      <section className="next-steps-section">
+        <h3>Phase 9 — Conversational Context Handoff</h3>
+        <span className="status-badge planned">Backlog</span>
+        <p>
+          Yggdrasil currently operates as a single-shot system: classify, score, assemble, execute, done.
+          This is intentional &mdash; front-loading context reduces hallucination and keeps the neuron
+          selection pipeline clean. But users often need follow-up questions after the initial answer,
+          and today they lose all assembled context when they do.
+        </p>
+
+        <h4>Option A: Context Export</h4>
+        <p>
+          After an answer is generated, offer a one-click export of the assembled context (scored neurons,
+          system prompt, query, and response) into a format consumable by external LLM interfaces &mdash;
+          ChatGPT, Claude.ai, local Ollama, etc. The user continues their conversation elsewhere with
+          the full Yggdrasil context already loaded. This preserves the &ldquo;selfish prompt&rdquo;
+          philosophy: the external system starts with high-quality, relevance-ranked context rather
+          than a blank slate.
+        </p>
+
+        <h4>Option B: In-App Conversation</h4>
+        <p>
+          Extend the Query Lab into a multi-turn interface where follow-up questions carry forward
+          the assembled neuron context from the original query. Each follow-up could optionally re-fire
+          the neuron graph (if the conversation shifts topics) or retain the original context window
+          (if the user is drilling deeper on the same subject). The key constraint: the neuron context
+          always occupies the high-attention zone of the prompt, regardless of how many conversational
+          turns accumulate after it.
+        </p>
+        <p>
+          Both options solve the same problem &mdash; letting users go deeper without losing the
+          knowledge the system already assembled. Option A is simpler and keeps Yggdrasil focused
+          on what it does best (selection and assembly). Option B is more integrated but requires
+          managing conversation state and the attention-degradation tradeoffs that the single-shot
+          design deliberately avoids.
+        </p>
+      </section>
+
+      {/* ── Phase 10: Live Standards & Regulatory APIs ── */}
+
+      <section className="next-steps-section">
+        <h3>Phase 10 — Live Standards &amp; Regulatory APIs</h3>
+        <span className="status-badge planned">Backlog</span>
+        <p>
+          The neuron graph currently relies on point-in-time ingestion &mdash; someone feeds it a document,
+          and that snapshot lives in the graph until manually updated. This phase adds durable API connections
+          to authoritative sources so the graph stays current without human intervention.
+        </p>
+
+        <h4>Regulatory &amp; Legal</h4>
+        <ul>
+          <li><strong>eCFR API</strong> &mdash; Electronic Code of Federal Regulations. REST API provides current
+            full text of any CFR title/part/section. Schedule weekly pulls for tracked parts (e.g., 48 CFR for FAR/DFARS,
+            14 CFR for FAA, 32 CFR for defense). Diff against existing neurons to detect changes and flag stale content.</li>
+          <li><strong>Federal Register API</strong> &mdash; New rules, proposed rules, and notices. Daily poll for
+            tracked agencies (DoD, FAA, NIST, GSA). Feed new entries into the emergent queue as regulatory signals
+            before they become codified in the CFR.</li>
+          <li><strong>Congress.gov API</strong> &mdash; Track bills and enacted legislation affecting defense/aerospace
+            procurement, export control, and AI governance (e.g., NDAA amendments, AI-related bills).</li>
+          <li><strong>NIST CSRC</strong> &mdash; Publications feed for SP 800-series, AI RMF updates, and cybersecurity
+            framework revisions. Detect when referenced NIST documents get new versions.</li>
+        </ul>
+
+        <h4>Industry Standards</h4>
+        <ul>
+          <li><strong>SAE MOBILUS / IHS Markit</strong> &mdash; API access to AMS, AS, ARP standards referenced by
+            aerospace neurons. Detect revision changes to standards like AS9100, AS6081, AMS 2750. Subscription-based
+            access &mdash; cost varies by scope.</li>
+          <li><strong>ISO Online Browsing Platform</strong> &mdash; Track revision status of referenced ISO standards
+            (ISO 9001, ISO 42001, ISO 27001). Limited API &mdash; may need periodic scraping with change detection.</li>
+          <li><strong>NADCAP eAuditNet</strong> &mdash; Track accreditation checklist updates for special process
+            certifications (welding, NDT, heat treat, coatings).</li>
+        </ul>
+
+        <h4>Technical Documentation</h4>
+        <ul>
+          <li><strong>Language/framework docs</strong> &mdash; Versioned API docs for Python, TypeScript, React, FastAPI,
+            SQLAlchemy, D3, and other tools in the stack. Pull changelogs and migration guides on major version releases
+            to keep technical neurons current.</li>
+          <li><strong>Cloud provider APIs</strong> &mdash; AWS, Azure, GCP release notes and service documentation.
+            Relevant when connector neurons (Phase 7) integrate with cloud services.</li>
+          <li><strong>LLM provider changelogs</strong> &mdash; Anthropic, OpenAI model deprecation schedules, new model
+            releases, API changes. Auto-update the model registry and flag neurons that reference deprecated capabilities.</li>
+        </ul>
+
+        <h4>Integration Pattern</h4>
+        <p>
+          Each API source gets a scheduled poller (cron or autopilot-style tick) that:
+        </p>
+        <ul>
+          <li>Fetches the latest version of tracked resources</li>
+          <li>Diffs against existing neuron content to detect meaningful changes</li>
+          <li>Routes changes to the emergent queue with source metadata (effective date, version, citation)</li>
+          <li>Optionally auto-ingests minor updates (typo fixes, formatting) while flagging substantive changes for review</li>
+          <li>Logs all API interactions for compliance audit trail (AIUC-1 E015)</li>
+        </ul>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-dim)', marginTop: 8 }}>
+          The goal is a living knowledge graph that reflects the current state of its source material &mdash; not
+          a static snapshot that silently drifts out of date. Staleness is the primary failure mode of any
+          knowledge system; automated refresh is the countermeasure.
+        </p>
+      </section>
+
       {/* ── Knowledge Ingestion ── */}
 
       <section className="next-steps-section">
@@ -336,6 +522,8 @@ export default function NextSteps() {
             <tr><td>7</td><td>Local model routing (classify + score)</td><td><span className="status-badge planned">Backlog</span></td></tr>
             <tr><td>7</td><td>Connector neurons</td><td><span className="status-badge planned">Backlog</span></td></tr>
             <tr><td>8</td><td>Docker containerization (compose)</td><td><span className="status-badge planned">Backlog</span></td></tr>
+            <tr><td>9</td><td>Conversational context handoff (export + in-app)</td><td><span className="status-badge planned">Backlog</span></td></tr>
+            <tr><td>10</td><td>Live standards &amp; regulatory APIs (eCFR, Federal Register, SAE, ISO, tech docs)</td><td><span className="status-badge planned">Backlog</span></td></tr>
           </tbody>
         </table>
       </section>

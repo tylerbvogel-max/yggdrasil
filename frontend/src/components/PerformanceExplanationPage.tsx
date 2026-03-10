@@ -337,44 +337,10 @@ where z_α/2 = 1.96 (two-sided α=0.05)
 
       <section className="about-section">
         <h3>Known Limitations</h3>
-        <ul className="about-features">
-          <li>
-            <strong>Sample size</strong> &mdash; The dataset is relatively small compared to production evaluation
-            suites. Power analysis flags underpowered tests, but some genuine effects may not reach significance.
-          </li>
-          <li>
-            <strong>Judge bias</strong> &mdash; The evaluator model introduces systematic bias. An Opus judge tends
-            to rate Haiku answers slightly lower than a Haiku judge would. This is documented but not corrected for.
-          </li>
-          <li>
-            <strong>Ordinal scale</strong> &mdash; The 1&ndash;5 scoring scale is ordinal, not interval. Mean-based
-            statistics (t-test, Cohen&rsquo;s d) treat the scale as interval. Mann-Whitney U respects the ordinal
-            nature but is less interpretable.
-          </li>
-          <li>
-            <strong>Query distribution</strong> &mdash; Evaluation queries may not be representative of production
-            workload. If queries disproportionately cover well-represented topics, quality metrics may overstate
-            real-world performance.
-          </li>
-          <li>
-            <strong>Temporal confounds</strong> &mdash; The early-vs-late quality trend test attributes improvement
-            to graph growth, but other factors changed over time (prompt refinements, content quality improvements).
-          </li>
-          <li>
-            <strong>Pricing volatility</strong> &mdash; Cost models use current Anthropic pricing. Relative tier
-            pricing has been stable, but absolute dollar figures should be considered snapshots.
-          </li>
-          <li>
-            <strong>Fairness scope</strong> &mdash; Fairness analysis is limited to department-level coverage
-            balance and eval quality parity. As a single-author system, demographic fairness analysis of user
-            populations is not applicable but would be required in a multi-tenant deployment.
-          </li>
-          <li>
-            <strong>Cross-validation determinism</strong> &mdash; Fold assignment uses a deterministic hash-based
-            shuffle per mode. Results are reproducible but may be sensitive to the specific partition. Repeated
-            random splits (Monte Carlo cross-validation) would be more robust but slower.
-          </li>
-        </ul>
+        <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem' }}>
+          Evaluation-specific limitations have been consolidated with broader methodological risks
+          on the <strong style={{ color: 'var(--text)' }}>Risks</strong> page under the About nav group.
+        </p>
       </section>
 
       <section className="about-section">

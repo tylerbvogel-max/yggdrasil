@@ -9,3 +9,77 @@ export const DEPT_COLORS: Record<string, string> = {
   'Finance': '#ef4444',
   'Regulatory': '#94a3b8',
 };
+
+export const DEPARTMENTS = Object.keys(DEPT_COLORS);
+
+export const DEPT_ROLES: Record<string, { key: string; label: string }[]> = {
+  'Administrative & Support': [
+    { key: 'hr_generalist', label: 'HR Generalist' },
+    { key: 'it_support', label: 'IT Support Specialist' },
+    { key: 'payroll', label: 'Payroll Specialist' },
+    { key: 'procurement', label: 'Procurement Specialist' },
+  ],
+  'Business Development': [
+    { key: 'bd_director', label: 'BD Director' },
+    { key: 'capture_mgr', label: 'Capture Manager' },
+    { key: 'proposal_mgr', label: 'Proposal Manager' },
+  ],
+  'Contracts & Compliance': [
+    { key: 'contract_analyst', label: 'Contract Analyst' },
+    { key: 'contracts_mgr', label: 'Contracts Manager' },
+    { key: 'export_control', label: 'Export Control Officer' },
+    { key: 'far_specialist', label: 'FAR/DFARS Specialist' },
+    { key: 'quality_auditor', label: 'Quality Auditor' },
+    { key: 'safety_officer', label: 'Safety Officer' },
+  ],
+  'Engineering': [
+    { key: 'data_engineer', label: 'Data Engineer' },
+    { key: 'elec_eng', label: 'Electrical Engineer' },
+    { key: 'industrial_eng', label: 'Industrial Engineer' },
+    { key: 'mfg_eng', label: 'Manufacturing Engineer' },
+    { key: 'mech_eng', label: 'Mechanical Engineer' },
+    { key: 'sw_eng', label: 'Software Engineer' },
+    { key: 'sys_eng', label: 'Systems Engineer' },
+    { key: 'test_eng', label: 'Test Engineer' },
+  ],
+  'Executive Leadership': [
+    { key: 'ceo', label: 'Chief Executive Officer' },
+    { key: 'cfo', label: 'Chief Financial Officer' },
+    { key: 'coo', label: 'Chief Operating Officer' },
+    { key: 'cto', label: 'Chief Technology Officer' },
+    { key: 'vp_bd', label: 'VP Business Development' },
+    { key: 'vp_engineering', label: 'VP Engineering' },
+    { key: 'vp_operations', label: 'VP Operations' },
+    { key: 'vp_strategy', label: 'VP Strategy' },
+  ],
+  'Finance': [
+    { key: 'cost_accountant', label: 'Cost Accountant' },
+    { key: 'cost_estimator', label: 'Cost Estimator' },
+    { key: 'financial_analyst', label: 'Financial Analyst' },
+  ],
+  'Manufacturing & Operations': [
+    { key: 'facilities_mgr', label: 'Facilities Manager' },
+    { key: 'prod_mgr', label: 'Production Manager' },
+    { key: 'quality_mgr', label: 'Quality Manager' },
+    { key: 'supply_chain_mgr', label: 'Supply Chain Manager' },
+  ],
+  'Program Management': [
+    { key: 'program_control', label: 'Program Control Analyst' },
+    { key: 'program_mgr', label: 'Program Manager' },
+  ],
+  'Regulatory': [
+    { key: 'as9100d', label: 'AS9100 Rev D' },
+    { key: 'asme_y14', label: 'ASME Y14.5 — GD&T' },
+    { key: 'astm', label: 'ASTM Standards' },
+    { key: 'do_standards', label: 'DO-178C/DO-254/DO-160G' },
+    { key: 'far_dfars', label: 'FAR/DFARS' },
+    { key: 'iso_standards', label: 'ISO Standards' },
+    { key: 'itar_ear', label: 'ITAR/EAR Export Controls' },
+    { key: 'mil_std', label: 'MIL-STD Series' },
+    { key: 'nadcap', label: 'NADCAP Special Process Accreditation' },
+    { key: 'nas410', label: 'NAS 410 — NDT Personnel Qualification' },
+    { key: 'nist_cmmc', label: 'NIST/CMMC' },
+    { key: 'osha', label: 'OSHA 29 CFR 1910' },
+    { key: 'sae_as6500', label: 'SAE AS6500 — Manufacturing Management' },
+  ],
+};

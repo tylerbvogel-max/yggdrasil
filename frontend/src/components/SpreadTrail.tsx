@@ -140,7 +140,7 @@ export default function SpreadTrail({ queryId, neuronScores }: Props) {
         .attr('y1', cy + innerRadius * Math.sin(angle))
         .attr('x2', cx + maxRadius * Math.cos(angle))
         .attr('y2', cy + maxRadius * Math.sin(angle))
-        .attr('stroke', DEPT_COLORS[dept] ?? '#8892a8')
+        .attr('stroke', DEPT_COLORS[dept] ?? '#c8d0dc')
         .attr('stroke-width', 1)
         .attr('stroke-opacity', 0.25);
     });
@@ -168,7 +168,7 @@ export default function SpreadTrail({ queryId, neuronScores }: Props) {
         .attr('text-anchor', 'middle')
         .attr('dominant-baseline', 'middle')
         .attr('transform', `rotate(${textAngle}, ${lx}, ${ly})`)
-        .attr('fill', DEPT_COLORS[dept] ?? '#8892a8')
+        .attr('fill', DEPT_COLORS[dept] ?? '#c8d0dc')
         .attr('font-size', '0.65rem')
         .attr('font-weight', 600)
         .text(shortName);
@@ -241,7 +241,7 @@ export default function SpreadTrail({ queryId, neuronScores }: Props) {
       .attr('class', 'node')
       .attr('cx', d => d.x).attr('cy', d => d.y)
       .attr('r', d => d.r)
-      .attr('fill', d => DEPT_COLORS[d.department] ?? '#8892a8')
+      .attr('fill', d => DEPT_COLORS[d.department] ?? '#c8d0dc')
       .attr('stroke', '#0a0e17')
       .attr('stroke-width', 0.5)
       .style('cursor', 'pointer')
@@ -249,7 +249,7 @@ export default function SpreadTrail({ queryId, neuronScores }: Props) {
         const layerLabel = LAYER_LABELS[d.layer] ?? `L${d.layer}`;
         tooltip.html(
           `<strong>${d.label}</strong><br>` +
-          `<span style="color:${DEPT_COLORS[d.department] ?? '#8892a8'}">${d.department}</span> · ${layerLabel}<br>` +
+          `<span style="color:${DEPT_COLORS[d.department] ?? '#c8d0dc'}">${d.department}</span> · ${layerLabel}<br>` +
           `Score: ${d.combined.toFixed(3)}` +
           (d.spread_boost > 0 ? `<br><span style="color:#e8a735">Spread: +${d.spread_boost.toFixed(3)}</span>` : '')
         )

@@ -118,7 +118,7 @@ export default function FairnessPage() {
                 return (
                   <tr key={i} style={{ background: isLow ? '#fb923c11' : undefined }}>
                     <td>{d.department}</td>
-                    <td style={{ color: '#8892a8' }}>{d.answer_mode}</td>
+                    <td style={{ color: '#c8d0dc' }}>{d.answer_mode}</td>
                     <td>{d.eval_count}</td>
                     <td style={{ fontWeight: 600, color: isLow ? '#fb923c' : undefined }}>{d.avg_overall.toFixed(1)}</td>
                     <td>{d.avg_faithfulness.toFixed(1)}</td>
@@ -165,7 +165,7 @@ export default function FairnessPage() {
                   }}>
                     {item.type.replace(/_/g, ' ')}
                   </span>
-                  <span style={{ fontSize: '0.75rem', color: '#8892a8', marginLeft: 8 }}>{item.department}</span>
+                  <span style={{ fontSize: '0.75rem', color: '#c8d0dc', marginLeft: 8 }}>{item.department}</span>
                 </div>
                 <p className="security-item-detail" style={{ marginTop: 4 }}>{item.message}</p>
                 <p style={{ fontSize: '0.78rem', color: '#60a5fa', marginTop: 4 }}>

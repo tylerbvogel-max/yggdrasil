@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, func, text
 
 from app.database import engine, async_session
-from app.models import Base, Neuron, SystemState
+from app.models import Base, Neuron, SystemState, BatchJob
 from app.routers import query, neurons, admin, autopilot, performance
 from app.seed.loader import load_seed
 from app.seed.regulatory_seed import seed_regulatory
@@ -146,6 +146,19 @@ async def lifespan(app: FastAPI):
     import asyncio
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, lambda: seed_regulatory(force=force_reseed))
+
+    # Mark any batch jobs that were "running" as "interrupted" (server restarted mid-ingest)
+    async with async_session() as db:
+        result = await db.execute(
+            select(BatchJob).where(BatchJob.status == "running")
+        )
+        interrupted = result.scalars().all()
+        for job in interrupted:
+            job.status = "interrupted"
+            job.step = f"Interrupted at chunk {job.current_chunk}/{job.total_chunks} (server restart)"
+        if interrupted:
+            await db.commit()
+            print(f"Marked {len(interrupted)} batch job(s) as interrupted")
 
     yield
 

@@ -107,9 +107,9 @@ export default function QualityPage() {
                       <td style={{ fontWeight: 600 }}>{ci.mean.toFixed(2)}</td>
                       <td>{ci.ci_lower.toFixed(2)}</td>
                       <td>{ci.ci_upper.toFixed(2)}</td>
-                      <td style={{ color: width > 1.0 ? '#fb923c' : '#8892a8' }}>{width.toFixed(2)}</td>
-                      <td style={{ color: '#8892a8' }}>{ci.stderr.toFixed(4)}</td>
-                      <td style={{ color: '#8892a8' }}>{ci.n}</td>
+                      <td style={{ color: width > 1.0 ? '#fb923c' : '#c8d0dc' }}>{width.toFixed(2)}</td>
+                      <td style={{ color: '#c8d0dc' }}>{ci.stderr.toFixed(4)}</td>
+                      <td style={{ color: '#c8d0dc' }}>{ci.n}</td>
                     </tr>
                   );
                 })}

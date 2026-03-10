@@ -52,7 +52,7 @@ type TreemapNode = d3.HierarchyRectangularNode<HierNode>
 
 function getColor(d: TreemapNode): string {
   const dept = d.data.department
-  const base = dept ? (DEPT_COLORS[dept] || '#8892a8') : '#8892a8'
+  const base = dept ? (DEPT_COLORS[dept] || '#c8d0dc') : '#c8d0dc'
   const col = d3.color(base)
   if (col) {
     const hsl = d3.hsl(col)
@@ -116,7 +116,7 @@ export default function CirclePacking() {
           .style('border-radius', '8px')
           .style('padding', '10px 14px')
           .style('font-size', '0.8rem')
-          .style('color', '#e2e8f0')
+          .style('color', '#ffffff')
           .style('pointer-events', 'none')
           .style('z-index', '1000')
           .style('max-width', '320px')
@@ -262,7 +262,7 @@ export default function CirclePacking() {
             .attr('class', 'leaf-label')
             .attr('x', d => d.x0 + 4)
             .attr('y', d => d.y0 + ((d.y1 - d.y0) / 2) + 4)
-            .attr('fill', '#e2e8f0')
+            .attr('fill', '#ffffff')
             .attr('font-size', '10px')
             .attr('pointer-events', 'none')
             .text(d => {
@@ -321,7 +321,7 @@ export default function CirclePacking() {
             ancestors.map((a, i) =>
               i === ancestors.length - 1
                 ? `<span style="color:#60a5fa">${a.data.name}</span>`
-                : `<span style="cursor:pointer;color:#8892a8" class="bc-link" data-id="${a.data.id}">${a.data.name}</span>`
+                : `<span style="cursor:pointer;color:#c8d0dc" class="bc-link" data-id="${a.data.id}">${a.data.name}</span>`
             ).join(' <span style="color:#334155">/</span> ')
           )
           breadcrumb.selectAll('.bc-link').on('click', function () {

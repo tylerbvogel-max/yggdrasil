@@ -69,8 +69,8 @@ export default function Dashboard() {
           responsive: true,
           plugins: { tooltip: { enabled: true } },
           scales: {
-            y: { beginAtZero: true, ticks: { color: '#8892a8' }, grid: { color: '#1e2d4a' } },
-            x: { ticks: { color: '#8892a8' }, grid: { display: false } },
+            y: { beginAtZero: true, ticks: { color: '#c8d0dc' }, grid: { color: '#1e2d4a' } },
+            x: { ticks: { color: '#c8d0dc' }, grid: { display: false } },
           },
         },
       });
@@ -103,8 +103,8 @@ export default function Dashboard() {
             legend: { display: false },
           },
           scales: {
-            y: { stacked: true, beginAtZero: true, ticks: { color: '#8892a8' }, grid: { color: '#1e2d4a' } },
-            x: { stacked: true, ticks: { color: '#8892a8', maxRotation: 45 }, grid: { display: false } },
+            y: { stacked: true, beginAtZero: true, ticks: { color: '#c8d0dc' }, grid: { color: '#1e2d4a' } },
+            x: { stacked: true, ticks: { color: '#c8d0dc', maxRotation: 45 }, grid: { display: false } },
           },
         },
       });
@@ -141,7 +141,7 @@ export default function Dashboard() {
         options: {
           responsive: true,
           plugins: {
-            legend: { display: true, position: 'bottom', labels: { color: '#8892a8', boxWidth: 10, font: { size: 10 } } },
+            legend: { display: true, position: 'bottom', labels: { color: '#c8d0dc', boxWidth: 10, font: { size: 10 } } },
             tooltip: {
               callbacks: {
                 label: (ctx) => {
@@ -152,8 +152,8 @@ export default function Dashboard() {
             },
           },
           scales: {
-            x: { type: bubbleLogX ? 'logarithmic' as const : 'linear' as const, title: { display: true, text: 'Neuron Count', color: '#8892a8' }, ticks: { color: '#8892a8' }, grid: { color: '#1e2d4a' } },
-            y: { type: bubbleLogY ? 'logarithmic' as const : 'linear' as const, title: { display: true, text: 'Total Invocations', color: '#8892a8' }, beginAtZero: !bubbleLogY, ticks: { color: '#8892a8' }, grid: { color: '#1e2d4a' } },
+            x: { type: bubbleLogX ? 'logarithmic' as const : 'linear' as const, title: { display: true, text: 'Neuron Count', color: '#c8d0dc' }, ticks: { color: '#c8d0dc' }, grid: { color: '#1e2d4a' } },
+            y: { type: bubbleLogY ? 'logarithmic' as const : 'linear' as const, title: { display: true, text: 'Total Invocations', color: '#c8d0dc' }, beginAtZero: !bubbleLogY, ticks: { color: '#c8d0dc' }, grid: { color: '#1e2d4a' } },
           },
         },
       });
@@ -206,7 +206,7 @@ export default function Dashboard() {
         <div className="chart-card" style={{ marginBottom: 24 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <h3 style={{ margin: 0 }}>Scoring Health Monitor</h3>
-            <span style={{ fontSize: '0.75rem', color: '#8892a8' }}>
+            <span style={{ fontSize: '0.75rem', color: '#c8d0dc' }}>
               {health.queries_analyzed} queries analyzed (baseline: {health.baseline_window}, recent: {health.recent_window})
             </span>
           </div>
@@ -249,7 +249,7 @@ export default function Dashboard() {
                     </span>
                     {data.drifted && <span style={{ fontSize: '0.65rem', color: '#ef4444', fontWeight: 600 }}>DRIFT</span>}
                   </div>
-                  <div style={{ fontSize: '0.7rem', color: '#8892a8', marginBottom: 4 }}>
+                  <div style={{ fontSize: '0.7rem', color: '#c8d0dc', marginBottom: 4 }}>
                     Baseline: <strong style={{ color: '#60a5fa' }}>{data.baseline_query_means.mean.toFixed(3)}</strong>
                     <span style={{ margin: '0 4px' }}>/</span>
                     Recent: <strong style={{ color: data.drifted ? '#ef4444' : '#22c55e' }}>{data.recent_query_means.mean.toFixed(3)}</strong>
@@ -275,7 +275,7 @@ export default function Dashboard() {
       )}
 
       {health && health.status === 'insufficient_data' && (
-        <div className="chart-card" style={{ marginBottom: 24, color: '#8892a8', fontSize: '0.85rem' }}>
+        <div className="chart-card" style={{ marginBottom: 24, color: '#c8d0dc', fontSize: '0.85rem' }}>
           <h3>Scoring Health Monitor</h3>
           <p>Insufficient data for drift detection ({health.queries_available} queries, need 5+).</p>
         </div>
@@ -346,7 +346,7 @@ export default function Dashboard() {
                     {a.severity}
                   </span>
                   <span style={{ color: 'var(--text-dim)', flex: 1 }}>{a.message}</span>
-                  <button style={{ background: 'none', border: 'none', color: '#8892a8', cursor: 'pointer', fontSize: '0.7rem' }} onClick={async () => {
+                  <button style={{ background: 'none', border: 'none', color: '#c8d0dc', cursor: 'pointer', fontSize: '0.7rem' }} onClick={async () => {
                     await acknowledgeAlert(a.id);
                     const hc = await fetchHealthCheck();
                     setHealthCheck(hc);
@@ -425,7 +425,7 @@ export default function Dashboard() {
                   {spreadLog.top_neurons.map(n => (
                     <tr key={n.neuron_id}>
                       <td>{n.label}</td>
-                      <td style={{ color: '#8892a8' }}>{n.department}</td>
+                      <td style={{ color: '#c8d0dc' }}>{n.department}</td>
                       <td><strong>{n.spread_count}</strong></td>
                     </tr>
                   ))}
@@ -479,7 +479,7 @@ export default function Dashboard() {
                   {spreadExpanded === e.query_id && e.promoted_neurons.map(pn => (
                     <tr key={`${e.query_id}-${pn.neuron_id}`} style={{ background: 'var(--bg-input)' }}>
                       <td style={{ paddingLeft: 28, color: '#e8a735' }}>{pn.label}</td>
-                      <td style={{ textAlign: 'center', color: '#8892a8' }} colSpan={2}>{pn.department}</td>
+                      <td style={{ textAlign: 'center', color: '#c8d0dc' }} colSpan={2}>{pn.department}</td>
                       <td style={{ textAlign: 'center' }}>+{pn.boost.toFixed(3)}</td>
                       <td />
                     </tr>
@@ -501,7 +501,7 @@ export default function Dashboard() {
                 padding: '4px 10px', fontSize: '0.75rem', borderRadius: '6px', cursor: 'pointer',
                 border: '1px solid ' + (bubbleLogX ? '#60a5fa' : '#334155'),
                 background: bubbleLogX ? '#1e3a5f' : 'transparent',
-                color: bubbleLogX ? '#60a5fa' : '#8892a8',
+                color: bubbleLogX ? '#60a5fa' : '#c8d0dc',
               }}
             >
               X: {bubbleLogX ? 'Log' : 'Linear'}
@@ -512,7 +512,7 @@ export default function Dashboard() {
                 padding: '4px 10px', fontSize: '0.75rem', borderRadius: '6px', cursor: 'pointer',
                 border: '1px solid ' + (bubbleLogY ? '#60a5fa' : '#334155'),
                 background: bubbleLogY ? '#1e3a5f' : 'transparent',
-                color: bubbleLogY ? '#60a5fa' : '#8892a8',
+                color: bubbleLogY ? '#60a5fa' : '#c8d0dc',
               }}
             >
               Y: {bubbleLogY ? 'Log' : 'Linear'}

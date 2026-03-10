@@ -51,6 +51,7 @@ class NeuronFiring(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     neuron_id: Mapped[int] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=False, index=True)
     query_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("queries.id"), nullable=True, index=True)
     context_type: Mapped[str] = mapped_column(String(50), default="direct")
@@ -78,6 +79,7 @@ class Query(Base):
     __tablename__ = "queries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     user_message: Mapped[str] = mapped_column(Text, nullable=False)
     classified_intent: Mapped[str | None] = mapped_column(String(100), nullable=True)
     classified_departments: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -133,6 +135,7 @@ class EvalScore(Base):
     __tablename__ = "eval_scores"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     query_id: Mapped[int] = mapped_column(Integer, ForeignKey("queries.id"), nullable=False, index=True)
     eval_model: Mapped[str] = mapped_column(String(50), nullable=False)
     answer_mode: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g. "haiku_neuron"
@@ -152,6 +155,7 @@ class NeuronRefinement(Base):
     __tablename__ = "neuron_refinements"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     query_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("queries.id"), nullable=True, index=True)
     neuron_id: Mapped[int] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(20), nullable=False)  # "update" | "create"
@@ -181,6 +185,7 @@ class AutopilotRun(Base):
     __tablename__ = "autopilot_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     query_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("queries.id"), nullable=True)
     generated_query: Mapped[str] = mapped_column(Text, nullable=False)
     directive: Mapped[str] = mapped_column(Text, nullable=False)
@@ -246,3 +251,33 @@ class EmergentQueue(Base):
     resolved_neuron_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=True)
     resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class BatchJob(Base):
+    __tablename__ = "batch_jobs"
+
+    id: Mapped[str] = mapped_column(String(20), primary_key=True)  # short uuid
+    status: Mapped[str] = mapped_column(String(20), default="running", server_default="running")  # running|done|cancelled|interrupted|error
+    step: Mapped[str] = mapped_column(String(200), default="Starting...")
+    total_chunks: Mapped[int] = mapped_column(Integer, default=0)
+    current_chunk: Mapped[int] = mapped_column(Integer, default=0)
+    proposals_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")  # JSON array
+    errors_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")  # JSON array
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    citation: Mapped[str] = mapped_column(String(200), default="")
+    source_type: Mapped[str] = mapped_column(String(50), default="regulatory_primary")
+    department: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    role_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parent_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    queue_entry_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_chars: Mapped[int] = mapped_column(Integer, default=0)
+    model: Mapped[str] = mapped_column(String(20), default="haiku")
+    source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    effective_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    chunks_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of chunk texts for resume
+    system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)  # stored for resume
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

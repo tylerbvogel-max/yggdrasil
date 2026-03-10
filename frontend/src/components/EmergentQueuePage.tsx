@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { DEPARTMENTS, DEPT_ROLES } from '../constants';
 import {
   fetchEmergentQueue,
   dismissEmergentEntry,
@@ -11,6 +12,7 @@ import {
   pollBatchIngest,
   cancelBatchIngest,
   listBatchJobs,
+  resumeBatchIngest,
   type EmergentQueueEntry,
   type ScanReferencesResponse,
   type IngestProposal,
@@ -418,7 +420,7 @@ export default function EmergentQueuePage() {
           <div className="card-label">Resolved</div>
         </div>
         <div className="stat-card">
-          <div className="card-value" style={{ color: '#8892a8' }}>{dismissedCount}</div>
+          <div className="card-value" style={{ color: '#c8d0dc' }}>{dismissedCount}</div>
           <div className="card-label">Dismissed</div>
         </div>
         <div className="stat-card">
@@ -498,7 +500,7 @@ export default function EmergentQueuePage() {
           )}
           <button
             onClick={() => setScanResult(null)}
-            style={{ marginLeft: 8, background: 'none', border: 'none', color: '#8892a8', cursor: 'pointer', fontSize: '0.8rem' }}
+            style={{ marginLeft: 8, background: 'none', border: 'none', color: '#c8d0dc', cursor: 'pointer', fontSize: '0.8rem' }}
           >
             dismiss
           </button>
@@ -520,41 +522,68 @@ export default function EmergentQueuePage() {
               }} />
             )}
           </div>
-          {activeJobs.map(job => (
-            <div key={job.job_id} style={{
-              display: 'flex', alignItems: 'center', gap: 12, fontSize: '0.8rem',
-              padding: '6px 0', borderTop: '1px solid var(--border)',
-            }}>
-              <span style={{
-                color: job.status === 'running' ? '#fb923c' : job.status === 'done' ? '#22c55e' : '#8892a8',
-                fontWeight: 600, minWidth: 70,
+          {activeJobs.map(job => {
+            const statusColor = job.status === 'running' ? '#fb923c'
+              : job.status === 'done' ? '#22c55e'
+              : job.status === 'interrupted' ? '#f59e0b'
+              : job.status === 'error' ? '#ef4444'
+              : '#c8d0dc';
+            const canResume = job.status === 'interrupted' || job.status === 'error';
+            return (
+              <div key={job.job_id} style={{
+                display: 'flex', alignItems: 'center', gap: 12, fontSize: '0.8rem',
+                padding: '6px 0', borderTop: '1px solid var(--border)',
+                background: canResume ? '#f59e0b08' : undefined,
               }}>
-                {job.status}
-              </span>
-              <span style={{ color: 'var(--text)' }}>{job.citation}</span>
-              {job.status === 'running' && (
-                <>
-                  <span style={{ color: '#8892a8' }}>
-                    chunk {job.current_chunk}/{job.total_chunks}
-                  </span>
-                  <div style={{
-                    flex: 1, maxWidth: 120, height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden',
-                  }}>
+                <span style={{
+                  color: statusColor, fontWeight: 600, minWidth: 80,
+                  fontSize: '0.7rem', textTransform: 'uppercase',
+                }}>
+                  {job.status}
+                </span>
+                <span style={{ color: 'var(--text)' }}>{job.citation}</span>
+                {(job.status === 'running' || canResume) && (
+                  <>
+                    <span style={{ color: '#c8d0dc' }}>
+                      chunk {job.current_chunk}/{job.total_chunks}
+                    </span>
                     <div style={{
-                      width: `${(job.current_chunk / job.total_chunks) * 100}%`,
-                      height: '100%', background: '#fb923c', borderRadius: 3,
-                      transition: 'width 0.5s ease',
-                    }} />
-                  </div>
-                </>
-              )}
-              <span style={{ color: '#8892a8' }}>{job.proposals_count} proposals</span>
-              <span style={{ color: '#8892a8' }}>${job.cost_usd.toFixed(4)}</span>
-              {job.errors.length > 0 && (
-                <span style={{ color: '#ef4444' }}>{job.errors.length} errors</span>
-              )}
-            </div>
-          ))}
+                      flex: 1, maxWidth: 120, height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        width: `${job.total_chunks ? (job.current_chunk / job.total_chunks) * 100 : 0}%`,
+                        height: '100%', background: canResume ? statusColor : '#fb923c', borderRadius: 3,
+                        transition: 'width 0.5s ease',
+                      }} />
+                    </div>
+                  </>
+                )}
+                <span style={{ color: '#c8d0dc' }}>{job.proposals_count} proposals</span>
+                <span style={{ color: '#c8d0dc' }}>${job.cost_usd.toFixed(4)}</span>
+                {job.errors.length > 0 && (
+                  <span style={{ color: '#ef4444' }}>{job.errors.length} errors</span>
+                )}
+                {canResume && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        await resumeBatchIngest(job.job_id);
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : 'Resume failed');
+                      }
+                    }}
+                    style={{
+                      background: '#22c55e22', border: '1px solid #22c55e44', borderRadius: 3,
+                      color: '#22c55e', fontSize: '0.7rem', padding: '2px 10px', cursor: 'pointer',
+                      fontWeight: 600, marginLeft: 'auto',
+                    }}
+                  >
+                    Resume
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -565,7 +594,7 @@ export default function EmergentQueuePage() {
       {loading ? (
         <div className="loading">Loading emergent queue...</div>
       ) : filtered.length === 0 ? (
-        <div style={{ color: '#8892a8', fontSize: '0.85rem', padding: 16, textAlign: 'center' }}>
+        <div style={{ color: '#c8d0dc', fontSize: '0.85rem', padding: 16, textAlign: 'center' }}>
           {entries.length === 0 ? 'No entries in queue. Run a reference scan to detect unresolved citations.' : 'No entries match current filters.'}
         </div>
       ) : (
@@ -602,7 +631,7 @@ export default function EmergentQueuePage() {
                 <td>
                   <code style={{ fontSize: '0.75rem' }}>{entry.citation_pattern}</code>
                   {entry.notes && (
-                    <div style={{ fontSize: '0.7rem', color: '#8892a8', marginTop: 2 }}>{entry.notes}</div>
+                    <div style={{ fontSize: '0.7rem', color: '#c8d0dc', marginTop: 2 }}>{entry.notes}</div>
                   )}
                 </td>
                 <td>
@@ -615,24 +644,24 @@ export default function EmergentQueuePage() {
                     {entry.family || 'unknown'}
                   </span>
                 </td>
-                <td style={{ color: '#8892a8', fontSize: '0.75rem' }}>{entry.domain}</td>
+                <td style={{ color: '#c8d0dc', fontSize: '0.75rem' }}>{entry.domain}</td>
                 <td style={{ textAlign: 'right', fontWeight: 600 }}>
                   <span style={{ color: entry.detection_count >= 10 ? '#ef4444' : entry.detection_count >= 5 ? '#fb923c' : 'var(--text)' }}>
                     {entry.detection_count}
                   </span>
                 </td>
-                <td style={{ fontSize: '0.75rem', color: '#8892a8' }}>
+                <td style={{ fontSize: '0.75rem', color: '#c8d0dc' }}>
                   {entry.detected_in_neuron_ids.length} neuron{entry.detected_in_neuron_ids.length !== 1 ? 's' : ''}
                 </td>
-                <td style={{ fontSize: '0.75rem', color: '#8892a8' }}>
+                <td style={{ fontSize: '0.75rem', color: '#c8d0dc' }}>
                   {entry.last_detected_at ? entry.last_detected_at.split('T')[0] : '\u2014'}
                 </td>
                 <td>
                   <span style={{
                     fontSize: '0.65rem', padding: '1px 6px', borderRadius: 3, textTransform: 'uppercase', fontWeight: 600,
-                    background: entry.status === 'pending' ? '#fb923c22' : entry.status === 'resolved' ? '#22c55e22' : '#8892a822',
-                    color: entry.status === 'pending' ? '#fb923c' : entry.status === 'resolved' ? '#22c55e' : '#8892a8',
-                    border: `1px solid ${entry.status === 'pending' ? '#fb923c44' : entry.status === 'resolved' ? '#22c55e44' : '#8892a844'}`,
+                    background: entry.status === 'pending' ? '#fb923c22' : entry.status === 'resolved' ? '#22c55e22' : '#c8d0dc22',
+                    color: entry.status === 'pending' ? '#fb923c' : entry.status === 'resolved' ? '#22c55e' : '#c8d0dc',
+                    border: `1px solid ${entry.status === 'pending' ? '#fb923c44' : entry.status === 'resolved' ? '#22c55e44' : '#c8d0dc44'}`,
                   }}>
                     {entry.status}
                   </span>
@@ -654,7 +683,7 @@ export default function EmergentQueuePage() {
                         disabled={dismissingId !== null}
                         style={{
                           background: 'none', border: '1px solid var(--border)', borderRadius: 3,
-                          color: '#8892a8', fontSize: '0.7rem', padding: '2px 8px', cursor: 'pointer',
+                          color: '#c8d0dc', fontSize: '0.7rem', padding: '2px 8px', cursor: 'pointer',
                         }}
                       >
                         Dismiss
@@ -668,7 +697,7 @@ export default function EmergentQueuePage() {
         </table>
       )}
 
-      <div style={{ fontSize: '0.75rem', color: '#8892a8', marginTop: 8 }}>
+      <div style={{ fontSize: '0.75rem', color: '#c8d0dc', marginTop: 8 }}>
         Showing {filtered.length} of {total} entries
       </div>
 
@@ -687,7 +716,7 @@ export default function EmergentQueuePage() {
             onClick={e => e.stopPropagation()}
           >
             <h4 style={{ margin: '0 0 12px', color: 'var(--text)' }}>Dismiss Entry</h4>
-            <p style={{ fontSize: '0.8rem', color: '#8892a8', margin: '0 0 12px' }}>
+            <p style={{ fontSize: '0.8rem', color: '#c8d0dc', margin: '0 0 12px' }}>
               Citation: <code>{entries.find(e => e.id === showDismissModal)?.citation_pattern}</code>
             </p>
             <textarea
@@ -706,7 +735,7 @@ export default function EmergentQueuePage() {
                 onClick={() => { setShowDismissModal(null); setDismissNotes(''); }}
                 style={{
                   background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-                  color: '#8892a8', padding: '6px 14px', fontSize: '0.8rem', cursor: 'pointer',
+                  color: '#c8d0dc', padding: '6px 14px', fontSize: '0.8rem', cursor: 'pointer',
                 }}
               >
                 Cancel
@@ -745,7 +774,7 @@ export default function EmergentQueuePage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
               <div>
                 <h3 style={{ margin: 0, color: 'var(--text)' }}>Acquire Source</h3>
-                <div style={{ fontSize: '0.8rem', color: '#8892a8', marginTop: 4 }}>
+                <div style={{ fontSize: '0.8rem', color: '#c8d0dc', marginTop: 4 }}>
                   <code>{acquireEntry.citation_pattern}</code>
                   <span style={{
                     marginLeft: 8, fontSize: '0.7rem', padding: '1px 6px', borderRadius: 3,
@@ -768,7 +797,7 @@ export default function EmergentQueuePage() {
                     <span key={step} style={{
                       padding: '2px 8px', borderRadius: 3,
                       background: acquireStep === step ? '#60a5fa33' : 'var(--bg-input)',
-                      color: acquireStep === step ? '#60a5fa' : '#8892a8',
+                      color: acquireStep === step ? '#60a5fa' : '#c8d0dc',
                       fontWeight: acquireStep === step ? 600 : 400,
                     }}>
                       {i + 1}. {labels[step]}
@@ -783,7 +812,7 @@ export default function EmergentQueuePage() {
               <div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
                   <label style={{ fontSize: '0.8rem' }}>
-                    <span style={{ color: '#8892a8', display: 'block', marginBottom: 4 }}>Source Type</span>
+                    <span style={{ color: '#c8d0dc', display: 'block', marginBottom: 4 }}>Source Type</span>
                     <select
                       value={acquireForm.source_type}
                       onChange={e => setAcquireForm(f => ({ ...f, source_type: e.target.value }))}
@@ -793,7 +822,7 @@ export default function EmergentQueuePage() {
                     </select>
                   </label>
                   <label style={{ fontSize: '0.8rem' }}>
-                    <span style={{ color: '#8892a8', display: 'block', marginBottom: 4 }}>Source URL (optional)</span>
+                    <span style={{ color: '#c8d0dc', display: 'block', marginBottom: 4 }}>Source URL (optional)</span>
                     <input
                       type="text"
                       placeholder="https://..."
@@ -803,27 +832,32 @@ export default function EmergentQueuePage() {
                     />
                   </label>
                   <label style={{ fontSize: '0.8rem' }}>
-                    <span style={{ color: '#8892a8', display: 'block', marginBottom: 4 }}>Target Department (optional)</span>
-                    <input
-                      type="text"
-                      placeholder="e.g. Engineering"
+                    <span style={{ color: '#c8d0dc', display: 'block', marginBottom: 4 }}>Target Department <span style={{ color: '#ef4444' }}>*</span></span>
+                    <select
                       value={acquireForm.department}
-                      onChange={e => setAcquireForm(f => ({ ...f, department: e.target.value }))}
+                      onChange={e => setAcquireForm(f => ({ ...f, department: e.target.value, role_key: '' }))}
                       style={inputStyle}
-                    />
+                    >
+                      <option value="">Select department...</option>
+                      {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
                   </label>
                   <label style={{ fontSize: '0.8rem' }}>
-                    <span style={{ color: '#8892a8', display: 'block', marginBottom: 4 }}>Target Role Key (optional)</span>
-                    <input
-                      type="text"
-                      placeholder="e.g. quality_engineer"
+                    <span style={{ color: '#c8d0dc', display: 'block', marginBottom: 4 }}>Target Role</span>
+                    <select
                       value={acquireForm.role_key}
                       onChange={e => setAcquireForm(f => ({ ...f, role_key: e.target.value }))}
                       style={inputStyle}
-                    />
+                      disabled={!acquireForm.department}
+                    >
+                      <option value="">Select role (optional)...</option>
+                      {(DEPT_ROLES[acquireForm.department] || []).map(r => (
+                        <option key={r.key} value={r.key}>{r.label}</option>
+                      ))}
+                    </select>
                   </label>
                   <label style={{ fontSize: '0.8rem' }}>
-                    <span style={{ color: '#8892a8', display: 'block', marginBottom: 4 }}>Effective Date (optional)</span>
+                    <span style={{ color: '#c8d0dc', display: 'block', marginBottom: 4 }}>Effective Date (optional)</span>
                     <input
                       type="date"
                       value={acquireForm.effective_date}
@@ -835,7 +869,7 @@ export default function EmergentQueuePage() {
 
                 {/* Source input mode tabs */}
                 <div style={{ marginBottom: 8 }}>
-                  <span style={{ color: '#8892a8', fontSize: '0.8rem', display: 'block', marginBottom: 6 }}>
+                  <span style={{ color: '#c8d0dc', fontSize: '0.8rem', display: 'block', marginBottom: 6 }}>
                     Source Input <span style={{ color: '#ef4444' }}>*</span>
                   </span>
                   <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
@@ -845,7 +879,7 @@ export default function EmergentQueuePage() {
                         onClick={() => setSourceMode(mode)}
                         style={{
                           background: sourceMode === mode ? '#60a5fa22' : 'var(--bg-input)',
-                          color: sourceMode === mode ? '#60a5fa' : '#8892a8',
+                          color: sourceMode === mode ? '#60a5fa' : '#c8d0dc',
                           border: `1px solid ${sourceMode === mode ? '#60a5fa44' : 'var(--border)'}`,
                           borderRadius: 4, padding: '4px 12px', fontSize: '0.75rem', cursor: 'pointer',
                         }}
@@ -868,12 +902,12 @@ export default function EmergentQueuePage() {
                         {extracting && <span style={{ fontSize: '0.75rem', color: '#fb923c' }}>Extracting...</span>}
                       </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <label style={{ fontSize: '0.75rem', color: '#8892a8' }}>
+                        <label style={{ fontSize: '0.75rem', color: '#c8d0dc' }}>
                           Pages: <input type="number" min={1} value={pageStart} onChange={e => setPageStart(Number(e.target.value) || 1)}
                             style={{ ...inputStyle, width: 60 }} /> to <input type="number" min={1} value={pageEnd} onChange={e => setPageEnd(e.target.value ? Number(e.target.value) : '')}
                             placeholder="end" style={{ ...inputStyle, width: 60 }} />
                         </label>
-                        <span style={{ fontSize: '0.7rem', color: '#8892a8' }}>(leave end blank for all pages)</span>
+                        <span style={{ fontSize: '0.7rem', color: '#c8d0dc' }}>(leave end blank for all pages)</span>
                       </div>
                     </div>
                   )}
@@ -901,7 +935,7 @@ export default function EmergentQueuePage() {
                         </button>
                       </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <label style={{ fontSize: '0.75rem', color: '#8892a8' }}>
+                        <label style={{ fontSize: '0.75rem', color: '#c8d0dc' }}>
                           Pages (PDF only): <input type="number" min={1} value={pageStart} onChange={e => setPageStart(Number(e.target.value) || 1)}
                             style={{ ...inputStyle, width: 60 }} /> to <input type="number" min={1} value={pageEnd} onChange={e => setPageEnd(e.target.value ? Number(e.target.value) : '')}
                             placeholder="end" style={{ ...inputStyle, width: 60 }} />
@@ -926,14 +960,14 @@ export default function EmergentQueuePage() {
                   />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4 }}>
-                  <span style={{ fontSize: '0.7rem', color: '#8892a8' }}>
+                  <span style={{ fontSize: '0.7rem', color: '#c8d0dc' }}>
                     {acquireForm.source_text.length.toLocaleString()} characters
                     {acquireForm.source_text.length > BATCH_THRESHOLD && (
                       <span style={{ color: '#fb923c' }}> — batch mode (chunked processing)</span>
                     )}
                   </span>
                   {acquireForm.source_text.length > BATCH_THRESHOLD && (
-                    <label style={{ fontSize: '0.75rem', color: '#8892a8', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <label style={{ fontSize: '0.75rem', color: '#c8d0dc', display: 'flex', alignItems: 'center', gap: 4 }}>
                       Model:
                       <select
                         value={batchModel}
@@ -951,17 +985,17 @@ export default function EmergentQueuePage() {
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
                   <button onClick={closeAcquire} style={{
                     background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-                    color: '#8892a8', padding: '8px 16px', fontSize: '0.8rem', cursor: 'pointer',
+                    color: '#c8d0dc', padding: '8px 16px', fontSize: '0.8rem', cursor: 'pointer',
                   }}>
                     Cancel
                   </button>
                   <button
                     onClick={handleGenerateProposals}
-                    disabled={acquireLoading || !acquireForm.source_text.trim()}
+                    disabled={acquireLoading || !acquireForm.source_text.trim() || !acquireForm.department}
                     style={{
                       background: '#60a5fa22', border: '1px solid #60a5fa44', borderRadius: 4,
                       color: '#60a5fa', padding: '8px 16px', fontSize: '0.8rem', cursor: 'pointer',
-                      opacity: acquireLoading || !acquireForm.source_text.trim() ? 0.5 : 1,
+                      opacity: acquireLoading || !acquireForm.source_text.trim() || !acquireForm.department ? 0.5 : 1,
                     }}
                   >
                     {acquireLoading ? 'Generating proposals...' : 'Generate Neuron Proposals'}
@@ -991,7 +1025,7 @@ export default function EmergentQueuePage() {
                     <div style={{ fontSize: '0.85rem', color: 'var(--text)', marginBottom: 8 }}>
                       {batchStatus.step}
                     </div>
-                    <div style={{ display: 'flex', gap: 24, justifyContent: 'center', fontSize: '0.8rem', color: '#8892a8' }}>
+                    <div style={{ display: 'flex', gap: 24, justifyContent: 'center', fontSize: '0.8rem', color: '#c8d0dc' }}>
                       <span>Chunk {batchStatus.current_chunk} / {batchStatus.total_chunks}</span>
                       <span>{batchStatus.proposals_count} proposals so far</span>
                       <span>${batchStatus.cost_usd.toFixed(4)}</span>
@@ -1055,12 +1089,12 @@ export default function EmergentQueuePage() {
                           <strong style={{ fontSize: '0.85rem' }}>{p.label}</strong>
                           <span style={{
                             fontSize: '0.65rem', padding: '1px 6px', borderRadius: 3,
-                            background: 'var(--bg-input)', color: '#8892a8',
+                            background: 'var(--bg-input)', color: '#c8d0dc',
                           }}>
                             L{p.layer} {p.node_type}
                           </span>
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: '#8892a8', marginBottom: 6 }}>
+                        <div style={{ fontSize: '0.75rem', color: '#c8d0dc', marginBottom: 6 }}>
                           {p.summary}
                         </div>
                         <div style={{
@@ -1070,7 +1104,7 @@ export default function EmergentQueuePage() {
                         }}>
                           {p.content}
                         </div>
-                        <div style={{ fontSize: '0.7rem', color: '#8892a8', marginTop: 4, fontStyle: 'italic' }}>
+                        <div style={{ fontSize: '0.7rem', color: '#c8d0dc', marginTop: 4, fontStyle: 'italic' }}>
                           {p.reason}
                         </div>
                       </div>
@@ -1081,13 +1115,13 @@ export default function EmergentQueuePage() {
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
                   <button onClick={() => setAcquireStep('input')} style={{
                     background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-                    color: '#8892a8', padding: '8px 16px', fontSize: '0.8rem', cursor: 'pointer',
+                    color: '#c8d0dc', padding: '8px 16px', fontSize: '0.8rem', cursor: 'pointer',
                   }}>
                     Back
                   </button>
                   <button onClick={closeAcquire} style={{
                     background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-                    color: '#8892a8', padding: '8px 16px', fontSize: '0.8rem', cursor: 'pointer',
+                    color: '#c8d0dc', padding: '8px 16px', fontSize: '0.8rem', cursor: 'pointer',
                   }}>
                     Cancel
                   </button>
@@ -1112,7 +1146,7 @@ export default function EmergentQueuePage() {
                 <div style={{ fontSize: '2rem', color: '#22c55e', marginBottom: 12 }}>
                   {applyResult.neurons_created} neuron{applyResult.neurons_created !== 1 ? 's' : ''} created
                 </div>
-                <div style={{ fontSize: '0.85rem', color: '#8892a8', marginBottom: 8 }}>
+                <div style={{ fontSize: '0.85rem', color: '#c8d0dc', marginBottom: 8 }}>
                   IDs: {applyResult.neuron_ids.join(', ')}
                 </div>
                 {applyResult.edges_created > 0 && (

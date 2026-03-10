@@ -18,23 +18,23 @@ export default function MonetizationPage() {
           <tbody>
             <tr>
               <td style={{ fontWeight: 600 }}>Cost to Develop</td>
-              <td>$90K &ndash; $130K</td>
-              <td style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>500-600 hrs senior full-stack + AI + domain expertise</td>
+              <td>$150K &ndash; $220K</td>
+              <td style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>800-1,000+ hrs senior full-stack + AI/ML pipeline + aerospace domain + compliance architecture</td>
             </tr>
             <tr>
               <td style={{ fontWeight: 600 }}>IP Sale (one-time)</td>
-              <td>$250K &ndash; $500K</td>
-              <td style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>NIST/AIUC-1 compliance posture adds 30-50% premium over unaudited AI tools</td>
+              <td>$400K &ndash; $750K</td>
+              <td style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>2K+ neuron graph, 13 backend services, 3 compliance frameworks, multi-signal scoring IP, full eval pipeline</td>
             </tr>
             <tr>
               <td style={{ fontWeight: 600 }}>SaaS ARR (20 customers)</td>
-              <td>$600K &ndash; $1.5M</td>
-              <td style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>$2.5K-6K/mo per seat; compliance certification enables enterprise/gov pricing tiers</td>
+              <td>$960K &ndash; $2.4M</td>
+              <td style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>$4K-10K/mo per seat; autopilot, batch ingestion, drift detection, and compliance posture justify premium tiers</td>
             </tr>
             <tr>
-              <td style={{ fontWeight: 600 }}>Company Valuation (5x ARR)</td>
-              <td>$3M &ndash; $7.5M</td>
-              <td style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>Compliance-certified AI SaaS commands higher multiples in regulated verticals</td>
+              <td style={{ fontWeight: 600 }}>Company Valuation (5&ndash;8x ARR)</td>
+              <td>$4.8M &ndash; $19.2M</td>
+              <td style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>Compliance-certified AI SaaS in regulated verticals commands 5&ndash;8x; multi-tenant readiness and autonomous pipeline increase multiple</td>
             </tr>
           </tbody>
         </table>
@@ -42,6 +42,51 @@ export default function MonetizationPage() {
           Knowledge base built entirely from open-source information (FAR/DFARS, MIL-STDs, NADCAP, AS9100, etc.).
           Value is in the retrieval architecture and compliance posture, not the raw content.
           Google's entire business is built on indexing publicly available web pages.
+        </div>
+      </section>
+
+      <section style={{ marginBottom: 32 }}>
+        <h3 style={{ color: 'var(--accent)', marginBottom: 12 }}>Current Development Scope</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 16 }}>
+          {[
+            { label: 'Neurons', value: '2,055', sub: '9 departments, 52 roles' },
+            { label: 'Co-firing Edges', value: '40,595', sub: 'Spread activation graph' },
+            { label: 'Queries Executed', value: '189', sub: '5,209 neuron firings' },
+            { label: 'Evaluations', value: '262', sub: 'Blind A/B scored' },
+            { label: 'Refinements', value: '1,623', sub: 'Graph mutations logged' },
+            { label: 'Autopilot Runs', value: '123', sub: 'Autonomous gap-filling' },
+            { label: 'Emergent Queue', value: '401', sub: 'Detected citation patterns' },
+            { label: 'Frontend Components', value: '35', sub: 'React + TypeScript + D3' },
+            { label: 'Backend Services', value: '13', sub: 'Scoring, classification, assembly' },
+            { label: 'API Routers', value: '6', sub: 'REST endpoints' },
+            { label: 'Database', value: 'PostgreSQL', sub: 'Async SQLAlchemy, multi-user ready' },
+            { label: 'Compliance Frameworks', value: '3', sub: 'NIST AI RMF, AIUC-1, ISO 42001' },
+          ].map(stat => (
+            <div key={stat.label} className="result-card" style={{ padding: '12px 14px', textAlign: 'center' }}>
+              <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--accent)' }}>{stat.value}</div>
+              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>{stat.label}</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{stat.sub}</div>
+            </div>
+          ))}
+        </div>
+        <div className="result-card" style={{ padding: '12px 16px' }}>
+          <h4 style={{ color: 'var(--text)', marginBottom: 8, fontSize: '0.9rem' }}>Architecture Components Built</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 24px', fontSize: '0.8rem', color: 'var(--text-dim)' }}>
+            <div>5-signal neuron scoring engine</div>
+            <div>Spread activation across co-firing graph</div>
+            <div>Two-stage classify &rarr; score pipeline</div>
+            <div>Token-budgeted prompt assembly</div>
+            <div>Blind A/B evaluation framework</div>
+            <div>Autopilot with multi-strategy gap detection</div>
+            <div>Emergent citation queue + batch ingestion</div>
+            <div>Z-score drift detection (5 signals)</div>
+            <div>Model registry with cost tracking</div>
+            <div>PostgreSQL with multi-tenant user_id columns</div>
+            <div>D3 visualizations (graph, heatmap, chord)</div>
+            <div>NIST/AIUC-1/ISO 42001 compliance tracking</div>
+            <div>Input guard + reference detection hooks</div>
+            <div>Performance methodology + fairness analysis</div>
+          </div>
         </div>
       </section>
 
@@ -68,9 +113,11 @@ export default function MonetizationPage() {
             Multi-Tenant Isolation
           </h4>
           <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', lineHeight: 1.6 }}>
-            PostgreSQL migration is complete &mdash; the foundation for multi-tenancy is in place. The next step is
-            org-scoped neuron graphs with tenant isolation. That's the difference between selling a product and
-            selling a business. Extend the existing schema with tenant IDs and row-level security policies.
+            PostgreSQL migration is complete and nullable <code style={{ color: 'var(--accent)', fontSize: '0.8rem' }}>user_id</code> columns
+            have been added to all user-scoped tables (queries, firings, evals, refinements, autopilot runs).
+            The next step is org-scoped neuron graphs with tenant isolation and row-level security policies.
+            That's the difference between selling a product and selling a business. The centralized model registry
+            is in place to support per-tenant billing when the SDK swap happens.
           </p>
         </div>
 
@@ -214,13 +261,15 @@ export default function MonetizationPage() {
           </p>
           <ul style={{ paddingLeft: 20, color: 'var(--text-dim)', fontSize: '0.85rem', lineHeight: 1.8 }}>
             <li>5-signal neuron scoring engine (Burst, Impact, Practice, Novelty, Recency)</li>
-            <li>Spread activation across co-firing graph (224K+ edges)</li>
+            <li>Spread activation across 40K+ co-firing edges with propagation logging</li>
             <li>Token-budgeted prompt assembly with score-ordered packing</li>
             <li>Full audit trail &mdash; every classification, score, firing, and prompt is logged (AIUC-1 E015)</li>
-            <li>Blind evaluation framework with cross-tier bias awareness</li>
-            <li>Configurable A/B testing infrastructure for LLM cost-quality tradeoffs</li>
+            <li>Blind evaluation framework with cross-tier bias awareness (262 evaluations)</li>
+            <li>Autopilot with 5-strategy gap detection (123 autonomous runs)</li>
+            <li>Emergent citation queue with batch ingestion pipeline (401 detected patterns)</li>
             <li>Z-score drift detection on scoring distributions (NIST GOV-1.5)</li>
             <li>NIST AI RMF + AIUC-1 compliance framework with 45-requirement crosswalk to ISO 42001</li>
+            <li>Multi-user-ready PostgreSQL schema with centralized model registry</li>
             <li>Demonstrated thesis: cheap models + structured context approaches expensive model quality</li>
           </ul>
         </div>

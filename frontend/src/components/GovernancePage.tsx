@@ -27,7 +27,7 @@ export default function GovernancePage() {
       onMouseEnter={() => tooltip && setHoveredKpi(label)}
       onMouseLeave={() => setHoveredKpi(null)}
     >
-      <div style={{ fontSize: '1.1rem', fontWeight: 700, color: met === null ? '#8892a8' : met ? '#22c55e' : '#fb923c' }}>
+      <div style={{ fontSize: '1.1rem', fontWeight: 700, color: met === null ? '#c8d0dc' : met ? '#22c55e' : '#fb923c' }}>
         {value}
       </div>
       <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: 2 }}>{label}</div>
@@ -164,7 +164,7 @@ export default function GovernancePage() {
               <td>Training cost (all tiers incl. opus benchmarks)</td>
               <td>Informational</td>
               <td>{data.kpis.cost_per_1m_tokens !== null ? `$${data.kpis.cost_per_1m_tokens.toFixed(2)}` : 'N/A'}</td>
-              <td style={{ color: '#8892a8' }}>Tracking</td>
+              <td style={{ color: '#c8d0dc' }}>Tracking</td>
             </tr>
             <tr>
               <td>Quality parity (neuron eval / opus eval)</td>
@@ -250,7 +250,7 @@ export default function GovernancePage() {
               <tbody>
                 {data.change_activity.recent_changes.map(c => (
                   <tr key={c.id}>
-                    <td style={{ color: '#8892a8', whiteSpace: 'nowrap' }}>{c.created_at?.split('T')[0] ?? '?'}</td>
+                    <td style={{ color: '#c8d0dc', whiteSpace: 'nowrap' }}>{c.created_at?.split('T')[0] ?? '?'}</td>
                     <td><code>{c.action}</code></td>
                     <td>{c.field || '\u2014'}</td>
                     <td>#{c.neuron_id}</td>
@@ -337,7 +337,7 @@ export default function GovernancePage() {
                     background: r.treatment === 'Mitigate' ? '#3b82f622' : r.treatment === 'Monitor' ? '#fb923c22' : '#64748b22',
                     color: r.treatment === 'Mitigate' ? '#3b82f6' : r.treatment === 'Monitor' ? '#fb923c' : '#64748b',
                   }}>{r.treatment}</span></td>
-                  <td style={{ fontSize: '0.75rem', color: '#8892a8' }}>{r.control}</td>
+                  <td style={{ fontSize: '0.75rem', color: '#c8d0dc' }}>{r.control}</td>
                 </tr>
               );
             })}
@@ -417,8 +417,8 @@ export default function GovernancePage() {
               <tr key={i}>
                 <td>{r.activity}</td>
                 <td style={{ fontWeight: 500 }}>{r.freq}</td>
-                <td style={{ color: '#8892a8' }}>{r.owner}</td>
-                <td style={{ fontSize: '0.75rem', color: '#8892a8' }}>{r.method}</td>
+                <td style={{ color: '#c8d0dc' }}>{r.owner}</td>
+                <td style={{ fontSize: '0.75rem', color: '#c8d0dc' }}>{r.method}</td>
               </tr>
             ))}
           </tbody>

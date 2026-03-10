@@ -23,7 +23,25 @@ import type {
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    try {
+      const body = await res.json();
+      const detail = body?.detail;
+      if (detail?.message) {
+        const flags = detail.flags as Array<{ description: string; severity: string; pattern?: string }>;
+        if (flags?.length) {
+          const reasons = flags.map((f: { description: string; pattern?: string }) =>
+            f.description + (f.pattern ? ` — "${f.pattern}"` : '')).join('; ');
+          throw new Error(`${detail.message}: ${reasons}`);
+        }
+        throw new Error(detail.message);
+      }
+      if (typeof detail === 'string') throw new Error(detail);
+    } catch (e) {
+      if (e instanceof Error && e.message !== `${res.status} ${res.statusText}`) throw e;
+    }
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -147,6 +165,29 @@ export function applyRefinements(queryId: number, updateIds: number[], newNeuron
 
 export function fetchDeptChord(layer = 1, minWeight = 0.15): Promise<DeptChordEntry[]> {
   return json<DeptChordEntry[]>(`/neurons/edges/department-chord?layer=${layer}&min_weight=${minWeight}`);
+}
+
+export interface LayerFlowNode {
+  key: string;
+  layer: number;
+  department: string;
+  neuron_count?: number;
+}
+
+export interface LayerFlowLink {
+  source: string;
+  target: string;
+  total_weight: number;
+  edge_count: number;
+}
+
+export interface LayerFlowResponse {
+  nodes: LayerFlowNode[];
+  links: LayerFlowLink[];
+}
+
+export function fetchLayerFlow(minWeight = 0.15): Promise<LayerFlowResponse> {
+  return json<LayerFlowResponse>(`/neurons/edges/layer-flow?min_weight=${minWeight}`);
 }
 
 export function fetchNeuronEdges(id: number, limit = 15): Promise<EgoGraphResponse> {
@@ -672,6 +713,10 @@ export function pollBatchIngest(jobId: string): Promise<BatchIngestStatusRespons
 
 export function cancelBatchIngest(jobId: string): Promise<{ status: string }> {
   return json<{ status: string }>(`/admin/ingest-source/batch/${jobId}/cancel`, { method: 'POST' });
+}
+
+export function resumeBatchIngest(jobId: string): Promise<{ job_id: string; status: string; resuming_from_chunk: number; total_chunks: number; existing_proposals: number }> {
+  return json(`/admin/ingest-source/batch/${jobId}/resume`, { method: 'POST' });
 }
 
 export interface BatchJobSummary {

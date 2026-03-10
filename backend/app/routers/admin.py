@@ -12,7 +12,8 @@ from sqlalchemy import select, func, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Neuron, Query, NeuronFiring, NeuronEdge, PropagationLog, IntentNeuronMap, SystemState, NeuronRefinement, EmergentQueue, SystemAlert, EvalScore, AutopilotRun
+from app.database import async_session
+from app.models import Neuron, Query, NeuronFiring, NeuronEdge, PropagationLog, IntentNeuronMap, SystemState, NeuronRefinement, EmergentQueue, SystemAlert, EvalScore, AutopilotRun, BatchJob
 from app.schemas import (
     SeedResponse, ResetResponse, CostReportResponse, CheckpointResponse,
 )
@@ -421,6 +422,8 @@ async def ingest_source(
         raise HTTPException(status_code=400, detail="source_text is required")
     if not citation:
         raise HTTPException(status_code=400, detail="citation is required")
+    if not department:
+        raise HTTPException(status_code=400, detail="department is required — neurons without a department become orphaned")
 
     # Find the target parent neuron (role or department level) for placement
     parent_neuron = None
@@ -552,6 +555,25 @@ async def apply_ingest_source(
     if not proposals:
         raise HTTPException(status_code=400, detail="No proposals to apply")
 
+    # ── Placement validation: reject orphaned neurons ──
+    unplaced = []
+    for i, p in enumerate(proposals):
+        missing = []
+        if not p.get("department"):
+            missing.append("department")
+        if not p.get("role_key"):
+            missing.append("role_key")
+        if not p.get("parent_id"):
+            missing.append("parent_id")
+        if missing:
+            unplaced.append({"index": i, "label": p.get("label", "(no label)"), "missing": missing})
+
+    if unplaced:
+        raise HTTPException(status_code=400, detail={
+            "message": f"{len(unplaced)} of {len(proposals)} proposals lack required placement fields and would be orphaned",
+            "unplaced": unplaced,
+        })
+
     # Get current query count for created_at_query_count
     state = (await db.execute(select(SystemState).where(SystemState.id == 1))).scalar_one_or_none()
     query_count = state.total_queries if state else 0
@@ -645,7 +667,8 @@ async def apply_ingest_source(
 
 # ── Batch Ingestion (background chunked processing) ──
 
-_batch_jobs: dict[str, dict] = {}  # job_id -> state
+# In-memory cancel flags — lightweight, no need to persist
+_batch_cancel_flags: dict[str, bool] = {}
 
 
 def _chunk_text(text: str, chunk_size: int = 18000, overlap: int = 300) -> list[str]:
@@ -664,28 +687,57 @@ def _chunk_text(text: str, chunk_size: int = 18000, overlap: int = 300) -> list[
     return [c for c in chunks if c]
 
 
-async def _run_batch_ingest(job_id: str, chunks: list[str], system_prompt: str,
-                            citation: str, source_type: str, department: str | None,
-                            role_key: str | None, parent_id: int | None,
-                            source_url: str | None, effective_date: str | None,
-                            queue_entry_id: int | None, model: str = "haiku"):
+async def _update_batch_job(job_id: str, **kwargs):
+    """Update batch job fields in the database."""
+    async with async_session() as db:
+        job = await db.get(BatchJob, job_id)
+        if job:
+            for k, v in kwargs.items():
+                setattr(job, k, v)
+            await db.commit()
+
+
+async def _run_batch_ingest(job_id: str, start_chunk: int = 0):
     """Background task: process chunks sequentially through the chosen model."""
     from app.services.claude_cli import claude_chat
 
-    job = _batch_jobs[job_id]
-    all_proposals = []
-    total_cost = 0.0
-    total_input = 0
-    total_output = 0
-    labels_so_far: list[str] = []
+    # Load job state from DB
+    async with async_session() as db:
+        job = await db.get(BatchJob, job_id)
+        if not job:
+            return
+        chunks = json.loads(job.chunks_json or "[]")
+        system_prompt = job.system_prompt or ""
+        citation = job.citation
+        source_type = job.source_type
+        department = job.department
+        role_key = job.role_key
+        parent_id = job.parent_id
+        source_url = job.source_url
+        effective_date = job.effective_date
+        model = job.model
+        all_proposals = json.loads(job.proposals_json or "[]")
+        errors = json.loads(job.errors_json or "[]")
+        total_cost = job.cost_usd
+        total_input = job.input_tokens
+        total_output = job.output_tokens
 
-    for i, chunk in enumerate(chunks):
-        if job.get("cancelled"):
-            job["status"] = "cancelled"
+    labels_so_far = [p.get("label", "") for p in all_proposals]
+
+    for i in range(start_chunk, len(chunks)):
+        if _batch_cancel_flags.get(job_id):
+            await _update_batch_job(job_id, status="cancelled", step=f"Cancelled at chunk {i + 1}/{len(chunks)}")
+            _batch_cancel_flags.pop(job_id, None)
             return
 
-        job["current_chunk"] = i + 1
-        job["step"] = f"Processing chunk {i + 1} of {len(chunks)}"
+        await _update_batch_job(
+            job_id,
+            current_chunk=i + 1,
+            step=f"Processing chunk {i + 1} of {len(chunks)}",
+            status="running",
+        )
+
+        chunk = chunks[i]
 
         # Include labels of already-generated proposals to avoid duplication
         dedup_hint = ""
@@ -724,16 +776,23 @@ Source material to segment into neurons:
             total_input += result["input_tokens"]
             total_output += result["output_tokens"]
         except Exception as e:
-            job["errors"].append(f"Chunk {i + 1}: {str(e)[:200]}")
+            errors.append(f"Chunk {i + 1}: {str(e)[:200]}")
 
-        job["proposals"] = all_proposals
-        job["cost_usd"] = total_cost
-        job["input_tokens"] = total_input
-        job["output_tokens"] = total_output
+        # Persist progress after each chunk
+        await _update_batch_job(
+            job_id,
+            proposals_json=json.dumps(all_proposals),
+            errors_json=json.dumps(errors),
+            cost_usd=total_cost,
+            input_tokens=total_input,
+            output_tokens=total_output,
+        )
 
-    job["status"] = "done"
-    job["step"] = f"Complete: {len(all_proposals)} proposals from {len(chunks)} chunks"
-    job["queue_entry_id"] = queue_entry_id
+    await _update_batch_job(
+        job_id,
+        status="done",
+        step=f"Complete: {len(all_proposals)} proposals from {len(chunks)} chunks",
+    )
 
 
 @router.post("/ingest-source/batch")
@@ -761,6 +820,8 @@ async def start_batch_ingest(
         raise HTTPException(status_code=400, detail="source_text is required")
     if not citation:
         raise HTTPException(status_code=400, detail="citation is required")
+    if not department:
+        raise HTTPException(status_code=400, detail="department is required — neurons without a department become orphaned")
 
     # Find parent neuron
     parent_neuron = None
@@ -821,35 +882,31 @@ Output ONLY the JSON array, no other text."""
     chunks = _chunk_text(source_text, chunk_size=chunk_size)
     job_id = str(uuid.uuid4())[:8]
 
-    _batch_jobs[job_id] = {
-        "status": "running",
-        "step": "Starting...",
-        "total_chunks": len(chunks),
-        "current_chunk": 0,
-        "proposals": [],
-        "errors": [],
-        "cost_usd": 0.0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "citation": citation,
-        "source_type": source_type,
-        "department": department,
-        "role_key": role_key,
-        "parent_id": parent_neuron.id if parent_neuron else None,
-        "parent_label": parent_neuron.label if parent_neuron else None,
-        "queue_entry_id": queue_entry_id,
-        "total_chars": len(source_text),
-        "model": model,
-        "cancelled": False,
-    }
+    # Persist job to database
+    batch_job = BatchJob(
+        id=job_id,
+        status="running",
+        step="Starting...",
+        total_chunks=len(chunks),
+        current_chunk=0,
+        citation=citation,
+        source_type=source_type,
+        department=department,
+        role_key=role_key,
+        parent_id=parent_neuron.id if parent_neuron else None,
+        parent_label=parent_neuron.label if parent_neuron else None,
+        queue_entry_id=queue_entry_id,
+        total_chars=len(source_text),
+        model=model,
+        source_url=body.get("source_url"),
+        effective_date=body.get("effective_date"),
+        chunks_json=json.dumps(chunks),
+        system_prompt=system_prompt,
+    )
+    db.add(batch_job)
+    await db.commit()
 
-    asyncio.ensure_future(_run_batch_ingest(
-        job_id, chunks, system_prompt, citation, source_type,
-        department, role_key,
-        parent_neuron.id if parent_neuron else None,
-        body.get("source_url"), body.get("effective_date"),
-        queue_entry_id, model=model,
-    ))
+    asyncio.ensure_future(_run_batch_ingest(job_id))
 
     return {
         "job_id": job_id,
@@ -860,61 +917,97 @@ Output ONLY the JSON array, no other text."""
 
 
 @router.get("/ingest-source/batch/{job_id}")
-async def get_batch_ingest_status(job_id: str):
+async def get_batch_ingest_status(job_id: str, db: AsyncSession = Depends(get_db)):
     """Poll for batch ingestion job progress."""
-    job = _batch_jobs.get(job_id)
+    job = await db.get(BatchJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    proposals = json.loads(job.proposals_json or "[]")
+    errors = json.loads(job.errors_json or "[]")
+
     return {
         "job_id": job_id,
-        "status": job["status"],
-        "step": job["step"],
-        "total_chunks": job["total_chunks"],
-        "current_chunk": job["current_chunk"],
-        "proposals_count": len(job["proposals"]),
-        "proposals": job["proposals"] if job["status"] == "done" else [],
-        "errors": job["errors"],
-        "cost_usd": job["cost_usd"],
-        "input_tokens": job["input_tokens"],
-        "output_tokens": job["output_tokens"],
-        "citation": job["citation"],
-        "department": job["department"],
-        "role_key": job["role_key"],
-        "parent_id": job["parent_id"],
-        "parent_label": job.get("parent_label"),
-        "queue_entry_id": job.get("queue_entry_id"),
+        "status": job.status,
+        "step": job.step,
+        "total_chunks": job.total_chunks,
+        "current_chunk": job.current_chunk,
+        "proposals_count": len(proposals),
+        "proposals": proposals if job.status in ("done", "interrupted") else [],
+        "errors": errors,
+        "cost_usd": job.cost_usd,
+        "input_tokens": job.input_tokens,
+        "output_tokens": job.output_tokens,
+        "citation": job.citation,
+        "department": job.department,
+        "role_key": job.role_key,
+        "parent_id": job.parent_id,
+        "parent_label": job.parent_label,
+        "queue_entry_id": job.queue_entry_id,
     }
 
 
 @router.post("/ingest-source/batch/{job_id}/cancel")
-async def cancel_batch_ingest(job_id: str):
+async def cancel_batch_ingest(job_id: str, db: AsyncSession = Depends(get_db)):
     """Cancel a running batch ingestion job."""
-    job = _batch_jobs.get(job_id)
+    job = await db.get(BatchJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    job["cancelled"] = True
+    _batch_cancel_flags[job_id] = True
     return {"status": "cancelling", "job_id": job_id}
 
 
+@router.post("/ingest-source/batch/{job_id}/resume")
+async def resume_batch_ingest(job_id: str, db: AsyncSession = Depends(get_db)):
+    """Resume an interrupted batch ingestion job from where it left off."""
+    job = await db.get(BatchJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in ("interrupted", "error"):
+        raise HTTPException(status_code=400, detail=f"Cannot resume job with status '{job.status}' — only interrupted or error jobs can be resumed")
+
+    start_chunk = job.current_chunk  # resume from the chunk it was on
+    job.status = "running"
+    job.step = f"Resuming from chunk {start_chunk + 1}/{job.total_chunks}"
+    await db.commit()
+
+    asyncio.ensure_future(_run_batch_ingest(job_id, start_chunk=start_chunk))
+
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "resuming_from_chunk": start_chunk + 1,
+        "total_chunks": job.total_chunks,
+        "existing_proposals": len(json.loads(job.proposals_json or "[]")),
+    }
+
+
 @router.get("/ingest-source/batch")
-async def list_batch_jobs():
+async def list_batch_jobs(db: AsyncSession = Depends(get_db)):
     """List all batch ingestion jobs (active and recent)."""
+    result = await db.execute(
+        select(BatchJob).order_by(BatchJob.created_at.desc()).limit(50)
+    )
+    batch_jobs = result.scalars().all()
+
     jobs = []
-    for job_id, job in _batch_jobs.items():
+    for job in batch_jobs:
+        errors = json.loads(job.errors_json or "[]")
+        proposals = json.loads(job.proposals_json or "[]")
         jobs.append({
-            "job_id": job_id,
-            "status": job["status"],
-            "step": job["step"],
-            "total_chunks": job["total_chunks"],
-            "current_chunk": job["current_chunk"],
-            "proposals_count": len(job["proposals"]),
-            "errors": job["errors"],
-            "cost_usd": job["cost_usd"],
-            "input_tokens": job["input_tokens"],
-            "output_tokens": job["output_tokens"],
-            "citation": job["citation"],
-            "queue_entry_id": job.get("queue_entry_id"),
+            "job_id": job.id,
+            "status": job.status,
+            "step": job.step,
+            "total_chunks": job.total_chunks,
+            "current_chunk": job.current_chunk,
+            "proposals_count": len(proposals),
+            "errors": errors,
+            "cost_usd": job.cost_usd,
+            "input_tokens": job.input_tokens,
+            "output_tokens": job.output_tokens,
+            "citation": job.citation,
+            "queue_entry_id": job.queue_entry_id,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
         })
     return {"jobs": jobs, "active_count": sum(1 for j in jobs if j["status"] == "running")}
 

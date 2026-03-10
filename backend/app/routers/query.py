@@ -224,7 +224,7 @@ async def post_query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
     guard_result = check_input(req.message)
     if guard_result.verdict == "block":
         raise HTTPException(
-            status_code=422,
+            status_code=403,
             detail={
                 "message": "Input blocked by safety filter",
                 "flags": guard_result.flags,
