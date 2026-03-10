@@ -211,13 +211,35 @@ export default function NextSteps() {
         <h3>Phase 7 — Advanced Architecture</h3>
         <span className="status-badge planned">Backlog</span>
 
-        <h4>Deterministic Query Classification</h4>
+        <h4>Local Model Routing (Classify + Score)</h4>
         <p>
-          Replace Haiku classifier with a local model to make the entire selection pipeline LLM-free.
-          Currently costs ~$0.00005/call and adds 300&ndash;500ms latency. Matters at high volume,
-          low latency, or air-gapped deployment. Candidates: TF-IDF/BM25, local sentence-transformer (~30MB).
-          Keep the <code>classify_query()</code> interface swappable.
+          Replace the Haiku API calls in the classify &rarr; score &rarr; assemble pipeline with a locally-hosted
+          open model (Llama 3.1 8B, Mistral 7B, or similar). Both stages produce structured JSON &mdash; constrained-output
+          tasks that small models handle well. This makes the entire neuron selection pipeline free and removes the
+          network round trip, while the final execution stage stays on Claude where generation quality matters.
         </p>
+        <p>
+          <strong>Integration:</strong> <a href="https://ollama.com" style={{ color: '#60a5fa' }}>Ollama</a> serves
+          an OpenAI-compatible API on <code>localhost:11434</code>. A <code>local_llm_chat()</code> backend function
+          routes classify/score calls locally while keeping <code>claude_chat()</code> for execution. Config flag
+          to swap between local and Haiku per stage.
+        </p>
+        <div style={{
+          background: '#1e293b', border: '1px solid var(--border)', borderRadius: 6,
+          padding: '12px 16px', marginTop: 8, fontSize: '0.8rem',
+        }}>
+          <strong style={{ color: '#fb923c' }}>Hardware requirements for local inference:</strong>
+          <ul style={{ margin: '6px 0 0 0', paddingLeft: 18, lineHeight: 1.8 }}>
+            <li><strong>Minimum (7&ndash;8B models):</strong> Apple Silicon Mac with 16GB unified memory (M1/M2/M3/M4).
+              Expect 30&ndash;50 tokens/sec, sub-second classify responses. Linux/Windows with 16GB RAM + any modern CPU also viable but slower (~10&ndash;20 tok/s).</li>
+            <li><strong>Recommended (13B models):</strong> Apple Silicon with 32&ndash;36GB unified memory (M-series Pro/Max).
+              Better accuracy on nuanced classifications while maintaining fast inference.</li>
+            <li><strong>High-end (70B models):</strong> Apple Silicon with 64GB+ (M-series Max/Ultra) or Linux with NVIDIA GPU (24GB+ VRAM, e.g. RTX 4090).
+              Overkill for classify/score but viable if serving multiple use cases.</li>
+            <li><strong>Not recommended:</strong> Chromebooks, low-RAM laptops, or machines without Metal/CUDA acceleration.
+              CPU-only inference on 7B models drops to ~5&ndash;10 tok/s, adding noticeable latency to every query.</li>
+          </ul>
+        </div>
 
         <h4>Connector Neurons</h4>
         <p>
@@ -230,6 +252,22 @@ export default function NextSteps() {
         <h4><s>PostgreSQL Migration</s> &mdash; Done</h4>
         <p style={{ color: '#22c55e' }}>
           Migrated to PostgreSQL with asyncpg. JSONB scoring breakdowns, row-level locking, and production backup/restore all operational.
+        </p>
+      </section>
+
+      {/* ── Phase 8: Infrastructure ── */}
+
+      <section className="next-steps-section">
+        <h3>Phase 8 — Infrastructure</h3>
+        <span className="status-badge planned">Backlog</span>
+
+        <h4>Docker Containerization</h4>
+        <p>
+          Package the backend (FastAPI + asyncpg), PostgreSQL, and local LLM service (Ollama) into
+          a <code>docker-compose.yml</code> for reproducible single-machine deploys. Eliminates environment
+          setup friction and makes the project portable across machines. Natural prerequisite if Kubernetes
+          orchestration is ever needed for multi-replica scaling, isolated batch workers, or zero-downtime
+          rolling updates.
         </p>
       </section>
 
@@ -295,8 +333,9 @@ export default function NextSteps() {
             <tr><td>6</td><td>Microglia (hallucination + logical flaw detection)</td><td><span className="status-badge planned">Partial</span></td></tr>
             <tr><td>6</td><td>Ependymal (alignment check, dedup, re-parent, prune)</td><td><span className="status-badge planned">Partial</span></td></tr>
             <tr><td>6</td><td>Answer caching</td><td><span className="status-badge planned">Backlog</span></td></tr>
-            <tr><td>7</td><td>Deterministic classifier</td><td><span className="status-badge planned">Backlog</span></td></tr>
+            <tr><td>7</td><td>Local model routing (classify + score)</td><td><span className="status-badge planned">Backlog</span></td></tr>
             <tr><td>7</td><td>Connector neurons</td><td><span className="status-badge planned">Backlog</span></td></tr>
+            <tr><td>8</td><td>Docker containerization (compose)</td><td><span className="status-badge planned">Backlog</span></td></tr>
           </tbody>
         </table>
       </section>

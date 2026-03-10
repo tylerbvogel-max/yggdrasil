@@ -52,6 +52,50 @@ export default function AboutPage() {
               The only non-deterministic step is the final LLM generation &mdash; everything else is reproducible.
             </p>
           </div>
+          <div className="about-thesis-card">
+            <h4 style={{ color: '#22c55e' }}>Hallucination Reduction via Front-Loaded Context</h4>
+            <p>
+              LLMs exhibit a well-documented <strong>&ldquo;lost in the middle&rdquo; problem</strong> &mdash; information
+              at the beginning and end of the context window receives higher attention weights than information buried
+              in the middle. In a long conversational exchange, early context (the original problem statement, constraints,
+              domain facts) drifts into that low-attention zone as each new turn pushes it further from the edges.
+              Compaction mitigates this but is lossy by definition &mdash; a summary of what was said, not the original
+              precise information.
+            </p>
+            <p>
+              Hallucination correlates directly with uncertainty. When the model lacks relevant context in its
+              active attention window, it fills gaps with plausible-sounding generation drawn from parametric
+              memory (training data) rather than the specific domain knowledge it was given. In a 15-turn
+              conversation, the model&rsquo;s effective access to turn-2 context has degraded significantly &mdash;
+              precisely when it starts &ldquo;remembering&rdquo; things from training that may conflict with
+              your domain specifics.
+            </p>
+            <p>
+              Yggdrasil&rsquo;s architecture is a deliberate bet on the opposite strategy:{' '}
+              <strong>be selfish with the context window.</strong>{' '}
+              Anyone who works deeply with LLMs understands that the context window is finite and it is a fight
+              to get information in. Every token of context is a scarce resource &mdash; once the window fills,
+              something gets pushed out or compressed. The design philosophy is intentional: rather than letting
+              context accumulate organically through conversation (where relevance is accidental and degradation
+              is inevitable), <strong>claim the context window upfront with the highest-value information
+              available.</strong> The neuron scoring system selects the most relevant knowledge for the specific
+              query, and the assembler packs it into the high-attention zone of the prompt &mdash; before any
+              generation begins. The model sees everything it needs at once, in the position where attention is
+              strongest, with no conversational drift to degrade access over time. The 5-signal scoring adds a
+              further layer: it&rsquo;s not random context stuffing (which can dilute attention), but{' '}
+              <em>relevance-ranked</em> context that concentrates the model&rsquo;s attention on what actually
+              matters for this query. This is prompt insertion as a deliberate act &mdash; being selfish with
+              the most valuable real estate in the LLM interaction.
+            </p>
+            <p>
+              The tradeoff is real: a conversation <em>can</em> uncover angles you didn&rsquo;t anticipate through
+              iterative clarification. But for domain-specific accuracy &mdash; regulatory compliance, engineering
+              standards, procedural knowledge &mdash; the evidence favors structured retrieval before generation
+              over emergent retrieval through extended dialogue. The neuron graph acts as an external memory system
+              that doesn&rsquo;t degrade with conversation length: turn 20 can re-fire the graph and get the same
+              quality context as turn 1.
+            </p>
+          </div>
         </div>
 
         <h4 style={{ marginTop: 24, marginBottom: 8 }}>Evolution from Static Knowledge Files</h4>

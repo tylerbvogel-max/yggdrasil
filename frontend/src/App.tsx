@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import Explorer from './components/Explorer'
 import Dashboard from './components/Dashboard'
 import QueryLab from './components/QueryLab'
@@ -83,35 +83,70 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
 export default function App() {
   const [tab, setTab] = useState<Tab>('explorer');
   const [explorerNeuronId, setExplorerNeuronId] = useState<number | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(NAV_GROUPS.map(g => g.label))
+  );
 
   function navigateToNeuron(id: number) {
     setExplorerNeuronId(id);
     setTab('explorer');
   }
 
+  const toggleGroup = useCallback((label: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  }, []);
+
+  // Find which group the active tab belongs to
+  const activeGroup = NAV_GROUPS.find(g => g.items.some(i => i.key === tab))?.label;
+
   return (
-    <div className="app">
-      <header className="app-header">
-        <h1 className="app-title">Yggdrasil</h1>
-        <nav className="tab-nav">
-          {NAV_GROUPS.map(group => (
-            <div key={group.label} className="nav-group">
-              <span className="nav-group-label">{group.label}</span>
-              <div className="nav-group-items">
-                {group.items.map(item => (
-                  <button
-                    key={item.key}
-                    className={`${tab === item.key ? 'active' : ''}${item.className ? ' ' + item.className : ''}`}
-                    onClick={() => setTab(item.key)}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+    <div className="app app-sidebar-layout">
+      <aside className={`sidebar${collapsed ? ' sidebar-collapsed' : ''}`}>
+        <div className="sidebar-header">
+          {!collapsed && <h1 className="app-title">Yggdrasil</h1>}
+          <button
+            className="sidebar-toggle"
+            onClick={() => setCollapsed(c => !c)}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? '\u25B6' : '\u25C0'}
+          </button>
+        </div>
+        {!collapsed && (
+          <nav className="sidebar-nav">
+            {NAV_GROUPS.map(group => (
+              <div key={group.label} className={`sidebar-group${activeGroup === group.label ? ' sidebar-group-active' : ''}`}>
+                <button
+                  className="sidebar-group-header"
+                  onClick={() => toggleGroup(group.label)}
+                >
+                  <span className="sidebar-chevron">{expandedGroups.has(group.label) ? '\u25BE' : '\u25B8'}</span>
+                  <span>{group.label}</span>
+                </button>
+                {expandedGroups.has(group.label) && (
+                  <div className="sidebar-group-items">
+                    {group.items.map(item => (
+                      <button
+                        key={item.key}
+                        className={`sidebar-item${tab === item.key ? ' active' : ''}${item.className ? ' ' + item.className : ''}`}
+                        onClick={() => setTab(item.key)}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
-        </nav>
-      </header>
+            ))}
+          </nav>
+        )}
+      </aside>
       <main className="app-main">
         {tab === 'explorer' && <Explorer navigateToNeuronId={explorerNeuronId} onNavigateHandled={() => setExplorerNeuronId(null)} />}
         {tab === 'graph' && <CirclePacking />}
