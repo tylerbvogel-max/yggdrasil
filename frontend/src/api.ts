@@ -83,6 +83,20 @@ export function fetchStats(): Promise<NeuronStats> {
   return json<NeuronStats>('/neurons/stats');
 }
 
+export interface Graph3DNode {
+  id: number; label: string; department: string; layer: number;
+  node_type: string; role_key: string | null; invocations: number;
+  avg_utility: number; parent_id: number | null;
+}
+export interface Graph3DEdge {
+  source: number; target: number; weight: number; co_fire_count: number;
+}
+export interface Graph3DResponse { neurons: Graph3DNode[]; edges: Graph3DEdge[]; }
+
+export function fetchGraph3D(minWeight = 0.3, maxEdges = 2000): Promise<Graph3DResponse> {
+  return json<Graph3DResponse>(`/neurons/graph-3d?min_weight=${minWeight}&max_edges=${maxEdges}`);
+}
+
 export function fetchCostReport(): Promise<CostReport> {
   return json<CostReport>('/admin/cost-report');
 }

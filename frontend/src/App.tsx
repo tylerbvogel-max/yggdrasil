@@ -23,7 +23,8 @@ import PerformanceExplanationPage from './components/PerformanceExplanationPage'
 import EmergentQueuePage from './components/EmergentQueuePage'
 import LayerHeatmap from './components/LayerHeatmap'
 import MethodologicalRisks from './components/MethodologicalRisks'
-type Tab = 'explorer' | 'graph' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks';
+import NeuronUniverse from './components/NeuronUniverse'
+type Tab = 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks';
 
 interface NavItem {
   key: Tab;
@@ -44,6 +45,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { key: 'explorer', label: 'Explorer' },
       { key: 'graph', label: 'Graph' },
+      { key: 'universe', label: '3D Universe' },
       { key: 'dashboard', label: 'Dashboard' },
       { key: 'cofiring', label: 'Co-Firing' },
       { key: 'layer-heatmap', label: 'Layer Heatmap' },
@@ -153,6 +155,7 @@ export default function App() {
       <main className="app-main">
         {tab === 'explorer' && <Explorer navigateToNeuronId={explorerNeuronId} onNavigateHandled={() => setExplorerNeuronId(null)} />}
         {tab === 'graph' && <CirclePacking />}
+        {tab === 'universe' && <NeuronUniverse />}
         {tab === 'dashboard' && <Dashboard />}
         {tab === 'cofiring' && (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 16 }}>

@@ -564,6 +564,46 @@ async def neuron_edges(neuron_id: int, limit: int = 15, hops: int = 2, db: Async
     }
 
 
+@router.get("/graph-3d")
+async def graph_3d(
+    min_weight: float = 0.3,
+    max_edges: int = 2000,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all active neurons and top co-firing edges for 3D visualization."""
+    # All active neurons
+    result = await db.execute(
+        select(
+            Neuron.id, Neuron.label, Neuron.department, Neuron.layer,
+            Neuron.node_type, Neuron.role_key, Neuron.invocations,
+            Neuron.avg_utility, Neuron.parent_id,
+        ).where(Neuron.is_active == True)
+    )
+    neurons = [
+        {
+            "id": r.id, "label": r.label, "department": r.department,
+            "layer": r.layer, "node_type": r.node_type, "role_key": r.role_key,
+            "invocations": r.invocations or 0, "avg_utility": float(r.avg_utility or 0),
+            "parent_id": r.parent_id,
+        }
+        for r in result.fetchall()
+    ]
+
+    # Top edges by weight
+    edge_result = await db.execute(
+        select(NeuronEdge.source_id, NeuronEdge.target_id, NeuronEdge.weight, NeuronEdge.co_fire_count)
+        .where(NeuronEdge.weight >= min_weight)
+        .order_by(NeuronEdge.weight.desc())
+        .limit(max_edges)
+    )
+    edges = [
+        {"source": r.source_id, "target": r.target_id, "weight": float(r.weight), "co_fire_count": r.co_fire_count}
+        for r in edge_result.fetchall()
+    ]
+
+    return {"neurons": neurons, "edges": edges}
+
+
 @router.get("/{neuron_id}", response_model=NeuronDetail)
 async def neuron_detail(neuron_id: int, db: AsyncSession = Depends(get_db)):
     neuron = await get_neuron(db, neuron_id)
