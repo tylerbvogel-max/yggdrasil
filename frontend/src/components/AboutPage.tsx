@@ -124,7 +124,7 @@ export default function AboutPage() {
         </p>
         <ol>
           <li><strong>Classify</strong> &mdash; Haiku analyzes the query to extract intent, departments, roles, and keywords</li>
-          <li><strong>Score</strong> &mdash; Neurons are scored across 5 signals (Burst, Impact, Practice, Novelty, Recency) and top-K are selected</li>
+          <li><strong>Score</strong> &mdash; Neurons are scored across 6 signals (Relevance, Burst, Impact, Precision, Novelty, Recency) with gated modulatory activation, and top-K are selected</li>
           <li><strong>Assemble</strong> &mdash; Selected neurons are packed into a token-budgeted system prompt (configurable 1K&ndash;32K)</li>
           <li><strong>Execute</strong> &mdash; The model responds with enriched context, and all results are logged for audit</li>
         </ol>
@@ -136,9 +136,10 @@ export default function AboutPage() {
         <h4 style={{ color: '#ef4444', marginTop: 16, marginBottom: 8 }}>Tier 1 &mdash; Core Architecture (Defensible IP)</h4>
         <ul className="about-features">
           <li>
-            <strong>5-Signal Neuron Scoring</strong> &mdash; Not keyword matching. Each neuron is scored on Burst
-            (query relevance), Impact (historical utility), Practice (firing frequency), Novelty (freshness),
-            and Recency (recent use). This produces a nuanced ranking that adapts to usage patterns over time.
+            <strong>6-Signal Gated Activation</strong> &mdash; Semantic similarity (stimulus) gates 5 modulatory signals
+            (Burst, Impact, Precision, Novelty, Recency). Pre-wired via 384-dim sentence embeddings for cortical
+            topography, with experience-dependent plasticity through usage. Not keyword matching &mdash; true
+            conceptual similarity adapted by learned usage patterns.
           </li>
           <li>
             <strong>Multi-Hop Spread Activation</strong> &mdash; When a neuron fires, activation propagates through
@@ -452,19 +453,158 @@ export default function AboutPage() {
 
       <section className="about-section">
         <h3>Scoring Signals</h3>
-        <p>Each neuron is scored using 5 signals when evaluating relevance to a query:</p>
+        <p>Each neuron is scored using 6 signals organized into two biological categories:</p>
+
+        <h4 style={{ color: '#22c55e', marginTop: 16, marginBottom: 8 }}>Stimulus (Depolarization)</h4>
+        <p>
+          The primary driver of neuron activation. Without stimulus, a neuron cannot reach activation threshold
+          regardless of how strong its modulatory signals are.
+        </p>
         <table className="about-table">
           <thead>
-            <tr><th>Signal</th><th>What It Measures</th></tr>
+            <tr><th>Signal</th><th>Weight</th><th>What It Measures</th></tr>
           </thead>
           <tbody>
-            <tr><td className="signal-burst">Burst</td><td>Keyword and intent match strength from the classification stage</td></tr>
-            <tr><td className="signal-impact">Impact</td><td>Historical utility &mdash; how useful this neuron has been in past queries</td></tr>
-            <tr><td className="signal-practice">Practice</td><td>Frequency of firing &mdash; how often this neuron gets selected</td></tr>
-            <tr><td className="signal-novelty">Novelty</td><td>Freshness bonus for recently created neurons</td></tr>
-            <tr><td className="signal-recency">Recency</td><td>Recent firing boost &mdash; neurons used recently get a short-term bump</td></tr>
+            <tr>
+              <td className="signal-burst">Relevance</td>
+              <td>50%</td>
+              <td>
+                <strong>Semantic similarity</strong> between the query and neuron content, computed via
+                384-dimensional sentence embeddings (all-MiniLM-L6-v2). Replaces keyword matching with
+                true conceptual proximity &mdash; &ldquo;BOM export to ERP&rdquo; is semantically close to
+                &ldquo;CAD data integration pipeline&rdquo; even with zero shared keywords. Falls back to
+                two-tier keyword matching (exact phrase + token-level with domain stop-word filtering) for
+                neurons without embeddings.
+              </td>
+            </tr>
           </tbody>
         </table>
+
+        <h4 style={{ color: '#fb923c', marginTop: 16, marginBottom: 8 }}>Neuromodulatory Signals (Gain Control)</h4>
+        <p>
+          Modulatory signals adjust the neuron&rsquo;s sensitivity and response gain but cannot cause firing on their own.
+          They are <strong>gated by relevance</strong>: full modulation requires relevance &ge; 0.3 (the gate threshold).
+          Without stimulus, modulatory contribution is attenuated to 5% (spontaneous background rate).
+        </p>
+        <table className="about-table">
+          <thead>
+            <tr><th>Signal</th><th>Weight</th><th>Biological Analogue</th><th>What It Measures</th></tr>
+          </thead>
+          <tbody>
+            <tr><td className="signal-burst">Burst</td><td>8%</td><td>Dopamine (salience)</td><td>Firing frequency in recent query window &mdash; neurons activated repeatedly are primed</td></tr>
+            <tr><td className="signal-impact">Impact</td><td>15%</td><td>Long-term potentiation</td><td>Historical utility (EMA) &mdash; neurons that consistently produce good answers strengthen</td></tr>
+            <tr><td className="signal-practice">Precision</td><td>7%</td><td>Synaptic specificity</td><td>Department-level firing ratio &mdash; specialist neurons that fire within their domain</td></tr>
+            <tr><td className="signal-novelty">Novelty</td><td>5%</td><td>Norepinephrine (attention)</td><td>Freshness bonus for recently created neurons &mdash; new knowledge gets exploration priority</td></tr>
+            <tr><td className="signal-recency">Recency</td><td>15%</td><td>Short-term potentiation</td><td>Exponential decay since last firing &mdash; recently used neurons remain primed</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section className="about-section">
+        <h3>The Cold Start Problem: From Newborn Brain to Trained Network</h3>
+        <p>
+          A genuinely interesting challenge emerged during development: <strong>an untrained biomimetic neuron model
+          defaults to basic RAG.</strong> This is not a design flaw &mdash; it is an accurate reproduction of what
+          happens with a blank neural slate.
+        </p>
+        <p>
+          In the early stages (~200 queries across 2,000 neurons), every neuron had essentially identical history:
+          same impact scores (0.5 default), same recency (all fired during batch ingestion), similar burst patterns.
+          The 6-signal scoring architecture was fully wired &mdash; synaptic plasticity (impact EMA), Hebbian
+          learning (co-firing edges), neuromodulation (burst/recency), spreading activation &mdash; but with no
+          differential experience to work with. The only signal creating any discrimination was keyword matching,
+          which meant the system was functionally equivalent to string-match RAG with extra steps.
+        </p>
+        <p>
+          <strong>Biological analogy:</strong> a fruit fly larva has ~3,000 neurons, and at least those have been
+          pre-shaped by millions of generations of evolutionary selection pressure. Yggdrasil&rsquo;s 2,000 neurons
+          had no such evolutionary history &mdash; they were born with identical synaptic weights and no experience.
+        </p>
+
+        <h4 style={{ marginTop: 16, marginBottom: 8 }}>Evolutionary Pre-Wiring: Cortical Topography via Embeddings</h4>
+        <p>
+          The solution draws from how biological brains are pre-wired at birth. Real neural circuits don&rsquo;t start
+          from a blank slate &mdash; evolution encodes structural priors through genetic programs that wire functionally
+          related neurons together before the organism opens its eyes. The visual cortex is already connected to the
+          visual thalamus. The motor cortex already has topographic maps of the body.
+        </p>
+        <p>
+          Yggdrasil replicates this with <strong>semantic embeddings as cortical topography</strong>. Every neuron&rsquo;s
+          content is encoded into a 384-dimensional vector using a sentence transformer model. These vectors define
+          each neuron&rsquo;s position in semantic space &mdash; a topographic map where neurons encoding similar
+          concepts are &ldquo;spatially&rdquo; proximate. When a query arrives, its embedding is compared against all
+          candidate neuron embeddings via cosine similarity, producing a continuous relevance score that captures
+          conceptual relatedness rather than lexical overlap.
+        </p>
+        <p>
+          This transforms the relevance signal from binary keyword matching (stimulus or no stimulus) into a gradient
+          that reflects genuine semantic proximity. &ldquo;BOM export to ERP system&rdquo; is recognized as related to
+          &ldquo;batch file ingestion pipeline&rdquo; and &ldquo;REST API extraction patterns&rdquo; even though they
+          share no keywords. The 5 modulatory signals then operate on top of this semantic foundation, amplifying
+          neurons that have proven useful (impact), are currently primed (burst/recency), or specialize in the
+          relevant domain (precision).
+        </p>
+
+        <h4 style={{ marginTop: 16, marginBottom: 8 }}>The Gated Activation Model</h4>
+        <p>
+          A critical design choice: relevance acts as a <strong>gate</strong> on the modulatory signals, not just an
+          additive component. Without this, a neuron with high burst + high recency + high impact but zero relevance
+          could outscore a genuinely relevant neuron with moderate modulatory signals. This is biologically
+          wrong &mdash; neuromodulators (dopamine, norepinephrine) adjust sensitivity but cannot cause an action
+          potential without sufficient depolarization from the primary stimulus (glutamate).
+        </p>
+        <p>
+          The scoring formula splits into stimulus and gated modulation:
+        </p>
+        <pre className="about-tree">{`combined = stimulus + (modulatory × gate)
+
+  stimulus  = weight_relevance × relevance
+  modulatory = Σ(weight_i × signal_i) for burst, impact, precision, novelty, recency
+  gate = clamp(relevance / threshold, floor, 1.0)
+         where threshold = 0.3, floor = 0.05`}</pre>
+        <p>
+          A neuron with zero semantic relevance gets only 5% of its modulatory potential (spontaneous background
+          activity). A neuron with even weak relevance (0.15) gets ~50% modulation, and anything above the
+          threshold (0.3) receives full modulation. This creates clean separation between relevant and irrelevant
+          neurons while preserving the modulatory signals&rsquo; ability to amplify and rank within the relevant set.
+        </p>
+
+        <h4 style={{ marginTop: 16, marginBottom: 8 }}>Why This Matters Beyond Yggdrasil</h4>
+        <p>
+          The insight that an untrained neural scoring model defaults to RAG, and that evolutionary pre-wiring via
+          embeddings is the solution, has implications for any system that attempts to grow prompt context strategies
+          through usage. The pattern is general:
+        </p>
+        <ul className="about-features">
+          <li>
+            <strong>Cold start = RAG</strong> &mdash; Any adaptive retrieval system without differential experience
+            can only discriminate on surface-level text matching, which is what RAG does. The architecture for
+            learning is present but inert.
+          </li>
+          <li>
+            <strong>Embeddings = evolutionary priors</strong> &mdash; Pre-computed semantic vectors give the system
+            &ldquo;innate&rdquo; understanding of concept relationships, analogous to the genetic programs that
+            pre-wire biological neural circuits. This bootstraps the system past the RAG-equivalent phase.
+          </li>
+          <li>
+            <strong>Usage signals = lived experience</strong> &mdash; As the system processes more queries, the
+            modulatory signals (impact, burst, recency, co-firing edges) differentiate from their initial flat
+            state. Neurons that consistently contribute to good answers strengthen. Neurons that fire together
+            develop associative edges. The system evolves from &ldquo;pre-wired infant&rdquo; to
+            &ldquo;experienced practitioner&rdquo; through use.
+          </li>
+          <li>
+            <strong>Gated modulation = biological plausibility</strong> &mdash; Without gating, the modulatory
+            signals create noise that overwhelms the semantic signal. With gating, the system accurately reproduces
+            the biological principle that neuromodulators can only amplify, not initiate, activation.
+          </li>
+        </ul>
+        <p>
+          The progression from RAG &rarr; pre-wired &rarr; experience-adapted is not a workaround for a missing
+          feature &mdash; it is the natural development trajectory of any biomimetic retrieval system that takes
+          the biological analogy seriously. The fact that it mirrors real neural development (genetic pre-wiring
+          at birth, then experience-dependent plasticity) is evidence that the underlying architecture is sound.
+        </p>
       </section>
 
       <section className="about-section">
@@ -478,6 +618,7 @@ export default function AboutPage() {
             <tr><td>Frontend</td><td>React + Vite + TypeScript</td></tr>
             <tr><td>Database</td><td>PostgreSQL (JSONB scoring breakdowns, row-level locking)</td></tr>
             <tr><td>LLM Provider</td><td>Anthropic API (Claude Haiku / Sonnet / Opus)</td></tr>
+            <tr><td>Embeddings</td><td>sentence-transformers/all-MiniLM-L6-v2 (384-dim, local CPU inference)</td></tr>
             <tr><td>Port</td><td>8002 (serves both API and static frontend)</td></tr>
           </tbody>
         </table>

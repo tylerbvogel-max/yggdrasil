@@ -17,13 +17,14 @@ def _score(neuron_id: int, combined: float, spread_boost: float = 0.0) -> Neuron
     )
 
 
-def _edge(source_id: int, target_id: int, weight: float, co_fire_count: int = 5):
+def _edge(source_id: int, target_id: int, weight: float, co_fire_count: int = 5, edge_type: str = "pyramidal"):
     """Helper to create a mock NeuronEdge."""
     edge = MagicMock()
     edge.source_id = source_id
     edge.target_id = target_id
     edge.weight = weight
     edge.co_fire_count = co_fire_count
+    edge.edge_type = edge_type
     return edge
 
 
@@ -65,6 +66,7 @@ async def test_no_qualifying_edges_passthrough(mock_settings):
     """No qualifying edges → passthrough."""
     mock_settings.spread_enabled = True
     mock_settings.spread_min_edge_weight = 0.15
+    mock_settings.spread_max_hops = 3
     db = _mock_db(edges=[])
     scored = [_score(1, 0.9), _score(2, 0.8)]
     result = await spread_activation(db, scored, 2)
@@ -79,6 +81,9 @@ async def test_below_threshold_activation_excluded(mock_settings):
     mock_settings.spread_min_edge_weight = 0.15
     mock_settings.spread_decay = 0.5
     mock_settings.spread_min_activation = 0.15
+    mock_settings.spread_stellate_decay = 0.3
+    mock_settings.spread_pyramidal_min_weight = 0.20
+    mock_settings.spread_max_hops = 3
     mock_settings.spread_max_neurons = 10
 
     # source score 0.3, edge weight 0.2, decay 0.5 → activation = 0.03 (below 0.15)
@@ -99,6 +104,9 @@ async def test_above_threshold_neighbor_displaces_lowest(mock_settings):
     mock_settings.spread_min_edge_weight = 0.15
     mock_settings.spread_decay = 0.5
     mock_settings.spread_min_activation = 0.15
+    mock_settings.spread_stellate_decay = 0.3
+    mock_settings.spread_pyramidal_min_weight = 0.20
+    mock_settings.spread_max_hops = 3
     mock_settings.spread_max_neurons = 10
 
     # source score 0.9, edge weight 0.8, decay 0.5 → activation = 0.36
@@ -119,6 +127,9 @@ async def test_below_cutoff_neuron_gets_additive_boost(mock_settings):
     mock_settings.spread_min_edge_weight = 0.15
     mock_settings.spread_decay = 0.5
     mock_settings.spread_min_activation = 0.15
+    mock_settings.spread_stellate_decay = 0.3
+    mock_settings.spread_pyramidal_min_weight = 0.20
+    mock_settings.spread_max_hops = 3
     mock_settings.spread_max_neurons = 10
 
     # Neuron 3 is below cutoff (top_k=2). Edge from 1→3 with activation = 0.9*0.8*0.5 = 0.36
@@ -141,6 +152,9 @@ async def test_spread_max_neurons_cap(mock_settings):
     mock_settings.spread_min_edge_weight = 0.15
     mock_settings.spread_decay = 0.5
     mock_settings.spread_min_activation = 0.15
+    mock_settings.spread_stellate_decay = 0.3
+    mock_settings.spread_pyramidal_min_weight = 0.20
+    mock_settings.spread_max_hops = 3
     mock_settings.spread_max_neurons = 2
 
     # 4 qualifying neighbors, but cap at 2
@@ -167,6 +181,9 @@ async def test_both_in_top_k_edges_skipped(mock_settings):
     mock_settings.spread_min_edge_weight = 0.15
     mock_settings.spread_decay = 0.5
     mock_settings.spread_min_activation = 0.15
+    mock_settings.spread_stellate_decay = 0.3
+    mock_settings.spread_pyramidal_min_weight = 0.20
+    mock_settings.spread_max_hops = 3
     mock_settings.spread_max_neurons = 10
 
     # Edge between neurons 1 and 2, both in top-K → should be skipped
@@ -188,6 +205,9 @@ async def test_inactive_neurons_filtered(mock_settings):
     mock_settings.spread_min_edge_weight = 0.15
     mock_settings.spread_decay = 0.5
     mock_settings.spread_min_activation = 0.15
+    mock_settings.spread_stellate_decay = 0.3
+    mock_settings.spread_pyramidal_min_weight = 0.20
+    mock_settings.spread_max_hops = 3
     mock_settings.spread_max_neurons = 10
 
     edges = [_edge(1, 100, weight=0.8)]
@@ -208,6 +228,9 @@ async def test_unscored_neighbor_gets_pure_activation(mock_settings):
     mock_settings.spread_min_edge_weight = 0.15
     mock_settings.spread_decay = 0.5
     mock_settings.spread_min_activation = 0.15
+    mock_settings.spread_stellate_decay = 0.3
+    mock_settings.spread_pyramidal_min_weight = 0.20
+    mock_settings.spread_max_hops = 3
     mock_settings.spread_max_neurons = 10
 
     # Neuron 100 was never in candidates
@@ -233,6 +256,9 @@ async def test_multiple_edges_to_same_neighbor_max_wins(mock_settings):
     mock_settings.spread_min_edge_weight = 0.15
     mock_settings.spread_decay = 0.5
     mock_settings.spread_min_activation = 0.15
+    mock_settings.spread_stellate_decay = 0.3
+    mock_settings.spread_pyramidal_min_weight = 0.20
+    mock_settings.spread_max_hops = 3
     mock_settings.spread_max_neurons = 10
 
     # Two edges to neuron 100: from 1 (activation=0.9*0.8*0.5=0.36) and from 2 (0.5*0.6*0.5=0.15)

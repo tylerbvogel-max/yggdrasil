@@ -70,6 +70,7 @@ function slotsToChartModels(slots: SlotResult[], classifyCost: number, baseline:
       inputTokens: slot.input_tokens,
       outputTokens: slot.output_tokens,
       cost: slot.cost_usd + (isFirstNeuron ? classifyCost : 0),
+      durationMs: slot.duration_ms ?? 0,
       neurons: slot.neurons,
       tokenBudget: slot.token_budget,
     });
@@ -380,6 +381,7 @@ interface SlotConfig {
   mode: string;
   tokenBudget: number;
   topK: number;
+  candidatePool: number;
 }
 
 let nextSlotId = 1;
@@ -389,68 +391,92 @@ const TOKEN_MAX = 32000;
 const TOPK_MIN = 1;
 const TOPK_MAX = 500;
 
-function XYPlot({ tokenBudget, topK, maxNeurons, onChange }: {
+const POOL_MIN = 50;
+const POOL_MAX = 2000;
+
+function XYPlot({ tokenBudget, topK, candidatePool, maxNeurons, onChange }: {
   tokenBudget: number;
   topK: number;
+  candidatePool: number;
   maxNeurons: number;
-  onChange: (tokenBudget: number, topK: number) => void;
+  onChange: (tokenBudget: number, topK: number, candidatePool: number) => void;
 }) {
   const plotRef = useRef<HTMLDivElement>(null);
-  const dragging = useRef(false);
+  const dragging = useRef<'topk' | 'pool' | null>(null);
 
   const effectiveTopKMax = Math.min(maxNeurons, TOPK_MAX);
+  // Pool axis shares the Y space but uses a wider range
+  const yMax = Math.max(effectiveTopKMax, POOL_MAX);
 
-  const posFromValues = useCallback((tb: number, tk: number) => {
-    const xPct = ((tb - TOKEN_MIN) / (TOKEN_MAX - TOKEN_MIN)) * 100;
-    const yPct = (1 - (tk - TOPK_MIN) / (effectiveTopKMax - TOPK_MIN)) * 100;
-    return { xPct, yPct };
-  }, [effectiveTopKMax]);
+  const yPctFromVal = useCallback((v: number) => {
+    return (1 - (v - TOPK_MIN) / (yMax - TOPK_MIN)) * 100;
+  }, [yMax]);
 
-  const valuesFromPos = useCallback((clientX: number, clientY: number) => {
-    const rect = plotRef.current!.getBoundingClientRect();
-    const xPct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const yPct = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-    const tb = Math.round((TOKEN_MIN + xPct * (TOKEN_MAX - TOKEN_MIN)) / 1000) * 1000;
-    const tk = Math.round(TOPK_MIN + (1 - yPct) * (effectiveTopKMax - TOPK_MIN));
-    return {
-      tokenBudget: Math.max(TOKEN_MIN, Math.min(TOKEN_MAX, tb)),
-      topK: Math.max(TOPK_MIN, Math.min(effectiveTopKMax, tk)),
-    };
-  }, [effectiveTopKMax]);
+  const yValFromPct = useCallback((yPct: number) => {
+    return Math.round(TOPK_MIN + (1 - yPct) * (yMax - TOPK_MIN));
+  }, [yMax]);
 
-  const handlePointer = useCallback((e: React.PointerEvent) => {
-    const v = valuesFromPos(e.clientX, e.clientY);
-    onChange(v.tokenBudget, v.topK);
-  }, [valuesFromPos, onChange]);
-
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
-    dragging.current = true;
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    handlePointer(e);
-  }, [handlePointer]);
-
-  const onPointerMove = useCallback((e: React.PointerEvent) => {
-    if (!dragging.current) return;
-    handlePointer(e);
-  }, [handlePointer]);
-
-  const onPointerUp = useCallback(() => {
-    dragging.current = false;
+  const xPctFromVal = useCallback((tb: number) => {
+    return ((tb - TOKEN_MIN) / (TOKEN_MAX - TOKEN_MIN)) * 100;
   }, []);
 
-  const { xPct, yPct } = posFromValues(tokenBudget, topK);
+  const xValFromPct = useCallback((xPct: number) => {
+    return Math.round((TOKEN_MIN + xPct * (TOKEN_MAX - TOKEN_MIN)) / 1000) * 1000;
+  }, []);
 
-  // Tick marks for X axis
+  const topKPct = yPctFromVal(topK);
+  const poolPct = yPctFromVal(candidatePool);
+  const budgetPct = xPctFromVal(tokenBudget);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    const rect = plotRef.current!.getBoundingClientRect();
+    const yPct = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const xPct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const yVal = yValFromPct(yPct);
+    const xVal = xValFromPct(xPct);
+
+    if (dragging.current === 'topk') {
+      const newTopK = Math.max(TOPK_MIN, Math.min(effectiveTopKMax, yVal));
+      const newBudget = Math.max(TOKEN_MIN, Math.min(TOKEN_MAX, xVal));
+      // top_k can't exceed candidate_pool
+      onChange(newBudget, Math.min(newTopK, candidatePool), candidatePool);
+    } else if (dragging.current === 'pool') {
+      const newPool = Math.max(POOL_MIN, Math.min(POOL_MAX, yVal));
+      const newBudget = Math.max(TOKEN_MIN, Math.min(TOKEN_MAX, xVal));
+      // candidate_pool can't be less than top_k
+      onChange(newBudget, topK, Math.max(newPool, topK));
+    }
+  }, [yValFromPct, xValFromPct, effectiveTopKMax, candidatePool, topK, onChange]);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    const rect = plotRef.current!.getBoundingClientRect();
+    const yPct = (e.clientY - rect.top) / rect.height;
+
+    // Grab whichever dot is closer vertically
+    const topKYDist = Math.abs(yPct - topKPct / 100);
+    const poolYDist = Math.abs(yPct - poolPct / 100);
+    dragging.current = topKYDist <= poolYDist ? 'topk' : 'pool';
+
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    handlePointerMove(e);
+  }, [topKPct, poolPct, handlePointerMove]);
+
+  const onPointerUp = useCallback(() => {
+    dragging.current = null;
+  }, []);
+
+  // Tick marks
   const xTicks = [1, 4, 8, 16, 32];
-  const yTicks = [1, 10, 30, 50, 100, 200, effectiveTopKMax].filter((v, i, a) => a.indexOf(v) === i && v <= effectiveTopKMax);
+  const yTicks = [1, 10, 30, 50, 100, 250, 500, 1000, POOL_MAX].filter((v, i, a) => a.indexOf(v) === i && v <= yMax);
 
   return (
     <div className="xy-plot-container">
-      <div className="xy-plot-ylabel">Neurons (K)</div>
+      <div className="xy-plot-ylabel">Neurons</div>
       <div className="xy-plot-inner">
         <div className="xy-plot-yticks">
           {yTicks.map(v => {
-            const top = (1 - (v - TOPK_MIN) / (effectiveTopKMax - TOPK_MIN)) * 100;
+            const top = yPctFromVal(v);
             return <span key={v} className="xy-tick-y" style={{ top: `${top}%` }}>{v}</span>;
           })}
         </div>
@@ -458,34 +484,47 @@ function XYPlot({ tokenBudget, topK, maxNeurons, onChange }: {
           ref={plotRef}
           className="xy-plot-area"
           onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
+          onPointerMove={handlePointerMove}
           onPointerUp={onPointerUp}
         >
           {/* Grid lines */}
           {xTicks.map(v => {
-            const left = ((v * 1000 - TOKEN_MIN) / (TOKEN_MAX - TOKEN_MIN)) * 100;
+            const left = xPctFromVal(v * 1000);
             return <div key={v} className="xy-gridline-v" style={{ left: `${left}%` }} />;
           })}
           {yTicks.map(v => {
-            const top = (1 - (v - TOPK_MIN) / (effectiveTopKMax - TOPK_MIN)) * 100;
+            const top = yPctFromVal(v);
             return <div key={v} className="xy-gridline-h" style={{ top: `${top}%` }} />;
           })}
-          {/* Crosshair lines to dot */}
-          <div className="xy-crosshair-h" style={{ top: `${yPct}%` }} />
-          <div className="xy-crosshair-v" style={{ left: `${xPct}%` }} />
-          {/* The dot */}
+          {/* Line connecting the two dots */}
+          <div className="xy-range-line" style={{
+            left: `${budgetPct}%`,
+            top: `${Math.min(topKPct, poolPct)}%`,
+            height: `${Math.abs(poolPct - topKPct)}%`,
+          }} />
+          {/* Crosshair for budget (horizontal from topK dot) */}
+          <div className="xy-crosshair-h" style={{ top: `${topKPct}%` }} />
+          <div className="xy-crosshair-v" style={{ left: `${budgetPct}%` }} />
+          {/* Pool dot (upper, larger pool) */}
           <div
-            className="xy-dot"
-            style={{ left: `${xPct}%`, top: `${yPct}%` }}
+            className="xy-dot xy-dot-pool"
+            style={{ left: `${budgetPct}%`, top: `${poolPct}%` }}
+            title="Candidate Pool"
+          />
+          {/* TopK dot (lower, active neurons) */}
+          <div
+            className="xy-dot xy-dot-topk"
+            style={{ left: `${budgetPct}%`, top: `${topKPct}%` }}
+            title="Top-K (max active)"
           />
           {/* Value readout */}
           <div className="xy-readout">
-            {(tokenBudget / 1000).toFixed(0)}K / K={topK}
+            {(tokenBudget / 1000).toFixed(0)}K &middot; K={topK} &middot; Pool={candidatePool}
           </div>
         </div>
         <div className="xy-plot-xticks">
           {xTicks.map(v => {
-            const left = ((v * 1000 - TOKEN_MIN) / (TOKEN_MAX - TOKEN_MIN)) * 100;
+            const left = xPctFromVal(v * 1000);
             return <span key={v} className="xy-tick-x" style={{ left: `${left}%` }}>{v}K</span>;
           })}
         </div>
@@ -501,7 +540,7 @@ function SlotBuilder({ slots, onChange, capacity }: {
   capacity: GraphCapacity | null;
 }) {
   function addSlot() {
-    onChange([...slots, { id: nextSlotId++, mode: 'haiku_neuron', tokenBudget: 4000, topK: 30 }]);
+    onChange([...slots, { id: nextSlotId++, mode: 'haiku_neuron', tokenBudget: 4000, topK: 30, candidatePool: 250 }]);
   }
 
   function removeSlot(id: number) {
@@ -554,8 +593,9 @@ function SlotBuilder({ slots, onChange, capacity }: {
                 <XYPlot
                   tokenBudget={slot.tokenBudget}
                   topK={slot.topK}
+                  candidatePool={slot.candidatePool}
                   maxNeurons={maxNeurons}
-                  onChange={(tb, tk) => updateSlot(slot.id, { tokenBudget: tb, topK: tk })}
+                  onChange={(tb, tk, cp) => updateSlot(slot.id, { tokenBudget: tb, topK: tk, candidatePool: cp })}
                 />
               ) : (
                 <div className="slot-raw-label">Raw mode — no neuron context</div>
@@ -671,8 +711,12 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
   const [rating, setRating] = useState(0.5);
   const [rated, setRated] = useState(false);
 
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const elapsedRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [slotConfigs, setSlotConfigs] = useState<SlotConfig[]>([
-    { id: nextSlotId++, mode: 'haiku_neuron', tokenBudget: 4000, topK: 30 },
+    { id: nextSlotId++, mode: 'haiku_neuron', tokenBudget: 4000, topK: 30, candidatePool: 250 },
   ]);
   const [baseline, setBaseline] = useState('opus_raw');
   const [graphCapacity, setGraphCapacity] = useState<GraphCapacity | null>(null);
@@ -720,12 +764,13 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
       const isNeuron = NEURON_MODES.has(sc.mode);
       const modeLabel = ALL_MODES.find(m => m.key === sc.mode)?.label ?? sc.mode;
       const label = isNeuron
-        ? `${modeLabel} @ ${(sc.tokenBudget / 1000).toFixed(0)}K / K=${sc.topK}`
+        ? `${modeLabel} @ ${(sc.tokenBudget / 1000).toFixed(0)}K / K=${sc.topK} / Pool=${sc.candidatePool}`
         : undefined;
       return {
         mode: sc.mode,
         token_budget: sc.tokenBudget,
         top_k: sc.topK,
+        candidate_pool: isNeuron ? sc.candidatePool : undefined,
         label,
       };
     });
@@ -745,6 +790,15 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
     setLiveRefineRestore(null);
     setView('new');
     setSelectedQuery(null);
+    // Start elapsed timer
+    const t0 = Date.now();
+    elapsedRef.current = 0;
+    setElapsedMs(0);
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      elapsedRef.current = Date.now() - t0;
+      setElapsedMs(elapsedRef.current);
+    }, 100);
     // Mark all slots as loading
     setSlotLoadingSet(new Set(slotConfigs.map((_, i) => i)));
     // Add pending entry to history immediately
@@ -765,6 +819,8 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Query failed');
     } finally {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+      setElapsedMs(elapsedRef.current); // freeze final value
       setLoading(false);
       setSlotLoadingSet(new Set());
     }
@@ -919,6 +975,7 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
         {/* Per-slot loading indicators */}
         {loading && (
           <div className="slot-loading-panel">
+            <div className="slot-loading-timer">{(elapsedMs / 1000).toFixed(1)}s</div>
             {slotConfigs.map((sc, i) => {
               const modeInfo = ALL_MODES.find(m => m.key === sc.mode);
               const isNeuron = NEURON_MODES.has(sc.mode);
@@ -940,6 +997,7 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
         {result && view === 'new' && (
           <LiveResult
             result={result} baseline={baseline}
+            totalElapsedMs={elapsedMs}
             rating={rating} setRating={setRating} rated={rated} onRate={handleRate}
             evalText={evalText} evalMdl={evalMdl} evalIn={evalIn} evalOut={evalOut}
             evalScores={evalScores} evalWinner={evalWinner}
@@ -973,8 +1031,8 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
 
 // ────────── Live Result ──────────
 
-function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalText, evalMdl, evalIn, evalOut, evalScores, evalWinner, evalModel, setEvalModel, evalLoading, onEval, onRunAgain, onRefinePhaseChange, initialRefineResult, onNavigateToNeuron }: {
-  result: QueryResponse; baseline: string;
+function LiveResult({ result, baseline, totalElapsedMs, rating, setRating, rated, onRate, evalText, evalMdl, evalIn, evalOut, evalScores, evalWinner, evalModel, setEvalModel, evalLoading, onEval, onRunAgain, onRefinePhaseChange, initialRefineResult, onNavigateToNeuron }: {
+  result: QueryResponse; baseline: string; totalElapsedMs?: number;
   rating: number; setRating: (v: number) => void; rated: boolean; onRate: () => void;
   evalText: string | null; evalMdl: string | null; evalIn: number; evalOut: number;
   evalScores: EvalScoreOut[]; evalWinner: string | null;
@@ -1003,12 +1061,12 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
         <Section title={`Top Neuron Activations (${result.neurons_activated} total)`} defaultOpen={false}>
           <table className="score-table">
             <thead>
-              <tr><th>ID</th><th>Combined</th><th>Spread</th><th>Burst</th><th>Impact</th><th>Precision</th><th>Novelty</th><th>Recency</th><th>Relevance</th></tr>
+              <tr><th>Neuron</th><th>Combined</th><th>Spread</th><th>Burst</th><th>Impact</th><th>Precision</th><th>Novelty</th><th>Recency</th><th>Relevance</th></tr>
             </thead>
             <tbody>
               {result.neuron_scores.slice(0, 10).map(s => (
                 <tr key={s.neuron_id}>
-                  <td>{s.neuron_id}</td><td>{s.combined.toFixed(3)}</td>
+                  <td title={`ID: ${s.neuron_id}`} style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label ? `${s.label} (${s.department || '?'})` : `#${s.neuron_id}`}</td><td>{s.combined.toFixed(3)}</td>
                   <td style={s.spread_boost > 0 ? { color: '#e8a735', fontWeight: 600 } : undefined}>{s.spread_boost > 0 ? s.spread_boost.toFixed(3) : '—'}</td>
                   <td>{s.burst.toFixed(3)}</td>
                   <td>{s.impact.toFixed(3)}</td><td>{s.precision.toFixed(3)}</td>
@@ -1021,8 +1079,8 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
       )}
 
       {result.neuron_scores.length > 0 && (
-        <Section title="Activation Radial" defaultOpen={false}>
-          <SpreadTrail queryId={result.query_id} neuronScores={result.neuron_scores} />
+        <Section title="Activation Graph" defaultOpen={false}>
+          <SpreadTrail queryId={result.query_id} neuronScores={result.neuron_scores} onNavigateToNeuron={onNavigateToNeuron} />
         </Section>
       )}
 
@@ -1084,7 +1142,7 @@ function LiveResult({ result, baseline, rating, setRating, rated, onRate, evalTe
 
       {/* Token Charts */}
       <Section title="Cost & Tokens">
-        <TokenCharts {...slotsToChartModels(result.slots, result.classify_cost, baseline)} />
+        <TokenCharts {...slotsToChartModels(result.slots, result.classify_cost, baseline)} totalElapsedMs={totalElapsedMs} />
       </Section>
 
       {/* Compare */}
@@ -1280,7 +1338,18 @@ function HistoryDetail({ query, baseline, onNavigateToNeuron }: { query: QueryDe
             })}
           </span>
         </h3>
-        <div className="response-text" style={{ marginBottom: 12 }}>{query.user_message}</div>
+        <div className="response-text" style={{ marginBottom: 12, position: 'relative' }}>
+          {query.user_message}
+          <button
+            className="copy-btn"
+            title="Copy prompt"
+            onClick={() => {
+              navigator.clipboard.writeText(query.user_message);
+            }}
+          >
+            Copy
+          </button>
+        </div>
         {hasNeurons && (
           <div className="tags">
             {query.classified_intent && <span className="tag intent">{query.classified_intent}</span>}
@@ -1321,13 +1390,13 @@ function HistoryDetail({ query, baseline, onNavigateToNeuron }: { query: QueryDe
       )}
 
       {query.neuron_hits.length > 0 && (
-        <Section title="Activation Radial" defaultOpen={false}>
+        <Section title="Activation Graph" defaultOpen={false}>
           <SpreadTrail queryId={query.id} neuronScores={query.neuron_hits.map(h => ({
             neuron_id: h.neuron_id, combined: h.combined, burst: h.burst,
             impact: h.impact, precision: h.precision, novelty: h.novelty,
             recency: h.recency, relevance: h.relevance, spread_boost: h.spread_boost,
             label: h.label, department: h.department, layer: h.layer,
-          }))} />
+          }))} onNavigateToNeuron={onNavigateToNeuron} />
         </Section>
       )}
 

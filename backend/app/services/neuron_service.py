@@ -44,20 +44,29 @@ async def get_neurons_by_filter(
     conditions = ["is_active = true"]
     params: dict = {}
 
-    # OR between dept and role_key
-    match_parts = []
-    if departments:
-        placeholders = ", ".join(f":dept_{i}" for i in range(len(departments)))
-        match_parts.append(f"department IN ({placeholders})")
-        for i, d in enumerate(departments):
-            params[f"dept_{i}"] = d
+    # Prefer role_keys (specific) over departments (broad) when both are present.
+    # Also include layer 0-1 ancestors from matched departments for hierarchy context.
     if role_keys:
-        placeholders = ", ".join(f":role_{i}" for i in range(len(role_keys)))
-        match_parts.append(f"role_key IN ({placeholders})")
+        # Primary filter: specific roles
+        role_placeholders = ", ".join(f":role_{i}" for i in range(len(role_keys)))
         for i, r in enumerate(role_keys):
             params[f"role_{i}"] = r
-    if match_parts:
-        conditions.append(f"({' OR '.join(match_parts)})")
+        if departments:
+            # Also include department/role-level neurons (L0-L1) for hierarchy context
+            dept_placeholders = ", ".join(f":dept_{i}" for i in range(len(departments)))
+            for i, d in enumerate(departments):
+                params[f"dept_{i}"] = d
+            conditions.append(
+                f"(role_key IN ({role_placeholders}) "
+                f"OR (department IN ({dept_placeholders}) AND layer <= 1))"
+            )
+        else:
+            conditions.append(f"role_key IN ({role_placeholders})")
+    elif departments:
+        placeholders = ", ".join(f":dept_{i}" for i in range(len(departments)))
+        conditions.append(f"department IN ({placeholders})")
+        for i, d in enumerate(departments):
+            params[f"dept_{i}"] = d
 
     # Build keyword hit count expression for SQL-side ranking
     kw_parts = []
@@ -127,11 +136,17 @@ async def score_candidates(
     keywords: list[str],
     classified_departments: list[str] | None = None,
     classified_role_keys: list[str] | None = None,
+    query_embedding: list[float] | None = None,
+    precomputed_similarities: dict[int, float] | None = None,
 ) -> list[NeuronScoreBreakdown]:
     """Score all candidate neurons using 6 biomimetic signals.
 
     Accepts either full Neuron ORM objects or lightweight NeuronCandidate.
     Batches all DB lookups into 3 aggregate queries instead of 4 per candidate.
+
+    If precomputed_similarities is provided (from semantic prefilter), uses those
+    directly instead of loading embeddings from DB. Otherwise falls back to
+    query_embedding-based lookup or keyword matching.
     """
     if not candidates:
         return []
@@ -186,6 +201,29 @@ async def score_candidates(
         )
         dept_total_map = dict(dept_total_result.all())
 
+    # --- Batch query 4 (optional): semantic similarity via embeddings ---
+    semantic_map: dict[int, float] = {}  # {neuron_id: cosine_similarity}
+    if precomputed_similarities is not None:
+        # Use pre-computed similarities from semantic prefilter (no DB round-trip)
+        semantic_map = precomputed_similarities
+    elif query_embedding is not None:
+        # Fallback: load embeddings from DB and compute similarity
+        emb_result = await db.execute(
+            text("SELECT id, embedding FROM neurons WHERE id IN :ids AND embedding IS NOT NULL"),
+            {"ids": tuple(candidate_ids) if candidate_ids else (0,)},
+        )
+        neuron_vecs = []
+        neuron_ids_with_emb = []
+        for nid, emb_json in emb_result.all():
+            neuron_ids_with_emb.append(nid)
+            neuron_vecs.append(json.loads(emb_json))
+
+        if neuron_vecs:
+            from app.services.embedding_service import batch_cosine_similarity
+            similarities = batch_cosine_similarity(query_embedding, neuron_vecs)
+            for nid, sim in zip(neuron_ids_with_emb, similarities):
+                semantic_map[nid] = sim
+
     # --- Score each candidate using pre-fetched data ---
     scores = []
     for neuron in candidates:
@@ -202,6 +240,9 @@ async def score_candidates(
         dept_match = bool(classified_departments and neuron.department in classified_departments)
         role_match = bool(classified_role_keys and neuron.role_key in classified_role_keys)
 
+        # Use semantic similarity if available for this neuron, else fall back to keywords
+        sem_sim = semantic_map.get(neuron.id)
+
         score = compute_score(
             fires_in_window=fires_in_window,
             avg_utility=neuron.avg_utility,
@@ -214,6 +255,7 @@ async def score_candidates(
             neuron_id=neuron.id,
             dept_match=dept_match,
             role_match=role_match,
+            semantic_similarity=sem_sim,
         )
         scores.append(score)
 
@@ -274,17 +316,26 @@ async def spread_activation(
         if not hop_edges:
             break
 
-        # Build adjacency for this hop only
-        adjacency: dict[int, list[tuple[int, float]]] = {}
+        # Build adjacency for this hop only (includes edge_type for typed decay)
+        adjacency: dict[int, list[tuple[int, float, str]]] = {}
         for edge in hop_edges:
-            adjacency.setdefault(edge.source_id, []).append((edge.target_id, edge.weight))
-            adjacency.setdefault(edge.target_id, []).append((edge.source_id, edge.weight))
+            etype = edge.edge_type or "pyramidal"
+            adjacency.setdefault(edge.source_id, []).append((edge.target_id, edge.weight, etype))
+            adjacency.setdefault(edge.target_id, []).append((edge.source_id, edge.weight, etype))
 
         next_frontier: dict[int, float] = {}
 
         for source_id, source_activation in frontier.items():
-            for neighbor_id, edge_weight in adjacency.get(source_id, []):
-                activation = source_activation * edge_weight * settings.spread_decay
+            for neighbor_id, edge_weight, edge_type in adjacency.get(source_id, []):
+                # Typed edge decay: stellate (local) uses lower decay, pyramidal (cross-dept) uses standard
+                if edge_type == "stellate":
+                    decay = settings.spread_stellate_decay
+                else:
+                    decay = settings.spread_decay
+                    # Pyramidal edges require higher minimum weight
+                    if edge_weight < settings.spread_pyramidal_min_weight:
+                        continue
+                activation = source_activation * edge_weight * decay
 
                 if activation < settings.spread_min_activation:
                     continue

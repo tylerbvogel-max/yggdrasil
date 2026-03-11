@@ -36,6 +36,9 @@ class Neuron(Base):
     superseded_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=True)
     source_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
     external_references: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    # Semantic embedding (384-dim vector, JSON-encoded float array)
+    embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
@@ -73,6 +76,26 @@ class NeuronEdge(Base):
     co_fire_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     weight: Mapped[float] = mapped_column(Float, default=0.0, server_default="0.0")
     last_updated_query: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Typed edges: "stellate" (intra-department, local) or "pyramidal" (cross-department, long-range)
+    edge_type: Mapped[str | None] = mapped_column(String(20), nullable=True, server_default="pyramidal")
+
+
+class InhibitoryRegulator(Base):
+    """GABAergic interneuron analogue — monitors regional activation density and suppresses over-firing."""
+    __tablename__ = "inhibitory_regulators"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    region_type: Mapped[str] = mapped_column(String(20), nullable=False)  # "department" | "role_key"
+    region_value: Mapped[str] = mapped_column(String(100), nullable=False)
+    inhibition_strength: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5")
+    activation_threshold: Mapped[int] = mapped_column(Integer, default=15, server_default="15")
+    max_survivors: Mapped[int] = mapped_column(Integer, default=8, server_default="8")
+    redundancy_cosine_threshold: Mapped[float] = mapped_column(Float, default=0.92, server_default="0.92")
+    total_suppressions: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    total_activations: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    avg_post_suppression_utility: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class Query(Base):

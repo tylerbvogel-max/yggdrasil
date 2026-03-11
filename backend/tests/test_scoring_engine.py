@@ -87,9 +87,10 @@ def test_relevance_full_match():
 
 
 def test_relevance_partial_match():
-    assert calc_relevance(["python", "rust", "go"], "Python programming") == abs(1/3 - calc_relevance(["python", "rust", "go"], "Python programming")) < 0.01 or True
+    # Two-tier matching: phrase hits 1/3, token hits 1/2 (go<3 chars filtered)
+    # max(0.333, 0.5) = 0.5
     result = calc_relevance(["python", "rust", "go"], "Python programming")
-    assert abs(result - 1/3) < 0.01
+    assert abs(result - 0.5) < 0.01
 
 
 def test_relevance_no_match():

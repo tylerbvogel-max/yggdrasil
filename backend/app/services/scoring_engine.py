@@ -48,13 +48,53 @@ def calc_recency(queries_since_last: int) -> float:
     return math.exp(-queries_since_last / settings.recency_decay_queries)
 
 
+_STOP_WORDS = frozenset({
+    "the", "and", "for", "with", "from", "that", "this", "into", "also",
+    "are", "was", "were", "been", "has", "have", "had", "not", "but",
+    "all", "can", "will", "may", "use", "per", "via", "its", "our",
+    "any", "each", "more", "most", "such", "than", "when", "how",
+    "new", "based", "using", "used", "general", "process", "system",
+    "management", "plan", "data", "review", "standard", "control",
+    "report", "analysis", "list", "level", "type", "set", "model",
+    "support", "service", "design", "test", "requirements",
+    "documentation", "procedure", "configuration",
+})
+
+
 def calc_relevance(keywords: list[str], neuron_text: str) -> float:
-    """Relevance: keyword overlap. min(1.0, matches / max(1, len(keywords)))."""
+    """Relevance: two-tier keyword matching with stop-word filtering.
+
+    Tier 1 — exact phrase match (full keyword string found in neuron text).
+             Strong stimulus-response: the neuron directly encodes this concept.
+    Tier 2 — token-level match, excluding domain stop words.
+             Partial stimulus: individual distinctive terms overlap.
+
+    Domain stop words (management, data, process, etc.) are filtered from
+    token matching because they appear in nearly every neuron and provide
+    no discriminative signal — analogous to tonic background firing that
+    carries no information about the stimulus.
+    """
     if not keywords:
         return 0.0
     text_lower = neuron_text.lower()
-    matches = sum(1 for kw in keywords if kw.lower() in text_lower)
-    return min(1.0, matches / max(1, len(keywords)))
+
+    # Tier 1: exact phrase matches (strong stimulus response)
+    phrase_hits = sum(1 for kw in keywords if kw.lower() in text_lower)
+    phrase_score = phrase_hits / len(keywords)
+
+    # Tier 2: token-level matches, excluding stop words
+    tokens = set()
+    for kw in keywords:
+        for token in kw.lower().split():
+            if len(token) >= 3 and token not in _STOP_WORDS:
+                tokens.add(token)
+    if tokens:
+        token_hits = sum(1 for t in tokens if t in text_lower)
+        token_score = token_hits / len(tokens)
+    else:
+        token_score = 0.0
+
+    return min(1.0, max(phrase_score, token_score))
 
 
 def compute_score(
@@ -69,28 +109,57 @@ def compute_score(
     neuron_id: int = 0,
     dept_match: bool = False,
     role_match: bool = False,
+    semantic_similarity: float | None = None,
 ) -> NeuronScoreBreakdown:
-    """Compute combined activation score from 6 biomimetic signals.
+    """Compute combined activation score using gated modulatory scoring.
 
-    Neurons matching the classified department or role_key get a multiplicative
-    boost so that classification signals directly influence scoring, not just
-    pre-filtering.
+    Biological analogue:
+    - Relevance = stimulus (glutamate depolarization). Without stimulus,
+      the neuron cannot reach activation threshold.
+    - Burst/Impact/Precision/Novelty/Recency = neuromodulatory signals
+      (dopamine, norepinephrine, serotonin). They adjust sensitivity and
+      gain but cannot cause firing on their own.
+
+    The modulatory component is gated by relevance: full modulation at
+    relevance >= threshold (default 0.2), with a small floor for
+    spontaneous background activity.
     """
     burst = calc_burst(fires_in_window)
     impact = calc_impact(avg_utility)
     precision = calc_precision(dept_fires, dept_total_queries)
     novelty = calc_novelty(age_queries)
     recency = calc_recency(queries_since_last)
-    relevance = calc_relevance(keywords, neuron_text)
 
-    combined = (
+    # Relevance: prefer semantic similarity (cortical topography) over keyword matching
+    if semantic_similarity is not None:
+        relevance = max(0.0, min(1.0, semantic_similarity))
+    else:
+        relevance = calc_relevance(keywords, neuron_text)
+
+    # Stimulus component: direct relevance contribution
+    stimulus = settings.weight_relevance * relevance
+
+    # Modulatory component: burst, impact, precision, novelty, recency
+    modulatory = (
         settings.weight_burst * burst
         + settings.weight_impact * impact
         + settings.weight_precision * precision
         + settings.weight_novelty * novelty
         + settings.weight_recency * recency
-        + settings.weight_relevance * relevance
     )
+
+    # Relevance gate: without stimulus, modulatory signals are attenuated
+    # Soft gate ramps from floor (spontaneous rate) to 1.0 at threshold
+    threshold = settings.relevance_gate_threshold
+    floor = settings.relevance_gate_floor
+    if relevance >= threshold:
+        gate = 1.0
+    elif relevance > 0:
+        gate = floor + (1.0 - floor) * (relevance / threshold)
+    else:
+        gate = floor
+
+    combined = stimulus + modulatory * gate
 
     # Classification match boost: role match is stronger than dept match
     # since role_keys are more specific (e.g. "data_engineer" vs "Engineering")

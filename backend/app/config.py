@@ -9,12 +9,21 @@ class Settings(BaseSettings):
     propagation_decay: float = 0.6
     top_k_neurons: int = 30
     # Scoring weights (6 signals, sum = 1.0)
-    weight_burst: float = 0.10
-    weight_impact: float = 0.30
-    weight_precision: float = 0.10
-    weight_novelty: float = 0.10
-    weight_recency: float = 0.20
-    weight_relevance: float = 0.20
+    # Relevance = stimulus specificity (primary driver)
+    # Impact = long-term potentiation (proven utility)
+    # Burst/Recency = modulatory signals (priming/attention)
+    # Precision/Novelty = contextual modifiers
+    weight_burst: float = 0.08
+    weight_impact: float = 0.15
+    weight_precision: float = 0.07
+    weight_novelty: float = 0.05
+    weight_recency: float = 0.15
+    weight_relevance: float = 0.50
+    # Relevance gating: modulatory signals attenuated without stimulus
+    # relevance_gate_threshold: relevance level for full modulation (soft gate)
+    # relevance_gate_floor: minimum gate factor (spontaneous background rate)
+    relevance_gate_threshold: float = 0.3
+    relevance_gate_floor: float = 0.05
     # Scoring parameters (query-count based)
     burst_window_queries: int = 50
     burst_threshold: int = 15
@@ -36,6 +45,19 @@ class Settings(BaseSettings):
     min_cofire_score: float = 0.3
     edge_prune_min_cofires: int = 2
     edge_prune_stale_queries: int = 100
+    # Semantic pre-filter (replaces org-chart filtering)
+    semantic_prefilter_enabled: bool = True
+    semantic_prefilter_top_n: int = 250
+    semantic_prefilter_min_similarity: float = 0.10
+    # Inhibitory regulation (replaces diversity floor)
+    inhibition_enabled: bool = True
+    inhibition_default_threshold: int = 15
+    inhibition_default_max_survivors: int = 8
+    inhibition_redundancy_cosine: float = 0.92
+    inhibition_learning_alpha: float = 0.2
+    # Typed edge spread thresholds
+    spread_stellate_decay: float = 0.3
+    spread_pyramidal_min_weight: float = 0.20
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

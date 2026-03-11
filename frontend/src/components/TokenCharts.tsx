@@ -10,11 +10,12 @@ interface ModelTokens {
   inputTokens: number;
   outputTokens: number;
   cost: number;
+  durationMs: number;
   neurons: boolean;
   tokenBudget: number | null;
 }
 
-export default function TokenCharts({ models, baseline }: { models: ModelTokens[]; baseline: string }) {
+export default function TokenCharts({ models, baseline, totalElapsedMs }: { models: ModelTokens[]; baseline: string; totalElapsedMs?: number }) {
   const inputRef = useRef<HTMLCanvasElement>(null);
   const outputRef = useRef<HTMLCanvasElement>(null);
   const inputChart = useRef<Chart | null>(null);
@@ -156,6 +157,7 @@ export default function TokenCharts({ models, baseline }: { models: ModelTokens[
                 <div className="token-cost-label">{m.label}</div>
                 <div className="token-cost-value">${m.cost.toFixed(6)}</div>
                 <div className="token-cost-detail">{m.inputTokens.toLocaleString()} in / {m.outputTokens.toLocaleString()} out</div>
+                {m.durationMs > 0 && <div className="token-cost-duration">{formatDuration(m.durationMs)}</div>}
                 <div className="token-cost-efficiency">{formatTokensPerDollar(tokensPerDollar)} tokens/$</div>
               </div>
             </div>
@@ -165,6 +167,9 @@ export default function TokenCharts({ models, baseline }: { models: ModelTokens[
           <div className="token-cost-info">
             <div className="token-cost-label">Total</div>
             <div className="token-cost-value">${totalCost.toFixed(6)}</div>
+            {totalElapsedMs != null && totalElapsedMs > 0 && (
+              <div className="token-cost-duration token-cost-total-duration">{formatDuration(totalElapsedMs)} pipeline</div>
+            )}
           </div>
         </div>
       </div>
@@ -214,4 +219,13 @@ function formatTokensPerDollar(val: number): string {
   if (val >= 1_000_000) return (val / 1_000_000).toFixed(1) + 'M';
   if (val >= 1_000) return (val / 1_000).toFixed(0) + 'K';
   return val.toFixed(0);
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}m ${rem.toFixed(0)}s`;
 }

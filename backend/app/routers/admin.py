@@ -2121,3 +2121,125 @@ async def governance_dashboard(db: AsyncSession = Depends(get_db)):
         },
         "active_alerts": active_alert_count,
     }
+
+
+@router.post("/embed-neurons")
+async def embed_neurons(force: bool = False, db: AsyncSession = Depends(get_db)):
+    """Generate semantic embeddings for all neurons.
+
+    Runs sentence-transformers/all-MiniLM-L6-v2 locally to produce 384-dim
+    vectors stored on each neuron. These enable semantic similarity scoring
+    (cortical topography) instead of keyword matching.
+
+    Pass force=true to re-embed neurons that already have embeddings.
+    """
+    import concurrent.futures
+    from app.services.embedding_service import embed_batch
+
+    # Load neurons needing embeddings
+    if force:
+        result = await db.execute(
+            select(Neuron).where(Neuron.is_active == True)
+        )
+    else:
+        result = await db.execute(
+            select(Neuron).where(Neuron.is_active == True, Neuron.embedding.is_(None))
+        )
+    neurons = result.scalars().all()
+
+    if not neurons:
+        return {"embedded": 0, "message": "All neurons already have embeddings"}
+
+    # Build text blobs: label + content (same text used for scoring)
+    texts = []
+    for n in neurons:
+        parts = [n.label or ""]
+        if n.content:
+            parts.append(n.content[:1000])  # Cap content to avoid huge inputs
+        texts.append(" ".join(parts).strip() or "empty")
+
+    # Run embedding in thread pool (CPU-bound, don't block event loop)
+    loop = asyncio.get_running_loop()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        embeddings = await loop.run_in_executor(pool, embed_batch, texts)
+
+    # Store embeddings
+    for neuron, emb in zip(neurons, embeddings):
+        neuron.embedding = json.dumps(emb)
+
+    await db.commit()
+
+    # Invalidate the semantic prefilter cache so it reloads with new embeddings
+    from app.services.semantic_prefilter import invalidate_cache
+    invalidate_cache()
+
+    return {
+        "embedded": len(neurons),
+        "dimensions": len(embeddings[0]) if embeddings else 0,
+        "message": f"Embedded {len(neurons)} neurons with 384-dim vectors",
+    }
+
+
+@router.post("/seed-inhibitory-regulators")
+async def seed_inhibitory_regulators_endpoint(db: AsyncSession = Depends(get_db)):
+    """Create inhibitory regulators (GABAergic interneurons) for each department and high-volume role."""
+    from app.services.inhibitory_service import seed_inhibitory_regulators
+    created = await seed_inhibitory_regulators(db)
+    await db.commit()
+    return {"created": created, "message": f"Seeded {created} inhibitory regulators"}
+
+
+@router.get("/inhibitory-regulators")
+async def list_inhibitory_regulators(db: AsyncSession = Depends(get_db)):
+    """List all inhibitory regulators with their stats."""
+    from app.models import InhibitoryRegulator
+    result = await db.execute(select(InhibitoryRegulator).order_by(InhibitoryRegulator.region_type, InhibitoryRegulator.region_value))
+    regulators = result.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "region_type": r.region_type,
+            "region_value": r.region_value,
+            "inhibition_strength": r.inhibition_strength,
+            "activation_threshold": r.activation_threshold,
+            "max_survivors": r.max_survivors,
+            "redundancy_cosine_threshold": r.redundancy_cosine_threshold,
+            "total_suppressions": r.total_suppressions,
+            "total_activations": r.total_activations,
+            "avg_post_suppression_utility": r.avg_post_suppression_utility,
+            "is_active": r.is_active,
+        }
+        for r in regulators
+    ]
+
+
+@router.post("/classify-edges")
+async def classify_edges(db: AsyncSession = Depends(get_db)):
+    """Classify existing co-firing edges as stellate (intra-department) or pyramidal (cross-department).
+
+    Looks up the department of each edge's source and target neurons.
+    Same department = stellate (local processor), different = pyramidal (long-range).
+    """
+    # Get all edges without a type (or all edges for reclassification)
+    result = await db.execute(text("""
+        UPDATE neuron_edges e
+        SET edge_type = CASE
+            WHEN src.department = tgt.department THEN 'stellate'
+            ELSE 'pyramidal'
+        END
+        FROM neurons src, neurons tgt
+        WHERE e.source_id = src.id AND e.target_id = tgt.id
+        RETURNING e.source_id, e.target_id, e.edge_type
+    """))
+    rows = result.all()
+    await db.commit()
+
+    stellate = sum(1 for _, _, t in rows if t == "stellate")
+    pyramidal = sum(1 for _, _, t in rows if t == "pyramidal")
+
+    return {
+        "classified": len(rows),
+        "stellate": stellate,
+        "pyramidal": pyramidal,
+        "message": f"Classified {len(rows)} edges: {stellate} stellate, {pyramidal} pyramidal",
+    }

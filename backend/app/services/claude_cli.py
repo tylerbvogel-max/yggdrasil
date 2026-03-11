@@ -66,10 +66,6 @@ async def claude_chat(
 
     `model` should be a MODEL_REGISTRY key ("haiku", "sonnet", "opus") or None for default.
     """
-    prompt = user_message
-    if system_prompt:
-        prompt = f"{system_prompt}\n\n---\n\n{user_message}"
-
     # Must unset CLAUDECODE to avoid nesting guard
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
@@ -80,6 +76,13 @@ async def claude_chat(
     cmd = [CLAUDE_BIN, "-p", "--output-format", "json"]
     if cli_model_arg:
         cmd.extend(["--model", cli_model_arg])
+
+    # Use --system-prompt to override CLI's built-in system prompt
+    # This prevents the CLI's default "software engineering assistant" framing
+    if system_prompt:
+        cmd.extend(["--system-prompt", system_prompt])
+
+    prompt = user_message
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -92,27 +95,37 @@ async def claude_chat(
     try:
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(input=prompt.encode()),
-            timeout=120,
+            timeout=180,
         )
     except asyncio.TimeoutError:
         proc.kill()
-        raise RuntimeError("Claude CLI timed out after 120 seconds")
+        raise RuntimeError("Claude CLI timed out after 180 seconds")
 
     if proc.returncode != 0:
-        raise RuntimeError(f"Claude CLI failed ({proc.returncode}): {stderr.decode()[:500]}")
+        err_msg = stderr.decode()[:500].strip()
+        if not err_msg:
+            err_msg = stdout.decode()[:500].strip()
+        raise RuntimeError(f"Claude CLI failed ({proc.returncode}): {err_msg}")
 
     data = json.loads(stdout.decode())
 
     text = data.get("result", "")
     usage = data.get("usage", {})
-    input_tokens = usage.get("input_tokens", 0) + usage.get("cache_creation_input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
+    base_input = usage.get("input_tokens", 0)
+    cache_create = usage.get("cache_creation_input_tokens", 0)
+    cache_read = usage.get("cache_read_input_tokens", 0)
     output_tokens = usage.get("output_tokens", 0)
+    # Total tokens for display (all input tokens regardless of cache status)
+    input_tokens = base_input + cache_create + cache_read
 
     # Capture model version string if available
     model_version = data.get("model", None)
 
-    # Calculate cost from token pricing
-    cost_usd = estimate_cost(model, input_tokens, output_tokens)
+    # Calculate cost with proper cache pricing:
+    # - base input: full price
+    # - cache creation: 1.25x price
+    # - cache read: 0.10x price
+    cost_usd = estimate_cost_with_cache(model, base_input, cache_create, cache_read, output_tokens)
 
     return {
         "text": text,
@@ -124,8 +137,34 @@ async def claude_chat(
 
 
 def estimate_cost(model: str | None, input_tokens: int, output_tokens: int) -> float:
-    """Estimate USD cost from token counts and model name."""
+    """Estimate USD cost from token counts and model name (no cache differentiation)."""
     info = MODEL_REGISTRY.get(model or DEFAULT_MODEL)
     if not info:
         info = MODEL_REGISTRY[DEFAULT_MODEL]
     return (input_tokens * info.input_price + output_tokens * info.output_price) / 1_000_000
+
+
+def estimate_cost_with_cache(
+    model: str | None,
+    base_input: int,
+    cache_create: int,
+    cache_read: int,
+    output_tokens: int,
+) -> float:
+    """Estimate USD cost with proper prompt caching rates.
+
+    - base_input: charged at full input price
+    - cache_create: charged at 1.25x input price
+    - cache_read: charged at 0.10x input price
+    - output: charged at full output price
+    """
+    info = MODEL_REGISTRY.get(model or DEFAULT_MODEL)
+    if not info:
+        info = MODEL_REGISTRY[DEFAULT_MODEL]
+    input_cost = (
+        base_input * info.input_price
+        + cache_create * info.input_price * 1.25
+        + cache_read * info.input_price * 0.10
+    )
+    output_cost = output_tokens * info.output_price
+    return (input_cost + output_cost) / 1_000_000

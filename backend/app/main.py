@@ -3,9 +3,9 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, func, text
 
@@ -116,6 +116,53 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Edge scaling migration skipped: {e}")
 
+    # Migrate: add embedding column to neurons for semantic similarity
+    async with engine.begin() as conn:
+        try:
+            if not await _column_exists(conn, "neurons", "embedding"):
+                await conn.execute(text(
+                    "ALTER TABLE neurons ADD COLUMN embedding TEXT"
+                ))
+                print("Migrated: added neurons.embedding")
+        except Exception as e:
+            print(f"Embedding migration skipped: {e}")
+
+    # Migrate: add edge_type column to neuron_edges for typed edges (stellate vs pyramidal)
+    async with engine.begin() as conn:
+        try:
+            if await _table_exists(conn, "neuron_edges"):
+                if not await _column_exists(conn, "neuron_edges", "edge_type"):
+                    await conn.execute(text(
+                        "ALTER TABLE neuron_edges ADD COLUMN edge_type VARCHAR(20) DEFAULT 'pyramidal'"
+                    ))
+                    print("Migrated: added neuron_edges.edge_type")
+        except Exception as e:
+            print(f"Edge type migration skipped: {e}")
+
+    # Migrate: create inhibitory_regulators table if missing
+    async with engine.begin() as conn:
+        try:
+            if not await _table_exists(conn, "inhibitory_regulators"):
+                await conn.execute(text("""
+                    CREATE TABLE inhibitory_regulators (
+                        id SERIAL PRIMARY KEY,
+                        region_type VARCHAR(20) NOT NULL,
+                        region_value VARCHAR(100) NOT NULL,
+                        inhibition_strength FLOAT DEFAULT 0.5,
+                        activation_threshold INTEGER DEFAULT 15,
+                        max_survivors INTEGER DEFAULT 8,
+                        redundancy_cosine_threshold FLOAT DEFAULT 0.92,
+                        total_suppressions INTEGER DEFAULT 0,
+                        total_activations INTEGER DEFAULT 0,
+                        avg_post_suppression_utility FLOAT DEFAULT 0.5,
+                        is_active BOOLEAN DEFAULT true,
+                        created_at TIMESTAMP DEFAULT now()
+                    )
+                """))
+                print("Migrated: created inhibitory_regulators table")
+        except Exception as e:
+            print(f"Inhibitory regulators migration skipped: {e}")
+
     # Migrate: add model_version column to queries if missing
     async with engine.begin() as conn:
         try:
@@ -176,6 +223,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch all unhandled exceptions and return JSON instead of plain text."""
+    if isinstance(exc, HTTPException):
+        raise exc
+    status = 504 if "timed out" in str(exc).lower() else 500
+    return JSONResponse(
+        status_code=status,
+        content={"detail": str(exc) or "Internal server error"},
+    )
+
 
 app.include_router(query.router)
 app.include_router(neurons.router)

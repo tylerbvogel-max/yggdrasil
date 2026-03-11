@@ -24,7 +24,8 @@ import EmergentQueuePage from './components/EmergentQueuePage'
 import LayerHeatmap from './components/LayerHeatmap'
 import MethodologicalRisks from './components/MethodologicalRisks'
 import NeuronUniverse from './components/NeuronUniverse'
-type Tab = 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks';
+import ArchitecturePlanPage from './components/ArchitecturePlanPage'
+type Tab = 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'arch-plan' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks';
 
 interface NavItem {
   key: Tab;
@@ -75,6 +76,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { key: 'getting-started', label: 'Getting Started' },
       { key: 'about', label: 'Overview' },
+      { key: 'arch-plan', label: 'Architecture Plan' },
       { key: 'pipeline', label: 'Pipeline' },
       { key: 'compliance', label: 'Compliance' },
       { key: 'governance', label: 'Governance' },
@@ -176,6 +178,7 @@ export default function App() {
         {tab === 'nextsteps' && <NextSteps />}
         {tab === 'getting-started' && <GettingStartedPage />}
         {tab === 'about' && <AboutPage />}
+        {tab === 'arch-plan' && <ArchitecturePlanPage />}
         {tab === 'monetization' && <MonetizationPage />}
         {tab === 'compliance' && <CompliancePage />}
         {tab === 'compliance-audit' && <ComplianceAuditPage />}

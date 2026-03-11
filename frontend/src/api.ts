@@ -24,6 +24,7 @@ import type {
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
     try {
       const body = await res.json();
       const detail = body?.detail;
@@ -32,15 +33,17 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
         if (flags?.length) {
           const reasons = flags.map((f: { description: string; pattern?: string }) =>
             f.description + (f.pattern ? ` — "${f.pattern}"` : '')).join('; ');
-          throw new Error(`${detail.message}: ${reasons}`);
+          message = `${detail.message}: ${reasons}`;
+        } else {
+          message = detail.message;
         }
-        throw new Error(detail.message);
+      } else if (typeof detail === 'string') {
+        message = detail;
       }
-      if (typeof detail === 'string') throw new Error(detail);
-    } catch (e) {
-      if (e instanceof Error && e.message !== `${res.status} ${res.statusText}`) throw e;
+    } catch {
+      // Response body wasn't JSON — use status text
     }
-    throw new Error(`${res.status} ${res.statusText}`);
+    throw new Error(message);
   }
   return res.json() as Promise<T>;
 }
@@ -121,6 +124,7 @@ export interface SlotSpec {
   mode: string;
   token_budget: number;
   top_k: number;
+  candidate_pool?: number;
   label?: string;
 }
 

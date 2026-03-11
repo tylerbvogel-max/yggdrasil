@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,7 @@ from app.services.neuron_service import (
 )
 from app.services.prompt_assembler import assemble_prompt
 from app.services.propagation import propagate_activation
+from app.services.neuron_service import NeuronCandidate
 
 
 # Each slot is a dict: {mode, model, neurons, response, input_tokens, output_tokens, cost_usd}
@@ -74,6 +76,12 @@ async def execute_query(
         default=settings.top_k_neurons,
     )
 
+    # Determine candidate pool size (semantic prefilter top_n override)
+    max_candidate_pool = max(
+        (s.get("candidate_pool", settings.semantic_prefilter_top_n) for s in slot_specs if s["mode"] in NEURON_MODES),
+        default=settings.semantic_prefilter_top_n,
+    )
+
     # Stage 1: Classify + score (shared across all neuron slots)
     classify_result = {"classification": {}, "input_tokens": 0, "output_tokens": 0}
     intent = "general_query"
@@ -84,7 +92,25 @@ async def execute_query(
     neuron_map: dict[int, Neuron] = {}
 
     if needs_neurons:
-        classify_result = await classify_query(user_message)
+        # Embed query + classify in parallel (embedding is CPU-bound, classify is IO-bound)
+        query_embedding = None
+        async def _embed_query():
+            import concurrent.futures
+            loop = asyncio.get_running_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                from app.services.embedding_service import embed_text
+                return await loop.run_in_executor(pool, embed_text, user_message)
+
+        embed_task = asyncio.create_task(_embed_query())
+        classify_task = asyncio.create_task(classify_query(user_message))
+
+        # Await both — embedding failure is non-fatal
+        classify_result = await classify_task
+        try:
+            query_embedding = await embed_task
+        except Exception as e:
+            print(f"Query embedding failed, falling back to keywords: {e}")
+
         classification = classify_result["classification"]
         intent = classification.get("intent", "general_query")
         departments = classification.get("departments", [])
@@ -92,12 +118,42 @@ async def execute_query(
         keywords = classification.get("keywords", [])
 
         state = await get_system_state(db)
-        candidates = await get_neurons_by_filter(db, departments, role_keys, keywords)
-        if not candidates:
-            candidates = await get_neurons_by_filter(db)
-        scored = await score_candidates(db, candidates, state.total_queries, keywords, departments, role_keys)
+
+        # Candidate selection: semantic prefilter (primary) or org-chart filter (fallback)
+        semantic_candidates: list[tuple[int, float]] | None = None
+        if settings.semantic_prefilter_enabled and query_embedding is not None:
+            from app.services.semantic_prefilter import semantic_prefilter
+            semantic_candidates = await semantic_prefilter(db, query_embedding, top_n_override=max_candidate_pool)
+
+        if semantic_candidates:
+            # Load lightweight NeuronCandidate objects for the semantically-selected IDs
+            sem_ids = [nid for nid, _ in semantic_candidates]
+            sem_sim_map = {nid: sim for nid, sim in semantic_candidates}
+            candidates = await _load_candidates_by_ids(db, sem_ids, keywords)
+            # Score with pre-computed similarities (skip redundant embedding lookup)
+            scored = await score_candidates(
+                db, candidates, state.total_queries, keywords,
+                departments, role_keys,
+                query_embedding=query_embedding,
+                precomputed_similarities=sem_sim_map,
+            )
+        else:
+            # Fallback: org-chart filtering (cold start or feature disabled)
+            candidates = await get_neurons_by_filter(db, departments, role_keys, keywords)
+            if not candidates:
+                candidates = await get_neurons_by_filter(db)
+            scored = await score_candidates(db, candidates, state.total_queries, keywords, departments, role_keys, query_embedding=query_embedding)
+
         scored = await spread_activation(db, scored, max_top_k)
-        all_scored = await apply_diversity_floor(db, scored, max_top_k)
+
+        # Inhibitory regulation (replaces diversity floor when enabled)
+        if settings.inhibition_enabled:
+            from app.services.inhibitory_service import apply_inhibition
+            all_scored, survivor_count = await apply_inhibition(db, scored, max_top_k)
+            # Inhibition determines the effective top-K — only survivors get assembled
+            max_top_k = survivor_count
+        else:
+            all_scored = await apply_diversity_floor(db, scored, max_top_k)
 
         # Only load full Neuron objects for top-K (needed for prompt assembly + metadata)
         top_k_ids = [s.neuron_id for s in all_scored[:max_top_k]]
@@ -128,8 +184,8 @@ async def execute_query(
         default=settings.top_k_neurons,
     )
 
-    # Create query record (use all_scored for the record, since that's the full candidate set)
-    selected_ids = [s.neuron_id for s in all_scored]
+    # Create query record — only store top-K neuron IDs (not the full candidate set)
+    selected_ids = [s.neuron_id for s in all_scored[:max_top_k]]
     primary_prompt = get_prompt(primary_budget, primary_top_k) if needs_neurons else ""
     query = Query(
         user_message=user_message,
@@ -147,7 +203,13 @@ async def execute_query(
     db.add(query)
     await db.flush()
 
-    # Launch all slots in parallel
+    # Launch all slots in parallel with per-slot timing
+    async def _timed_chat(*args, **kwargs):
+        t0 = time.monotonic()
+        result = await claude_chat(*args, **kwargs)
+        result["duration_ms"] = round((time.monotonic() - t0) * 1000)
+        return result
+
     tasks: list[asyncio.Task] = []
     for i, spec in enumerate(slot_specs):
         mode = spec["mode"]
@@ -160,12 +222,12 @@ async def execute_query(
             sys_prompt = get_prompt(budget, slot_top_k)
             prompt = (SONNET_EFFICIENCY_PREFIX + sys_prompt) if is_sonnet else sys_prompt
             tasks.append(asyncio.create_task(
-                claude_chat(prompt, user_message, max_tokens=2048, model=model)
+                _timed_chat(prompt, user_message, max_tokens=2048, model=model)
             ))
         else:
             prompt = (SONNET_EFFICIENCY_PREFIX + RAW_BASELINE_PROMPT) if is_sonnet else RAW_BASELINE_PROMPT
             tasks.append(asyncio.create_task(
-                claude_chat(prompt, user_message, max_tokens=4096, model=model)
+                _timed_chat(prompt, user_message, max_tokens=4096, model=model)
             ))
 
     # Collect results
@@ -183,6 +245,7 @@ async def execute_query(
             "input_tokens": result["input_tokens"],
             "output_tokens": result["output_tokens"],
             "cost_usd": result["cost_usd"],
+            "duration_ms": result.get("duration_ms", 0),
             "token_budget": budget if mode in NEURON_MODES else None,
             "top_k": slot_top_k if mode in NEURON_MODES else None,
             "label": spec.get("label"),
@@ -198,7 +261,7 @@ async def execute_query(
              "label": neuron_map[s.neuron_id].label if s.neuron_id in neuron_map else None,
              "department": neuron_map[s.neuron_id].department if s.neuron_id in neuron_map else None,
              "layer": neuron_map[s.neuron_id].layer if s.neuron_id in neuron_map else 0}
-            for s in all_scored
+            for s in all_scored[:max_top_k]
         ])
 
     # Back-compat: populate legacy columns from first neuron and opus slots
@@ -232,7 +295,7 @@ async def execute_query(
     state.total_queries += 1
 
     if needs_neurons:
-        for score in all_scored:
+        for score in all_scored[:max_top_k]:
             await record_firing(db, score.neuron_id, query.id, state.global_token_counter, global_query_offset=state.total_queries)
             await propagate_activation(db, score.neuron_id, score.combined, query.id)
         # Only co-fire the actual top-K neurons above the score threshold (not all scored)
@@ -249,7 +312,7 @@ async def execute_query(
          "label": neuron_map[s.neuron_id].label if s.neuron_id in neuron_map else None,
          "department": neuron_map[s.neuron_id].department if s.neuron_id in neuron_map else None,
          "layer": neuron_map[s.neuron_id].layer if s.neuron_id in neuron_map else 0}
-        for s in all_scored
+        for s in all_scored[:max_top_k]
     ]
 
     return {
@@ -258,7 +321,8 @@ async def execute_query(
         "departments": departments,
         "role_keys": role_keys,
         "keywords": keywords,
-        "neurons_activated": len(all_scored),
+        "neurons_activated": min(len(all_scored), max_top_k),
+        "neurons_candidates": len(all_scored),
         "neuron_scores": neuron_scores,
         "classify_cost": classify_result.get("cost_usd", 0),
         "classify_input_tokens": classify_result["input_tokens"],
@@ -266,6 +330,55 @@ async def execute_query(
         "slots": slot_results,
         "total_cost": total_cost,
     }
+
+
+async def _load_candidates_by_ids(
+    db: AsyncSession,
+    neuron_ids: list[int],
+    keywords: list[str],
+) -> list[NeuronCandidate]:
+    """Load lightweight NeuronCandidate objects for a set of neuron IDs.
+
+    Used when the semantic prefilter has already selected the candidate set,
+    so we just need to hydrate the scoring-relevant fields.
+    """
+    if not neuron_ids:
+        return []
+
+    from sqlalchemy import text
+
+    # Build keyword hit expression
+    params: dict = {}
+    kw_parts = []
+    if keywords:
+        for i, kw in enumerate(keywords):
+            param_name = f"kw_{i}"
+            params[param_name] = f"%{kw.lower()}%"
+            kw_parts.append(
+                f"(CASE WHEN lower(label) LIKE :{param_name} THEN 1 ELSE 0 END + "
+                f"CASE WHEN lower(summary) LIKE :{param_name} THEN 1 ELSE 0 END)"
+            )
+    kw_expr = " + ".join(kw_parts) if kw_parts else "0"
+
+    # Use ANY(ARRAY[...]) for asyncpg compatibility with large ID lists
+    params["id_list"] = list(neuron_ids)
+    sql = f"""
+        SELECT id, label, summary, department, role_key, avg_utility,
+               invocations, created_at_query_count, ({kw_expr}) AS keyword_hits
+        FROM neurons
+        WHERE id = ANY(:id_list) AND is_active = true
+    """
+    result = await db.execute(text(sql), params)
+    rows = result.all()
+
+    return [
+        NeuronCandidate(
+            id=r[0], label=r[1], summary=r[2], department=r[3], role_key=r[4],
+            avg_utility=r[5] or 0.5, invocations=r[6] or 0,
+            created_at_query_count=r[7] or 0, keyword_hits=r[8] or 0,
+        )
+        for r in rows
+    ]
 
 
 async def _batch_update_edges(db: AsyncSession, neuron_ids: list[int], query_offset: int):
@@ -292,7 +405,7 @@ async def _batch_update_edges(db: AsyncSession, neuron_ids: list[int], query_off
         await db.execute(text(
             "UPDATE neuron_edges "
             "SET co_fire_count = co_fire_count + 1, "
-            "    weight = MIN(1.0, (co_fire_count + 1) / 20.0), "
+            "    weight = LEAST(1.0, (co_fire_count + 1) / 20.0), "
             "    last_updated_query = :qoff "
             "WHERE source_id = :src AND target_id = :tgt"
         ), {"src": src, "tgt": tgt, "qoff": query_offset})

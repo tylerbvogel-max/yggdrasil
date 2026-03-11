@@ -4,7 +4,7 @@ import { fetchQueryRunCounts } from '../api';
 interface SampleQuery {
   text: string;
   complexity: 'low' | 'medium' | 'high';
-  suite: 'core' | 'x-plane' | 'proto-ready';
+  suite: 'core' | 'x-plane' | 'proto-ready' | 'activation';
   roles: string[];
 }
 
@@ -464,6 +464,42 @@ const SAMPLES: SampleQuery[] = [
     suite: 'proto-ready',
     roles: ['Program Manager', 'Export Control Officer', 'Facilities Manager', 'Safety Officer', 'VP Engineering', 'ITAR/EAR Export Controls'],
   },
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ACTIVATION SUITE — targeted queries to wake up unfired neurons
+  // Designed to exercise BD, Executive Leadership, Finance, Capture,
+  // Proposal, Safety, and Cost Estimating roles.
+  // ═══════════════════════════════════════════════════════════════════
+  {
+    text: "We're evaluating whether to bid on a $150M IDIQ recompete where we're the incumbent. Walk me through the PWIN assessment methodology, how to structure the teaming agreement negotiations with our subcontractors, and what the gate review criteria should look like before committing capture resources.",
+    complexity: 'high',
+    suite: 'activation',
+    roles: ['Capture Manager', 'BD Director', 'Proposal Manager', 'VP BD'],
+  },
+  {
+    text: 'Our DCAA auditor flagged issues with our indirect rate structure. Explain how to properly set up fringe, overhead, G&A, and material handling cost pools, how to prepare a CAS Disclosure Statement amendment, and what the forward pricing rate proposal process looks like when our provisional billing rates are diverging from actuals.',
+    complexity: 'high',
+    suite: 'activation',
+    roles: ['Cost Accountant', 'Cost Estimator', 'Chief Financial Officer', 'FAR/DFARS Specialist'],
+  },
+  {
+    text: 'The CEO wants a strategic growth plan for the next 3 years. How should we apply the Three Horizons framework and BCG portfolio matrix to prioritize our product lines, what PESTEL factors should we be scanning for in the defense aerospace market, and how do we structure the executive governance council to oversee the balanced scorecard implementation?',
+    complexity: 'high',
+    suite: 'activation',
+    roles: ['Chief Executive Officer', 'VP Strategy', 'Chief Operating Officer', 'VP BD'],
+  },
+  {
+    text: 'Walk me through setting up an Estimate at Completion process for a cost-plus-incentive-fee contract. How does the CFO oversee contract profitability analysis, what should the program financial planning and budget formulation process look like, and how do we ensure our indirect rate development stays compliant with FAR 31.205 allowability requirements?',
+    complexity: 'high',
+    suite: 'activation',
+    roles: ['Chief Financial Officer', 'Financial Analyst', 'Cost Accountant', 'Program Manager'],
+  },
+  {
+    text: "We're writing a proposal for a human-rated spacecraft component. How should the system safety analysis per MIL-STD-882E integrate into the proposal's technical volume, what does the compliance matrix development process look like for a Section L/M evaluation, and how do we coordinate the mishap investigation and reporting procedures as part of our safety management plan?",
+    complexity: 'high',
+    suite: 'activation',
+    roles: ['Safety Officer', 'Proposal Manager', 'MIL-STD Series', 'Quality Manager', 'Systems Engineer'],
+  },
 ];
 
 const COMPLEXITY_COLORS: Record<string, string> = {
@@ -476,11 +512,12 @@ const SUITE_CONFIG: Record<string, { label: string; color: string }> = {
   core: { label: 'Core', color: '#60a5fa' },
   'x-plane': { label: 'X-Plane Backtest', color: '#c084fc' },
   'proto-ready': { label: 'Prototype Readiness', color: '#34d399' },
+  activation: { label: 'Neuron Activation', color: '#fb7185' },
 };
 
 export default function SampleQueries() {
   const [complexityFilter, setComplexityFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
-  const [suiteFilter, setSuiteFilter] = useState<'all' | 'core' | 'x-plane' | 'proto-ready'>('all');
+  const [suiteFilter, setSuiteFilter] = useState<'all' | 'core' | 'x-plane' | 'proto-ready' | 'activation'>('all');
   const [copied, setCopied] = useState<number | null>(null);
   const [runCounts, setRunCounts] = useState<Record<string, number>>({});
 

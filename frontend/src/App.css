@@ -691,6 +691,22 @@ body {
   line-height: 1.7;
   white-space: pre-wrap;
 }
+.copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.response-text:hover .copy-btn { opacity: 1; }
+.copy-btn:hover { color: var(--text); border-color: var(--accent); }
 
 .cost-breakdown {
   display: grid;
@@ -926,6 +942,25 @@ body {
   box-shadow: 0 0 6px rgba(56, 189, 248, 0.5);
   z-index: 2;
 }
+.xy-dot-topk {
+  background: #60a5fa;
+  box-shadow: 0 0 6px rgba(96, 165, 250, 0.6);
+}
+.xy-dot-pool {
+  background: #e8a735;
+  box-shadow: 0 0 6px rgba(232, 167, 53, 0.5);
+  width: 10px;
+  height: 10px;
+}
+.xy-range-line {
+  position: absolute;
+  width: 2px;
+  background: linear-gradient(to bottom, #e8a735, #60a5fa);
+  transform: translateX(-50%);
+  pointer-events: none;
+  opacity: 0.7;
+  z-index: 1;
+}
 
 .xy-readout {
   position: absolute;
@@ -1047,6 +1082,33 @@ body {
 }
 
 .slot-loading-label {
+  font-weight: 600;
+}
+
+.slot-loading-timer {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin-left: auto;
+  padding: 4px 12px;
+  background: var(--bg-input);
+  border-radius: 6px;
+  min-width: 60px;
+  text-align: center;
+}
+
+/* Duration display in TokenCharts */
+.token-cost-duration {
+  font-size: 0.7rem;
+  color: #facc15;
+  opacity: 0.9;
+  margin-top: 1px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.token-cost-total-duration {
+  font-size: 0.75rem;
   font-weight: 600;
 }
 

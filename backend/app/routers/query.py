@@ -231,21 +231,28 @@ async def post_query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
             },
         )
 
-    if req.slots_v2:
-        # v2: per-slot budgets
-        for s in req.slots_v2:
-            if s.mode not in VALID_MODES:
-                raise HTTPException(status_code=400, detail=f"Invalid mode: {s.mode}")
-        slots_v2 = [s.model_dump() for s in req.slots_v2]
-        result = await execute_query(db, req.message, modes=[], slots_v2=slots_v2)
-    else:
-        # Legacy: shared budget
-        for m in req.modes:
-            if m not in VALID_MODES:
-                raise HTTPException(status_code=400, detail=f"Invalid mode: {m}")
-        if not req.modes:
-            raise HTTPException(status_code=400, detail="At least one mode required")
-        result = await execute_query(db, req.message, modes=req.modes, token_budget=req.token_budget)
+    try:
+        if req.slots_v2:
+            # v2: per-slot budgets
+            for s in req.slots_v2:
+                if s.mode not in VALID_MODES:
+                    raise HTTPException(status_code=400, detail=f"Invalid mode: {s.mode}")
+            slots_v2 = [s.model_dump() for s in req.slots_v2]
+            result = await execute_query(db, req.message, modes=[], slots_v2=slots_v2)
+        else:
+            # Legacy: shared budget
+            for m in req.modes:
+                if m not in VALID_MODES:
+                    raise HTTPException(status_code=400, detail=f"Invalid mode: {m}")
+            if not req.modes:
+                raise HTTPException(status_code=400, detail="At least one mode required")
+            result = await execute_query(db, req.message, modes=req.modes, token_budget=req.token_budget)
+    except HTTPException:
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=504, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Query execution failed: {e}")
 
     # ── Output Checks: risk tagging + grounding ──
     output_checks: list[dict] = []

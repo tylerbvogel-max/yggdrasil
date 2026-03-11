@@ -73,6 +73,7 @@ export interface SlotResult {
   input_tokens: number;
   output_tokens: number;
   cost_usd: number;
+  duration_ms: number;
   token_budget: number | null;
   top_k: number | null;
   label: string | null;

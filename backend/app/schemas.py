@@ -7,6 +7,7 @@ class QuerySlotRequest(BaseModel):
     mode: str
     token_budget: int = Field(4000, ge=1000, le=32000)
     top_k: int = Field(30, ge=1, le=500)
+    candidate_pool: int | None = Field(None, ge=50, le=2000)
     label: str | None = None
 
 
