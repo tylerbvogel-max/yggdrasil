@@ -19,8 +19,8 @@ export default function MethodologicalRisks() {
       mechanism:
         'Over time, the system converges on a narrow "comfort zone" — performing well on common query patterns while silently failing on edge cases it never selects neurons for. Novelty decays fast and doesn\'t fully counter this. The risk is a graph that looks healthy by its own metrics but has developed blind spots shaped by query distribution.',
       mitigation:
-        'RAG layer (Phase 3) provides a scoring path independent of firing history — semantic similarity doesn\'t care whether a neuron has been popular. Diversity floor enforcement in spread activation. Periodic "cold neuron audit" to surface high-content neurons with zero or near-zero firings.',
-      status: 'Unmitigated — RAG layer planned for Phase 3',
+        'Semantic prefilter (built) provides candidate selection independent of firing history — cosine similarity against all 2,054 neuron embeddings doesn\'t care whether a neuron has been popular. Inhibitory regulation (built) prevents regional density from monopolizing context. Periodic "cold neuron audit" to surface high-content neurons with zero or near-zero firings.',
+      status: 'Partially mitigated — semantic prefilter + inhibitory regulation reduce but don\'t eliminate the loop',
     },
     {
       id: 2,
@@ -45,8 +45,8 @@ export default function MethodologicalRisks() {
       mechanism:
         'If nobody asks about the intersection of ITAR and manufacturing processes, those neurons never develop edges — even though the relationship is critical. A subject matter expert would draw different connections than the co-firing graph discovers. The graph encodes usage patterns, not domain truth. Query distribution skew directly becomes knowledge structure skew.',
       mitigation:
-        'Semantic similarity edges (computed from neuron embeddings, independent of query history) would provide a baseline relationship layer. SME-curated "must-link" edges for known critical relationships. Autopilot with diverse gap strategies partially explores underqueried areas.',
-      status: 'Unmitigated — semantic edges not yet implemented',
+        'Semantic prefilter (built) selects candidates by embedding similarity independent of query history, providing a baseline relationship layer that doesn\'t depend on co-firing. Typed edges (stellate vs pyramidal) differentiate local vs cross-domain spread. SME-curated "must-link" edges for known critical relationships remain planned. Autopilot with diverse gap strategies partially explores underqueried areas.',
+      status: 'Partially mitigated — semantic prefilter provides query-independent candidate path; co-firing still shapes spread activation',
     },
     {
       id: 4,
@@ -58,8 +58,8 @@ export default function MethodologicalRisks() {
       mechanism:
         'The system will confidently select the best neurons for the wrong interpretation. Because the rest of the pipeline works well, the output may look polished while being grounded in irrelevant context. There is no mechanism to detect "I classified this wrong" after the fact. The error is invisible in the final output quality — it reads well but answers the wrong question.',
       mitigation:
-        'Multi-query decomposition (Phase 3) reduces dependency on a single classification. Confidence thresholds on classification — low-confidence classifications could trigger broader scoring rather than narrow. Post-hoc classification validation by comparing assembled neuron departments against classified departments.',
-      status: 'Unmitigated — decomposition planned for Phase 3',
+        'Semantic prefilter (built) as primary candidate selection means classification no longer gates which neurons are candidates — all neurons are ranked by embedding similarity regardless of classified departments. Classification output is now scoring context (dept/role boosts), not a filter. A total misclassification degrades scoring boosts but doesn\'t exclude relevant neurons. Multi-query decomposition (planned) would further reduce dependency.',
+      status: 'Substantially mitigated — semantic prefilter makes classification non-blocking; misclassification degrades boosts but doesn\'t exclude candidates',
     },
     {
       id: 5,
@@ -71,8 +71,8 @@ export default function MethodologicalRisks() {
       mechanism:
         'Cross-ref departments are a patch, not a solution. The fundamental assumption that org structure is a good ontology for knowledge retrieval is unproven and may introduce systematic retrieval failures for cross-cutting topics. Knowledge that spans departments is structurally disadvantaged because it can only inherit one parent\'s classification boost.',
       mitigation:
-        'Cross-reference departments field partially addresses this. Co-firing edges create implicit cross-department links. Community detection (Phase 5) would discover emergent groupings that cross the hierarchy. Multi-parent or tag-based taxonomy would be a more fundamental fix but requires significant refactoring.',
-      status: 'Partially mitigated — cross-ref fields and co-firing edges help',
+        'Semantic prefilter (built) eliminates org-chart walls entirely for candidate selection — embedding similarity has no department boundaries. Cross-department pyramidal edges with proven co-firing propagate activation across departments. Inhibitory regulation preserves cross-department representation via Martinotti cell floor guarantee. Community detection (Phase 5) would discover emergent groupings.',
+      status: 'Substantially mitigated — semantic prefilter ignores org hierarchy; pyramidal edges + inhibitory floor preserve cross-dept coverage',
     },
     {
       id: 6,
@@ -182,10 +182,11 @@ export default function MethodologicalRisks() {
           (Risk 2) may not catch this because they share the same biases.
         </p>
         <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', lineHeight: 1.6, margin: 0 }}>
-          The strongest countermeasure is introducing a scoring path that is independent of usage
-          history — semantic similarity via embeddings (RAG layer, Phase 3) and community detection
-          via graph structure (Phase 5). Until those exist, the system should be treated as
-          progressively more confident but not necessarily progressively more correct.
+          The strongest countermeasure &mdash; a scoring path independent of usage history &mdash; is now
+          partially implemented via the semantic prefilter. Candidate selection by embedding similarity
+          is fully independent of firing history and co-firing patterns. However, spread activation
+          still amplifies query-shaped associations. Community detection (Phase 5) would provide a
+          structural countermeasure at the graph level.
         </p>
       </div>
       <div style={{ marginTop: 40 }}>

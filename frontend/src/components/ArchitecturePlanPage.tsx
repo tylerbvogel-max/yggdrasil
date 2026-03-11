@@ -135,16 +135,16 @@ export default function ArchitecturePlanPage() {
                 co-firing associations. Tagged (not created) as connectors. Carry typed &ldquo;pyramidal&rdquo; edges with higher
                 confidence threshold for inter-department spreading activation. ~5&ndash;10% of existing neurons qualify.
               </td>
-              <td style={{ color: '#fb923c' }}>Planned &mdash; Phase 6</td>
+              <td style={{ color: '#22c55e' }}>Built &mdash; edges classified, differential spread decay</td>
             </tr>
             <tr>
               <td style={{ fontWeight: 600 }}>Stellate neurons</td>
               <td>
                 <strong>Role-local neurons.</strong> The typical L3&ndash;L5 neuron with co-firing edges primarily within its own
-                department. Local processing with lower spread threshold (0.10 vs 0.20 for pyramidal). Spread activation
+                department. Local processing with stellate decay (0.3) and lower spread threshold. Spread activation
                 uses differential thresholds based on whether the edge crosses a department boundary.
               </td>
-              <td style={{ color: '#fb923c' }}>Planned &mdash; Phase 6</td>
+              <td style={{ color: '#22c55e' }}>Built &mdash; stellate decay + pyramidal min_weight</td>
             </tr>
             <tr>
               <td style={{ fontWeight: 600 }}>Granule cells</td>
@@ -190,17 +190,17 @@ export default function ArchitecturePlanPage() {
                 monopolizing the context window. They <strong>learn</strong> from utility feedback &mdash; strengthening
                 inhibition when suppression improves outcomes, weakening it when suppression hurts.
               </td>
-              <td style={{ color: '#ef4444' }}>Not built &mdash; Phase 5</td>
+              <td style={{ color: '#22c55e' }}>Built &mdash; 3-pass inhibitory regulation</td>
             </tr>
             <tr>
               <td style={{ fontWeight: 600 }}>Chandelier cells</td>
               <td>
                 <strong>Redundancy suppression + modulatory ceiling.</strong> Chandelier cells synapse at the axon initial
-                segment &mdash; uniquely powerful veto authority. In Yggdrasil: (1) pairwise embedding comparison within
-                top-K, suppressing near-duplicate neurons ({'>'}92% cosine similarity), and (2) cap on modulatory
-                contribution to prevent popular neurons from dominating through historical usage alone.
+                segment &mdash; uniquely powerful veto authority. In Yggdrasil: pairwise embedding comparison within
+                top-K per department, suppressing near-duplicate neurons ({'>'}92% cosine similarity). Prevents
+                near-duplicate knowledge from consuming multiple top-K slots.
               </td>
-              <td style={{ color: '#ef4444' }}>Not built &mdash; Phase 5</td>
+              <td style={{ color: '#22c55e' }}>Built &mdash; Pass 2 of inhibitory regulation</td>
             </tr>
             <tr>
               <td style={{ fontWeight: 600 }}>Neuromodulatory (dopamine, serotonin, norepinephrine)</td>
@@ -460,16 +460,26 @@ INHIBITION_ENABLED=true           # false → revert to static diversity floor`}
       </section>
 
       <section className="about-section">
-        <h3>Completed Work (This Session)</h3>
-        <p>The following was implemented on 2026-03-10 as groundwork for this plan:</p>
+        <h3>Completed Work</h3>
+        <p>Groundwork implemented on 2026-03-10:</p>
         <ul className="about-features">
           <li><strong>Semantic embeddings</strong> &mdash; All 2,054 neurons embedded with <code>all-MiniLM-L6-v2</code> (384-dim). Stored in <code>neurons.embedding</code> column.</li>
           <li><strong>Gated modulatory scoring</strong> &mdash; <code>compute_score</code> split into stimulus + gated modulation. Gate threshold 0.3, floor 0.05.</li>
           <li><strong>Semantic relevance</strong> &mdash; <code>score_candidates</code> computes cosine similarity when embeddings available, replacing keyword matching as the relevance signal.</li>
           <li><strong>Query embedding</strong> &mdash; <code>executor.py</code> embeds the user query in a thread pool and passes through the scoring pipeline.</li>
           <li><strong>Embedding admin endpoint</strong> &mdash; <code>POST /admin/embed-neurons</code> to batch-embed all neurons.</li>
-          <li><strong>Top-K reporting fix</strong> &mdash; <code>neurons_activated</code> now reports actual top-K count, not full candidate count.</li>
-          <li><strong>Candidate limit reverted</strong> &mdash; Back to 500 (user explicitly rejected hard count limits as non-biological).</li>
+        </ul>
+        <p>Full architecture implemented on 2026-03-11:</p>
+        <ul className="about-features">
+          <li><strong>Semantic prefilter</strong> &mdash; In-memory numpy matrix of all neuron embeddings (~3MB). Matrix dot product for O(1ms) cosine ranking. Replaces org-chart filtering as primary candidate selection.</li>
+          <li><strong>3-pass inhibitory regulation</strong> &mdash; (1) Regional density/basket cell: per-dept threshold + max_survivors. (2) Redundancy/chandelier cell: cosine {'>'} 0.92 within dept. (3) Cross-ref floor/Martinotti cell: minimum dept representation. Returns survivor_count as effective top-K.</li>
+          <li><strong>Typed edges</strong> &mdash; Stellate (intra-department, decay=0.3) vs pyramidal (cross-department, min_weight=0.20). Edge classification via <code>POST /admin/classify-edges</code>.</li>
+          <li><strong>Parallel classify + embed</strong> &mdash; <code>asyncio.create_task</code> for both; embed failure is non-fatal fallback to keyword scoring.</li>
+          <li><strong>Dynamic candidate pool</strong> &mdash; <code>candidate_pool</code> param flows from UI dual-dot slider &rarr; API &rarr; executor &rarr; semantic_prefilter as <code>top_n_override</code>.</li>
+          <li><strong>Cache-aware cost calculation</strong> &mdash; Separated base_input (1x), cache_creation (1.25x), cache_read (0.10x) pricing. Reduced reported costs ~47%.</li>
+          <li><strong>Per-slot runtime timing</strong> &mdash; <code>duration_ms</code> per slot + live elapsed timer in Query Lab.</li>
+          <li><strong>Activation graph</strong> &mdash; Force-directed co-firing network replacing radial spoke diagram. Hover-only labels, department-colored nodes.</li>
+          <li><strong>System prompt override</strong> &mdash; Raw mode uses <code>--system-prompt</code> CLI flag to prevent built-in prompt injection.</li>
         </ul>
       </section>
     </div>

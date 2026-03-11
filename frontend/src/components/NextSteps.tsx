@@ -39,9 +39,9 @@ export default function NextSteps() {
               <td>Add basic auth (API key or session-based) to gate write endpoints at minimum. Populate <code>user_id</code> from auth context.</td>
             </tr>
             <tr>
-              <td style={{ fontWeight: 600 }}>No scoring pipeline tests</td>
-              <td>The classify &rarr; score &rarr; assemble &rarr; execute chain is the core IP. Zero automated tests cover it. A refactor could silently break signal weights, spread activation math, or prompt assembly.</td>
-              <td>Integration tests for each pipeline stage. Mock the LLM calls, verify scoring math, spread activation, and token budget assembly.</td>
+              <td style={{ fontWeight: 600, textDecoration: 'line-through', opacity: 0.6 }}>No scoring pipeline tests</td>
+              <td style={{ opacity: 0.6 }}>The classify &rarr; score &rarr; assemble &rarr; execute chain is the core IP.</td>
+              <td style={{ color: '#22c55e' }}><strong>Done.</strong> 79 tests covering scoring engine (all 6 signals + compute_score), spread activation (typed edges, stellate/pyramidal decay, multi-hop), and integration paths. Run via <code>pytest tests/ -v</code>.</td>
             </tr>
           </tbody>
         </table>
@@ -115,6 +115,13 @@ export default function NextSteps() {
             <tr><td>Input Guard</td><td>16 adversarial pattern detectors (prompt injection, jailbreak, PII exfiltration, system prompt extraction, etc.) with risk-level classification and query blocking.</td></tr>
             <tr><td>Scoring Health Monitor</td><td>Signal drift detection with coefficient of variation tracking. Per-signal distribution statistics across all queries for baseline documentation.</td></tr>
             <tr><td>Ingest Placement Validation</td><td>Department required (dropdown) before ingestion runs. Backend rejects proposals missing department, role_key, or parent_id at apply time. Prevents orphaned neurons from entering the graph.</td></tr>
+            <tr><td>Semantic Prefilter</td><td>In-memory numpy matrix of all neuron embeddings (~3MB). Matrix dot product for O(1ms) cosine ranking replaces org-chart filtering as primary candidate selection. Dynamic candidate pool (50&ndash;2000) controllable per query via UI slider.</td></tr>
+            <tr><td>Inhibitory Regulation</td><td>3-pass biologically-inspired suppression: (1) Regional density/basket cell, (2) Redundancy/chandelier cell (cosine {'>'} 0.92), (3) Cross-ref floor/Martinotti cell. Returns survivor_count as effective top-K. Feature-flagged with fallback to static diversity floor.</td></tr>
+            <tr><td>Typed Edges</td><td>Stellate (intra-department, decay=0.3) vs pyramidal (cross-department, min_weight=0.20) edge classification. Differential spread activation thresholds based on edge type.</td></tr>
+            <tr><td>Gated Modulatory Scoring</td><td>Semantic similarity (stimulus) gates 5 modulatory signals. Pre-wired via 384-dim sentence embeddings with experience-dependent plasticity. Gate threshold 0.3, floor 0.05.</td></tr>
+            <tr><td>Cache-Aware Cost Calculation</td><td>Separated base_input (1x), cache_creation (1.25x), cache_read (0.10x) pricing. Reduced reported cost inflation ~47%.</td></tr>
+            <tr><td>Pipeline Test Suite</td><td>79 automated tests covering scoring engine (all 6 signals), spread activation (typed edges, stellate/pyramidal), and compute_score integration.</td></tr>
+            <tr><td>3D Neuron Universe</td><td>Three.js force-directed graph of entire neuron network. Colorable by department or layer, directional edge particles, filter controls, zoom-to-fit.</td></tr>
           </tbody>
         </table>
       </section>
@@ -182,11 +189,11 @@ export default function NextSteps() {
           <li><strong>Priority ordering</strong> &mdash; Highest-scored neurons first within each section. If the model truncates attention, critical content is already consumed.</li>
         </ul>
 
-        <h4>RAG Layer (Semantic Retrieval)</h4>
+        <h4>RAG Layer (Semantic Retrieval) <span style={{ fontSize: '0.7rem', color: '#22c55e' }}>&mdash; Done (semantic prefilter)</span></h4>
         <ul>
-          <li><strong>Embed neuron content</strong> &mdash; Vector store (Chroma, FAISS, or sqlite-vss) over all neuron <code>content</code> + <code>summary</code>. Fixes the cold-neuron problem where critical but rarely-invoked neurons get underscored by Burst/Recency.</li>
-          <li><strong>Dual retrieval</strong> &mdash; Run both neuron scoring and semantic search. Neurons surfaced by RAG but missed by scoring get a relevance boost in top-K selection.</li>
-          <li><strong>Incremental re-embedding</strong> &mdash; Re-embed on neuron create/update. No full rebuilds.</li>
+          <li><s><strong>Embed neuron content</strong></s> &mdash; <strong>Done.</strong> All 2,054 neurons embedded with <code>all-MiniLM-L6-v2</code> (384-dim). In-memory numpy cache (~3MB) for O(1ms) matrix dot product.</li>
+          <li><s><strong>Dual retrieval</strong></s> &mdash; <strong>Done.</strong> Semantic prefilter is the primary candidate selection path; classification output provides dept/role scoring boosts. Org-chart filtering retained as fallback when embeddings unavailable.</li>
+          <li><s><strong>Incremental re-embedding</strong></s> &mdash; <strong>Done.</strong> Cache invalidated on <code>POST /admin/embed-neurons</code>. New neurons embedded at create time.</li>
         </ul>
 
         <h4>Query Decomposition</h4>
@@ -491,10 +498,12 @@ export default function NextSteps() {
             </tr>
           </thead>
           <tbody>
-            <tr><td>&mdash;</td><td>Neuron graph + 5-signal scoring (2,031 neurons)</td><td><span className="status-badge built">Built</span></td></tr>
-            <tr><td>&mdash;</td><td>Multi-hop spread activation</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Neuron graph + 6-signal gated scoring (2,054 neurons)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Semantic prefilter (embedding-primary candidate selection)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Inhibitory regulation (3-pass: density, redundancy, cross-ref floor)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Multi-hop spread activation (typed edges: stellate + pyramidal)</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Blind A/B evaluation + BH-FDR correction</td><td><span className="status-badge built">Built</span></td></tr>
-            <tr><td>&mdash;</td><td>Co-firing edge graph (224,920 edges)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Co-firing edge graph (224,920+ edges)</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Bolster + Autopilot</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Source-typed neurons + reference detection</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Emergent queue (data model + API)</td><td><span className="status-badge built">Built</span></td></tr>
@@ -502,14 +511,16 @@ export default function NextSteps() {
             <tr><td>&mdash;</td><td>Compliance framework (NIST/ISO/AIUC-1)</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Governance dashboard (13 live KPIs)</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Evaluate suite (Performance, Quality, Fairness, Compliance)</td><td><span className="status-badge built">Built</span></td></tr>
-            <tr><td>&mdash;</td><td>Cost modeling (run vs training split)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Cost modeling (cache-aware: base/create/read pricing)</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Input guard (16 adversarial patterns)</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Scoring health monitor + drift detection</td><td><span className="status-badge built">Built</span></td></tr>
-            <tr><td>1</td><td>Role bolstering (2,031 &rarr; 3,000+ neurons)</td><td><span className="status-badge planned">Active</span></td></tr>
+            <tr><td>&mdash;</td><td>Pipeline test suite (79 tests: scoring engine + spread activation)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>3D neuron universe (Three.js force graph)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>1</td><td>Role bolstering (2,054 &rarr; 3,000+ neurons)</td><td><span className="status-badge planned">Active</span></td></tr>
             <tr><td>2</td><td>Emergent Queue UI + ingestion pipeline</td><td><span className="status-badge planned">Next</span></td></tr>
             <tr><td>2</td><td>Source Coverage analytics + verification</td><td><span className="status-badge planned">Next</span></td></tr>
             <tr><td>3</td><td>Structured prompt assembly</td><td><span className="status-badge planned">Planned</span></td></tr>
-            <tr><td>3</td><td>RAG layer (semantic retrieval)</td><td><span className="status-badge planned">Planned</span></td></tr>
+            <tr><td>3</td><td>RAG layer (semantic retrieval)</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>3</td><td>Query decomposition</td><td><span className="status-badge planned">Planned</span></td></tr>
             <tr><td>3</td><td>Cross-reference chasing</td><td><span className="status-badge planned">Planned</span></td></tr>
             <tr><td>4</td><td>Sonnet model routing</td><td><span className="status-badge planned">Planned</span></td></tr>

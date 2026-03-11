@@ -120,12 +120,13 @@ export default function AboutPage() {
       <section className="about-section">
         <h3>How It Works</h3>
         <p>
-          Yggdrasil uses a two-stage pipeline to enrich LLM queries with relevant organizational knowledge:
+          Yggdrasil uses a multi-stage pipeline to enrich LLM queries with relevant organizational knowledge:
         </p>
         <ol>
-          <li><strong>Classify</strong> &mdash; Haiku analyzes the query to extract intent, departments, roles, and keywords</li>
-          <li><strong>Score</strong> &mdash; Neurons are scored across 6 signals (Relevance, Burst, Impact, Precision, Novelty, Recency) with gated modulatory activation, and top-K are selected</li>
-          <li><strong>Assemble</strong> &mdash; Selected neurons are packed into a token-budgeted system prompt (configurable 1K&ndash;32K)</li>
+          <li><strong>Embed + Classify (parallel)</strong> &mdash; Query is embedded (384-dim, ~10ms) and semantically prefiltered against all neurons (~1ms), while Haiku classifies intent/departments/roles/keywords (~200ms). Both run concurrently.</li>
+          <li><strong>Score</strong> &mdash; Semantic candidates are scored with gated modulatory activation: semantic similarity (stimulus gate) enables 5 modulatory signals (Burst, Impact, Precision, Novelty, Recency). Classification provides dept/role boosts, not filters.</li>
+          <li><strong>Spread + Inhibit</strong> &mdash; Multi-hop spreading activation through typed edges (stellate for intra-dept, pyramidal for cross-dept). Then 3-pass inhibitory regulation: regional density suppression, redundancy removal, and cross-department floor guarantee.</li>
+          <li><strong>Assemble</strong> &mdash; Surviving neurons are packed into a token-budgeted system prompt (configurable 1K&ndash;32K)</li>
           <li><strong>Execute</strong> &mdash; The model responds with enriched context, and all results are logged for audit</li>
         </ol>
       </section>
