@@ -31,8 +31,8 @@ MODEL_REGISTRY: dict[str, ModelInfo] = {
         display_name="haiku",
         cli_arg="haiku",
         api_id="claude-haiku-4-5-20251001",
-        input_price=1.00,
-        output_price=5.00,
+        input_price=0.80,
+        output_price=4.00,
     ),
     "sonnet": ModelInfo(
         display_name="sonnet",
@@ -45,8 +45,8 @@ MODEL_REGISTRY: dict[str, ModelInfo] = {
         display_name="opus",
         cli_arg="opus",
         api_id="claude-opus-4-6",
-        input_price=5.00,
-        output_price=25.00,
+        input_price=15.00,
+        output_price=75.00,
     ),
 }
 
