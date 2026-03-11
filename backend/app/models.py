@@ -78,6 +78,10 @@ class NeuronEdge(Base):
     last_updated_query: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Typed edges: "stellate" (intra-department, local) or "pyramidal" (cross-department, long-range)
     edge_type: Mapped[str | None] = mapped_column(String(20), nullable=True, server_default="pyramidal")
+    # Provenance: "organic" (real query firing), "bootstrap" (pre-seeded prior), "concept_seed" (concept linking)
+    source: Mapped[str | None] = mapped_column(String(20), nullable=True, server_default="organic")
+    # When this edge was last modified (by any source)
+    last_adjusted: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True, server_default=func.now())
 
 
 class InhibitoryRegulator(Base):

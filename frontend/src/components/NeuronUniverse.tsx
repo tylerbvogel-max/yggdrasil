@@ -14,9 +14,26 @@ interface GraphLink {
   target: number | GraphNode;
   weight: number;
   co_fire_count: number;
+  _phantom?: boolean;  // gravity-only links: affect layout but never rendered
 }
 
 const LAYER_LABELS = ['Department', 'Role', 'Task', 'System', 'Decision', 'Output'];
+const CONCEPT_COLOR = '#e879f9';
+
+// Cross-department affinity (mirrors backend DEPT_AFFINITY). Used for phantom gravity links.
+const DEPT_AFFINITY: Record<string, Record<string, number>> = {
+  'Engineering': { 'Manufacturing & Operations': 0.70, 'Regulatory': 0.55, 'Program Management': 0.50, 'Contracts & Compliance': 0.35, 'Business Development': 0.30, 'Finance': 0.20, 'Executive Leadership': 0.20 },
+  'Manufacturing & Operations': { 'Regulatory': 0.65, 'Program Management': 0.45, 'Contracts & Compliance': 0.30, 'Finance': 0.25, 'Executive Leadership': 0.20 },
+  'Contracts & Compliance': { 'Finance': 0.60, 'Program Management': 0.55, 'Business Development': 0.50, 'Regulatory': 0.45, 'Executive Leadership': 0.35 },
+  'Finance': { 'Program Management': 0.50, 'Executive Leadership': 0.45, 'Business Development': 0.35, 'Regulatory': 0.25 },
+  'Program Management': { 'Business Development': 0.45, 'Executive Leadership': 0.50, 'Regulatory': 0.40 },
+  'Business Development': { 'Executive Leadership': 0.50, 'Regulatory': 0.20 },
+  'Regulatory': { 'Executive Leadership': 0.30 },
+};
+
+function getDeptAffinity(a: string, b: string): number {
+  return DEPT_AFFINITY[a]?.[b] ?? DEPT_AFFINITY[b]?.[a] ?? 0;
+}
 
 export default function NeuronUniverse() {
   const [neurons, setNeurons] = useState<GraphNode[]>([]);
@@ -25,11 +42,11 @@ export default function NeuronUniverse() {
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [minWeight, setMinWeight] = useState(0.3);
-  const [maxEdges, setMaxEdges] = useState(2000);
+  const [maxEdges, setMaxEdges] = useState(5000);
   const [colorBy, setColorBy] = useState<'department' | 'layer'>('department');
-  const [showEdges, setShowEdges] = useState(true);
-  const [hideDisconnected, setHideDisconnected] = useState(false);
-  const particleSpeed = 0.004;
+  const [showEdges, setShowEdges] = useState(false);
+  const [hideDisconnected, setHideDisconnected] = useState(true);
+  const [deptFilter, setDeptFilter] = useState<string>('');
   const containerRef = useRef<HTMLDivElement>(null);
   const fgRef = useRef<any>(null);
   const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
@@ -66,25 +83,75 @@ export default function NeuronUniverse() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Build graph data for force-graph
+  // Available departments for filter (derived from loaded neurons)
+  const departments = useMemo(() => {
+    const depts = new Set<string>();
+    neurons.forEach(n => { if (n.department) depts.add(n.department); });
+    return Array.from(depts).sort();
+  }, [neurons]);
+
+  // Build graph data for force-graph (applies dept filter + connectivity filter + dept gravity)
   const graphData = useMemo(() => {
     if (!neurons.length) return { nodes: [], links: [] };
-    const nodeIds = new Set(neurons.map(n => n.id));
+
+    // Apply department filter: keep matching neurons + concept neurons (always visible)
+    const filtered = deptFilter
+      ? neurons.filter(n => n.department === deptFilter || (n.node_type === 'concept' && n.layer === -1))
+      : neurons;
+    const nodeIds = new Set(filtered.map(n => n.id));
+
     const links: GraphLink[] = edges
       .filter(e => nodeIds.has(e.source) && nodeIds.has(e.target))
-      .map(e => ({ source: e.source, target: e.target, weight: e.weight, co_fire_count: e.co_fire_count }));
-    if (!hideDisconnected) return { nodes: neurons as GraphNode[], links };
+      .map(e => ({ source: e.source, target: e.target, weight: e.weight, co_fire_count: e.co_fire_count, _phantom: false }));
+
+    // Inject phantom gravity links between departments based on affinity.
+    // Connect multiple anchor nodes (L0 + all L1 role-level) per department pair
+    // with strong invisible links to create real gravitational clustering.
+    if (!deptFilter) {
+      const deptAnchors: Record<string, number[]> = {};
+      for (const n of filtered) {
+        if ((n.layer === 0 || n.layer === 1) && n.department && nodeIds.has(n.id)) {
+          (deptAnchors[n.department] ??= []).push(n.id);
+        }
+      }
+      const anchorDepts = Object.keys(deptAnchors);
+      for (let i = 0; i < anchorDepts.length; i++) {
+        for (let j = i + 1; j < anchorDepts.length; j++) {
+          const affinity = getDeptAffinity(anchorDepts[i], anchorDepts[j]);
+          if (affinity < 0.20) continue;
+          // Cross-connect all anchors from dept A to all anchors from dept B
+          const anchorsA = deptAnchors[anchorDepts[i]];
+          const anchorsB = deptAnchors[anchorDepts[j]];
+          for (const a of anchorsA) {
+            for (const b of anchorsB) {
+              links.push({
+                source: a,
+                target: b,
+                weight: affinity * 1.5,  // amplified so gravity is tangible
+                co_fire_count: 0,
+                _phantom: true,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    if (!hideDisconnected) return { nodes: filtered as GraphNode[], links };
     const connectedIds = new Set<number>();
     links.forEach(l => {
       connectedIds.add(typeof l.source === 'number' ? l.source : l.source.id);
       connectedIds.add(typeof l.target === 'number' ? l.target : l.target.id);
     });
-    return { nodes: neurons.filter(n => connectedIds.has(n.id)) as GraphNode[], links };
-  }, [neurons, edges, hideDisconnected]);
+    return { nodes: filtered.filter(n => connectedIds.has(n.id)) as GraphNode[], links };
+  }, [neurons, edges, hideDisconnected, deptFilter]);
 
   const layerColors = ['#2dd4bf', '#60a5fa', '#a78bfa', '#f472b6', '#fb923c', '#facc15'];
 
+  const isConcept = (node: GraphNode) => node.node_type === 'concept' && node.layer === -1;
+
   const getNodeColor = useCallback((node: GraphNode) => {
+    if (isConcept(node)) return CONCEPT_COLOR;
     if (colorBy === 'department') {
       return DEPT_COLORS[node.department] || '#c8d0dc';
     }
@@ -92,6 +159,11 @@ export default function NeuronUniverse() {
   }, [colorBy]);
 
   const getNodeSize = useCallback((node: GraphNode) => {
+    // Concept neurons: largest in the graph (hub nodes)
+    if (isConcept(node)) {
+      const edgeBoost = Math.min(node.invocations * 0.12, 4);
+      return 10 + edgeBoost;
+    }
     // Size by layer: departments large, outputs small. Boost by invocations.
     const baseSize = [8, 6, 4, 3, 2.5, 2][node.layer] || 2;
     const invoBoost = Math.min(node.invocations * 0.3, 4);
@@ -102,41 +174,90 @@ export default function NeuronUniverse() {
   const nodeThreeObject = useCallback((node: GraphNode) => {
     const color = getNodeColor(node);
     const size = getNodeSize(node);
+    const isC = node.node_type === 'concept' && node.layer === -1;
 
     const group = new THREE.Group();
 
-    // Core sphere
-    const geometry = new THREE.SphereGeometry(size, 16, 12);
-    const material = new THREE.MeshPhongMaterial({
-      color: new THREE.Color(color),
-      emissive: new THREE.Color(color),
-      emissiveIntensity: 0.4,
-      transparent: true,
-      opacity: 0.9,
-    });
-    const sphere = new THREE.Mesh(geometry, material);
-    group.add(sphere);
+    if (isC) {
+      // ── Black hole effect for concept neurons ──
+      // Dark core — nearly black with faint purple tint
+      const coreGeo = new THREE.SphereGeometry(size, 32, 24);
+      const coreMat = new THREE.MeshPhongMaterial({
+        color: new THREE.Color('#08050e'),
+        emissive: new THREE.Color('#1a0a2e'),
+        emissiveIntensity: 0.3,
+        transparent: true,
+        opacity: 0.97,
+      });
+      group.add(new THREE.Mesh(coreGeo, coreMat));
 
-    // Outer glow
-    const glowGeometry = new THREE.SphereGeometry(size * 1.6, 12, 8);
-    const glowMaterial = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(color),
-      transparent: true,
-      opacity: 0.08,
-    });
-    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-    group.add(glow);
+      // Event horizon glow — thin bright ring at the surface
+      const horizonGeo = new THREE.RingGeometry(size * 0.95, size * 1.15, 64);
+      const horizonMat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(CONCEPT_COLOR),
+        transparent: true,
+        opacity: 0.7,
+        side: THREE.DoubleSide,
+      });
+      const horizon = new THREE.Mesh(horizonGeo, horizonMat);
+      group.add(horizon);
+
+      // Second ring rotated perpendicular — accretion disk effect
+      const diskGeo = new THREE.RingGeometry(size * 1.3, size * 1.7, 64);
+      const diskMat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(CONCEPT_COLOR),
+        transparent: true,
+        opacity: 0.2,
+        side: THREE.DoubleSide,
+      });
+      const disk = new THREE.Mesh(diskGeo, diskMat);
+      disk.rotation.x = Math.PI / 2;
+      group.add(disk);
+
+      // Outer diffuse glow
+      const glowGeo = new THREE.SphereGeometry(size * 2.2, 16, 12);
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(CONCEPT_COLOR),
+        transparent: true,
+        opacity: 0.06,
+      });
+      group.add(new THREE.Mesh(glowGeo, glowMat));
+    } else {
+      // ── Standard neuron rendering ──
+      const geometry = new THREE.SphereGeometry(size, 16, 12);
+      const material = new THREE.MeshPhongMaterial({
+        color: new THREE.Color(color),
+        emissive: new THREE.Color(color),
+        emissiveIntensity: 0.4,
+        transparent: true,
+        opacity: 0.9,
+      });
+      group.add(new THREE.Mesh(geometry, material));
+
+      // Outer glow
+      const glowGeometry = new THREE.SphereGeometry(size * 1.6, 12, 8);
+      const glowMaterial = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color),
+        transparent: true,
+        opacity: 0.08,
+      });
+      group.add(new THREE.Mesh(glowGeometry, glowMaterial));
+    }
 
     return group;
   }, [getNodeColor, getNodeSize]);
 
   // Tooltip
   const nodeLabel = useCallback((node: GraphNode) => {
-    return `<div style="background:#131926;border:1px solid #1e2d4a;border-radius:6px;padding:8px 12px;font-size:0.8rem;max-width:300px;color:#f8fafc;font-family:Inter,sans-serif">
+    const isConceptNode = node.node_type === 'concept' && node.layer === -1;
+    const typeLabel = isConceptNode
+      ? `<span style="color:#e879f9;font-weight:600">Concept</span>`
+      : `<span style="color:${DEPT_COLORS[node.department] || '#c8d0dc'}">${node.department || 'Unknown'}</span>
+         &middot; L${node.layer} ${LAYER_LABELS[node.layer] || ''}`;
+    return `<div style="background:#131926;border:1px solid ${isConceptNode ? '#e879f944' : '#1e2d4a'};border-radius:6px;padding:8px 12px;font-size:0.8rem;max-width:300px;color:#f8fafc;font-family:Inter,sans-serif">
       <div style="font-weight:600;margin-bottom:4px">${node.label}</div>
       <div style="color:#c8d0dc;font-size:0.75rem">
-        <span style="color:${DEPT_COLORS[node.department] || '#c8d0dc'}">${node.department}</span>
-        &middot; L${node.layer} ${LAYER_LABELS[node.layer] || ''}
+        ${typeLabel}
         ${node.role_key ? `&middot; ${node.role_key}` : ''}
       </div>
       <div style="color:#c8d0dc;font-size:0.7rem;margin-top:4px">
@@ -157,8 +278,15 @@ export default function NeuronUniverse() {
   // Stats
   const deptCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    neurons.forEach(n => { counts[n.department] = (counts[n.department] || 0) + 1; });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    let conceptCount = 0;
+    neurons.forEach(n => {
+      if (n.node_type === 'concept' && n.layer === -1) { conceptCount++; return; }
+      const dept = n.department || 'Unknown';
+      counts[dept] = (counts[dept] || 0) + 1;
+    });
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    if (conceptCount > 0) entries.push(['Concepts', conceptCount]);
+    return entries;
   }, [neurons]);
 
   const ready = !loading && !error && dimensions;
@@ -191,11 +319,8 @@ export default function NeuronUniverse() {
         linkWidth={(link: any) => Math.max(0.2, link.weight * 2)}
         linkOpacity={0.15}
         linkColor={() => '#334155'}
-        linkVisibility={showEdges}
-        linkDirectionalParticles={(link: any) => link.co_fire_count > 3 ? 2 : 0}
-        linkDirectionalParticleSpeed={particleSpeed}
-        linkDirectionalParticleWidth={1.5}
-        linkDirectionalParticleColor={() => '#60a5fa'}
+        linkVisibility={(link: any) => link._phantom ? false : showEdges}
+        linkDirectionalParticles={0}
         onNodeHover={() => {}}
         onNodeClick={(node: any) => setSelectedNode(node?.id === selectedNode?.id ? null : node)}
         backgroundColor="#0a0e17"
@@ -217,7 +342,7 @@ export default function NeuronUniverse() {
           Neuron Universe
         </div>
         <div style={{ color: '#c8d0dc', marginBottom: 10, fontSize: '0.75rem' }}>
-          {graphData.nodes.length.toLocaleString()} neurons &middot; {graphData.links.length.toLocaleString()} edges
+          {graphData.nodes.length.toLocaleString()} neurons &middot; {graphData.links.filter((l: any) => !l._phantom).length.toLocaleString()} edges
           {hideDisconnected && <span style={{ color: '#fb923c' }}> (of {neurons.length.toLocaleString()})</span>}
         </div>
 
@@ -233,6 +358,21 @@ export default function NeuronUniverse() {
           >
             <option value="department">Department</option>
             <option value="layer">Layer</option>
+          </select>
+        </label>
+
+        <label style={{ display: 'block', marginBottom: 8, fontSize: '0.75rem', color: '#c8d0dc' }}>
+          Department
+          <select
+            value={deptFilter}
+            onChange={e => setDeptFilter(e.target.value)}
+            style={{
+              marginLeft: 8, background: '#1a2136', color: '#f8fafc',
+              border: '1px solid #1e2d4a', borderRadius: 3, padding: '2px 6px', fontSize: '0.75rem',
+            }}
+          >
+            <option value="">All</option>
+            {departments.map(d => <option key={d} value={d}>{d}</option>)}
           </select>
         </label>
 
@@ -258,7 +398,7 @@ export default function NeuronUniverse() {
         <label style={{ display: 'block', marginBottom: 8, fontSize: '0.75rem', color: '#c8d0dc' }}>
           Max edges: {maxEdges}
           <input
-            type="range" min={500} max={5000} step={500} value={maxEdges}
+            type="range" min={500} max={25000} step={500} value={maxEdges}
             onChange={e => setMaxEdges(parseInt(e.target.value))}
             style={{ width: '100%', marginTop: 4 }}
           />
@@ -328,14 +468,21 @@ export default function NeuronUniverse() {
             </button>
           </div>
           <div style={{ display: 'grid', gap: 6, fontSize: '0.75rem' }}>
-            <div>
-              <span style={{ color: '#c8d0dc' }}>Department: </span>
-              <span style={{ color: DEPT_COLORS[selectedNode.department] || '#f8fafc' }}>{selectedNode.department}</span>
-            </div>
-            <div>
-              <span style={{ color: '#c8d0dc' }}>Layer: </span>
-              <span>L{selectedNode.layer} {LAYER_LABELS[selectedNode.layer]}</span>
-            </div>
+            {selectedNode.node_type === 'concept' && selectedNode.layer === -1 ? (
+              <div>
+                <span style={{ color: '#c8d0dc' }}>Type: </span>
+                <span style={{ color: CONCEPT_COLOR, fontWeight: 600 }}>Concept</span>
+              </div>
+            ) : (<>
+              <div>
+                <span style={{ color: '#c8d0dc' }}>Department: </span>
+                <span style={{ color: DEPT_COLORS[selectedNode.department] || '#f8fafc' }}>{selectedNode.department}</span>
+              </div>
+              <div>
+                <span style={{ color: '#c8d0dc' }}>Layer: </span>
+                <span>L{selectedNode.layer} {LAYER_LABELS[selectedNode.layer]}</span>
+              </div>
+            </>)}
             {selectedNode.role_key && (
               <div>
                 <span style={{ color: '#c8d0dc' }}>Role: </span>

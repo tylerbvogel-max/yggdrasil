@@ -8,6 +8,7 @@ export const DEPT_COLORS: Record<string, string> = {
   'Program Management': '#22c55e',
   'Finance': '#ef4444',
   'Regulatory': '#94a3b8',
+  'Concepts': '#e879f9',
 };
 
 export const DEPARTMENTS = Object.keys(DEPT_COLORS);

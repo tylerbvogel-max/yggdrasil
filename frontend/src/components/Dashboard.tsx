@@ -50,18 +50,25 @@ export default function Dashboard() {
   useEffect(() => {
     if (!stats) return;
 
-    // Layer chart
+    // Layer chart (includes concept layer if present)
     if (layerRef.current) {
       layerChart.current?.destroy();
-      const layerLabels = Object.keys(stats.by_layer).map((_, i) => `L${i}`);
-      const layerData = Object.values(stats.by_layer);
+      const conceptCount = stats.by_layer['layer_-1'] || 0;
+      const layerLabels = [...Array(6)].map((_, i) => `L${i}`);
+      const layerData = [...Array(6)].map((_, i) => stats.by_layer[`layer_${i}`] || 0);
+      const barColors = [...layerColors];
+      if (conceptCount > 0) {
+        layerLabels.push('C');
+        layerData.push(conceptCount);
+        barColors.push('#e879f9');
+      }
       layerChart.current = new Chart(layerRef.current, {
         type: 'bar',
         data: {
           labels: layerLabels,
           datasets: [{
             data: layerData,
-            backgroundColor: layerColors,
+            backgroundColor: barColors,
             borderRadius: 4,
           }],
         },

@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # Typed edge spread thresholds
     spread_stellate_decay: float = 0.3
     spread_pyramidal_min_weight: float = 0.20
+    # Concept neuron (instantiation edge) spread thresholds
+    spread_instantiate_decay: float = 0.6
+    spread_instantiate_min_weight: float = 0.10
+    concept_activation_boost: float = 1.3
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

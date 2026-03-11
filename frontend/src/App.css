@@ -9,6 +9,7 @@
   --text: #ffffff;
   --text-dim: #c8d0dc;
   --accent: #38bdf8;
+  --layer-concept: #e879f9;
   --layer0: #2dd4bf;
   --layer1: #60a5fa;
   --layer2: #a78bfa;
@@ -270,6 +271,23 @@ body {
 .layer-3 .tree-label { color: var(--layer3); }
 .layer-4 .tree-label { color: var(--layer4); }
 .layer-5 .tree-label { color: var(--layer5); }
+.layer-concept .tree-label { color: var(--layer-concept); }
+
+/* Concept neuron group */
+.concept-group-header {
+  border-bottom: 1px solid #e879f922;
+  margin-bottom: 2px;
+}
+.concept-edge-count {
+  font-size: 0.6rem;
+  color: var(--text-dim);
+  margin-left: auto;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+}
 
 /* Neuron Detail */
 .neuron-detail h2 {

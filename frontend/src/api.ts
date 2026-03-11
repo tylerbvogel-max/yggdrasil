@@ -86,6 +86,21 @@ export function fetchStats(): Promise<NeuronStats> {
   return json<NeuronStats>('/neurons/stats');
 }
 
+export interface ConceptNeuron {
+  id: number;
+  label: string;
+  summary: string | null;
+  content: string | null;
+  invocations: number;
+  avg_utility: number;
+  instantiation_edges: number;
+  is_active: boolean;
+}
+
+export function fetchConceptNeurons(): Promise<ConceptNeuron[]> {
+  return json<ConceptNeuron[]>('/admin/concept-neurons');
+}
+
 export interface Graph3DNode {
   id: number; label: string; department: string; layer: number;
   node_type: string; role_key: string | null; invocations: number;

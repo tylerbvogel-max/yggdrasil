@@ -1,6 +1,13 @@
 import { useState, useCallback } from 'react'
 import type { TreeNode } from '../types'
-import { fetchChildren } from '../api'
+import { fetchChildren, type ConceptNeuron } from '../api'
+
+interface ConceptGroupProps {
+  concepts: ConceptNeuron[];
+  open: boolean;
+  onToggle: () => void;
+  search: string;
+}
 
 interface Props {
   nodes: TreeNode[];
@@ -8,6 +15,7 @@ interface Props {
   selectedId: number | null;
   onSelect: (id: number) => void;
   onChildrenLoaded?: (parentId: number, children: TreeNode[]) => void;
+  conceptGroup?: ConceptGroupProps;
 }
 
 function matchesSearch(node: TreeNode, term: string): boolean {
@@ -95,7 +103,7 @@ function TreeNodeRow({
   );
 }
 
-export default function NeuronTree({ nodes, search, selectedId, onSelect, onChildrenLoaded }: Props) {
+export default function NeuronTree({ nodes, search, selectedId, onSelect, onChildrenLoaded, conceptGroup }: Props) {
   const handleExpand = useCallback(async (parentId: number) => {
     if (!onChildrenLoaded) return;
     try {
@@ -118,8 +126,45 @@ export default function NeuronTree({ nodes, search, selectedId, onSelect, onChil
     }
   }, [onChildrenLoaded]);
 
+  const cg = conceptGroup;
+  const filteredConcepts = cg?.concepts.filter(c =>
+    !cg.search || c.label.toLowerCase().includes(cg.search.toLowerCase()) || cg.search.replace(/^#/, '') === String(c.id)
+  );
+  // Auto-open concept group when search matches a concept
+  const conceptVisible = cg && (!cg.search || (filteredConcepts && filteredConcepts.length > 0));
+
   return (
     <div className="tree-scroll">
+      {conceptVisible && cg && (
+        <div className="tree-node">
+          <div className="tree-row concept-group-header" onClick={cg.onToggle}>
+            <span className="tree-toggle">{cg.open || cg.search ? '\u25BC' : '\u25B6'}</span>
+            <span className="tree-label" style={{ color: 'var(--layer-concept)', fontWeight: 600 }}>
+              Concepts
+            </span>
+            <span className="tree-badge" style={{ background: '#e879f922', color: '#e879f9' }}>
+              {cg.concepts.length}
+            </span>
+          </div>
+          {(cg.open || cg.search) && filteredConcepts && (
+            <div className="tree-children">
+              {filteredConcepts.map(c => (
+                <div key={c.id} className="tree-node">
+                  <div
+                    className={`tree-row layer-concept${selectedId === c.id ? ' selected' : ''}`}
+                    style={{ paddingLeft: 28 }}
+                    onClick={() => onSelect(c.id)}
+                  >
+                    <span className="tree-label">{c.label}</span>
+                    {c.invocations > 0 && <span className="tree-badge">{c.invocations}</span>}
+                    <span className="concept-edge-count">{c.instantiation_edges}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {nodes.map(node => (
         <TreeNodeRow
           key={node.id}

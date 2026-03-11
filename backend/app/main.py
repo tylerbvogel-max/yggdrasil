@@ -139,6 +139,23 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Edge type migration skipped: {e}")
 
+    # Migrate: add source and last_adjusted columns to neuron_edges for provenance tracking
+    async with engine.begin() as conn:
+        try:
+            if await _table_exists(conn, "neuron_edges"):
+                if not await _column_exists(conn, "neuron_edges", "source"):
+                    await conn.execute(text(
+                        "ALTER TABLE neuron_edges ADD COLUMN source VARCHAR(20) DEFAULT 'organic'"
+                    ))
+                    print("Migrated: added neuron_edges.source")
+                if not await _column_exists(conn, "neuron_edges", "last_adjusted"):
+                    await conn.execute(text(
+                        "ALTER TABLE neuron_edges ADD COLUMN last_adjusted TIMESTAMP DEFAULT now()"
+                    ))
+                    print("Migrated: added neuron_edges.last_adjusted")
+        except Exception as e:
+            print(f"Edge provenance migration skipped: {e}")
+
     # Migrate: create inhibitory_regulators table if missing
     async with engine.begin() as conn:
         try:

@@ -2220,7 +2220,7 @@ async def classify_edges(db: AsyncSession = Depends(get_db)):
     Looks up the department of each edge's source and target neurons.
     Same department = stellate (local processor), different = pyramidal (long-range).
     """
-    # Get all edges without a type (or all edges for reclassification)
+    # Reclassify all edges except 'instantiates' (concept neuron edges are manually typed)
     result = await db.execute(text("""
         UPDATE neuron_edges e
         SET edge_type = CASE
@@ -2229,6 +2229,7 @@ async def classify_edges(db: AsyncSession = Depends(get_db)):
         END
         FROM neurons src, neurons tgt
         WHERE e.source_id = src.id AND e.target_id = tgt.id
+          AND (e.edge_type IS NULL OR e.edge_type != 'instantiates')
         RETURNING e.source_id, e.target_id, e.edge_type
     """))
     rows = result.all()
@@ -2243,3 +2244,104 @@ async def classify_edges(db: AsyncSession = Depends(get_db)):
         "pyramidal": pyramidal,
         "message": f"Classified {len(rows)} edges: {stellate} stellate, {pyramidal} pyramidal",
     }
+
+
+# ── Concept Neurons ──
+
+
+@router.get("/concept-neurons")
+async def list_concept_neurons(db: AsyncSession = Depends(get_db)):
+    """List all concept neurons with their instantiation edge counts."""
+    from app.services.concept_service import get_concept_neurons
+    return await get_concept_neurons(db)
+
+
+@router.post("/concept-neurons")
+async def create_concept_neuron_endpoint(
+    label: str,
+    content: str,
+    summary: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new concept neuron (layer=-1, department-agnostic)."""
+    from app.services.concept_service import create_concept_neuron
+    from app.services.semantic_prefilter import invalidate_cache
+
+    neuron = await create_concept_neuron(db, label, content, summary)
+    await db.commit()
+    invalidate_cache()
+
+    return {
+        "id": neuron.id,
+        "label": neuron.label,
+        "node_type": neuron.node_type,
+        "layer": neuron.layer,
+        "message": f"Created concept neuron #{neuron.id}: {neuron.label}",
+    }
+
+
+@router.post("/concept-neurons/{concept_id}/link")
+async def link_concept_neuron(
+    concept_id: int,
+    target_ids: list[int],
+    weight: float = 0.5,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create instantiation edges from a concept neuron to target neurons."""
+    from app.services.concept_service import link_concept_to_neurons
+
+    # Verify concept neuron exists
+    concept = await db.get(Neuron, concept_id)
+    if not concept or concept.node_type != "concept":
+        raise HTTPException(status_code=404, detail=f"Concept neuron #{concept_id} not found")
+
+    count = await link_concept_to_neurons(db, concept_id, target_ids, weight)
+    await db.commit()
+
+    return {
+        "concept_id": concept_id,
+        "edges_created": count,
+        "message": f"Linked {count} neurons to concept #{concept_id}",
+    }
+
+
+@router.post("/concept-neurons/seed-three-horizons")
+async def seed_three_horizons_endpoint(db: AsyncSession = Depends(get_db)):
+    """Seed the Three Horizons framework as a concept neuron with instantiation edges."""
+    from app.services.concept_service import seed_three_horizons
+    return await seed_three_horizons(db)
+
+
+@router.post("/concept-neurons/seed-all")
+async def seed_all_concepts_endpoint(db: AsyncSession = Depends(get_db)):
+    """Seed all concept neurons from the built-in registry (idempotent — skips existing)."""
+    from app.services.concept_service import seed_all_concepts
+    return await seed_all_concepts(db)
+
+
+@router.post("/bootstrap-firings")
+async def bootstrap_firings_endpoint(dry_run: bool = False, db: AsyncSession = Depends(get_db)):
+    """Pre-seed co-firing edges and invocation estimates based on structural/semantic priors.
+
+    All edges tagged source='bootstrap' for traceability.
+    Pass dry_run=true to preview without writing.
+    """
+    from app.services.bootstrap_service import bootstrap_firings
+    return await bootstrap_firings(db, dry_run=dry_run)
+
+
+@router.get("/bootstrap-stats")
+async def bootstrap_stats_endpoint(db: AsyncSession = Depends(get_db)):
+    """Return statistics about bootstrap vs organic edge provenance."""
+    from app.services.bootstrap_service import get_bootstrap_stats
+    return await get_bootstrap_stats(db)
+
+
+@router.post("/purge-bootstrap")
+async def purge_bootstrap_endpoint(db: AsyncSession = Depends(get_db)):
+    """Remove all bootstrap-sourced edges and reset bootstrap-only invocations.
+
+    Use if bootstrap priors are causing unwanted bias.
+    """
+    from app.services.bootstrap_service import purge_bootstrap
+    return await purge_bootstrap(db)

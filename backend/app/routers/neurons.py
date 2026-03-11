@@ -43,7 +43,7 @@ async def neuron_children(
 
     Returns flat list with child_count for lazy-load tree rendering.
     """
-    conditions = [Neuron.is_active == True]
+    conditions = [Neuron.is_active == True, Neuron.layer >= 0]  # Exclude concept neurons (layer=-1)
     if parent_id is not None:
         conditions.append(Neuron.parent_id == parent_id)
     else:
@@ -142,7 +142,38 @@ async def list_refinements(db: AsyncSession = Depends(get_db)):
 
 @router.get("/edges/department-chord")
 async def department_chord(layer: int = 1, min_weight: float = 0.15, db: AsyncSession = Depends(get_db)):
-    """Aggregate co-firing edges grouped at a specific neuron layer."""
+    """Aggregate co-firing edges grouped at a specific neuron layer.
+
+    layer=-1 returns concept neuron instantiation edges grouped by concept × department.
+    """
+    if layer == -1:
+        # Concept neurons: show instantiation edges grouped as concept_label × department
+        stmt = text("""
+            SELECT c.label AS concept_label,
+                   COALESCE(n2.department, 'Unknown') AS target_dept,
+                   SUM(e.weight) AS total_weight, COUNT(*) AS edge_count
+            FROM neuron_edges e
+            JOIN neurons c ON (c.id = e.source_id OR c.id = e.target_id) AND c.node_type = 'concept'
+            JOIN neurons n2 ON n2.id = CASE WHEN c.id = e.source_id THEN e.target_id ELSE e.source_id END
+            WHERE e.edge_type = 'instantiates'
+              AND e.weight >= :min_weight
+              AND n2.node_type != 'concept'
+            GROUP BY c.label, n2.department
+            ORDER BY total_weight DESC
+        """)
+        result = await db.execute(stmt, {"min_weight": min_weight})
+        return [
+            {
+                "source_dept": r.concept_label,
+                "target_dept": r.target_dept,
+                "source_department": "Concepts",
+                "target_department": r.target_dept,
+                "total_weight": float(r.total_weight),
+                "edge_count": r.edge_count,
+            }
+            for r in result.fetchall()
+        ]
+
     if layer < 1 or layer > 5:
         raise HTTPException(status_code=400, detail="Layer must be 1-5")
     if min_weight < 0 or min_weight > 1:
@@ -589,18 +620,46 @@ async def graph_3d(
         for r in result.fetchall()
     ]
 
-    # Top edges by weight
-    edge_result = await db.execute(
-        select(NeuronEdge.source_id, NeuronEdge.target_id, NeuronEdge.weight, NeuronEdge.co_fire_count)
-        .where(NeuronEdge.weight >= min_weight)
-        .order_by(NeuronEdge.weight.desc())
-        .limit(max_edges)
-    )
-    edges = [
-        {"source": r.source_id, "target": r.target_id, "weight": float(r.weight), "co_fire_count": r.co_fire_count}
-        for r in edge_result.fetchall()
-    ]
+    # Coverage-first edge selection:
+    # Phase 1: each neuron's single best edge (maximises connectivity)
+    # Phase 2: fill remaining budget with top-weight edges
+    from sqlalchemy import text as sa_text
 
+    best_result = await db.execute(sa_text("""
+        SELECT DISTINCT ON (nid) nid, source_id, target_id, weight, co_fire_count
+        FROM (
+            SELECT source_id AS nid, source_id, target_id, weight, co_fire_count
+            FROM neuron_edges WHERE weight >= :mw
+            UNION ALL
+            SELECT target_id AS nid, source_id, target_id, weight, co_fire_count
+            FROM neuron_edges WHERE weight >= :mw
+        ) sub
+        ORDER BY nid, weight DESC
+    """), {"mw": min_weight})
+
+    edge_set: dict[tuple[int, int], dict] = {}
+    for r in best_result.fetchall():
+        key = (r[1], r[2])
+        if key not in edge_set:
+            edge_set[key] = {"source": r[1], "target": r[2], "weight": float(r[3]), "co_fire_count": r[4]}
+
+    # Phase 2: fill remaining budget with top-weight edges
+    remaining = max_edges - len(edge_set)
+    if remaining > 0:
+        fill_result = await db.execute(
+            select(NeuronEdge.source_id, NeuronEdge.target_id, NeuronEdge.weight, NeuronEdge.co_fire_count)
+            .where(NeuronEdge.weight >= min_weight)
+            .order_by(NeuronEdge.weight.desc())
+            .limit(max_edges)
+        )
+        for r in fill_result.fetchall():
+            if len(edge_set) >= max_edges:
+                break
+            key = (r.source_id, r.target_id)
+            if key not in edge_set:
+                edge_set[key] = {"source": r.source_id, "target": r.target_id, "weight": float(r.weight), "co_fire_count": r.co_fire_count}
+
+    edges = list(edge_set.values())
     return {"neurons": neurons, "edges": edges}
 
 

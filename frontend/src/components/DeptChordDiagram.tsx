@@ -345,6 +345,7 @@ export default function DeptChordDiagram() {
             borderRadius: 4, padding: '4px 8px', fontSize: '0.8rem',
           }}
         >
+          <option value={-1}>Concepts</option>
           {[1, 2, 3, 4, 5].map(l => (
             <option key={l} value={l}>L{l} — {LAYER_NAMES[l]}</option>
           ))}

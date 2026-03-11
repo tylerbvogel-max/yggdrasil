@@ -300,7 +300,12 @@ async def execute_query(
             await propagate_activation(db, score.neuron_id, score.combined, query.id)
         # Only co-fire the actual top-K neurons above the score threshold (not all scored)
         cofire_neurons = [s for s in all_scored[:max_top_k] if s.combined >= settings.min_cofire_score]
-        await _batch_update_edges(db, [s.neuron_id for s in cofire_neurons], state.total_queries)
+        cofire_ids = [s.neuron_id for s in cofire_neurons]
+        await _batch_update_edges(db, cofire_ids, state.total_queries)
+
+        # Strengthen concept neuron edges when their instantiation targets co-fire
+        from app.services.concept_service import cofire_concept_neurons
+        await cofire_concept_neurons(db, cofire_ids, state.total_queries)
 
     await db.commit()
 
@@ -395,8 +400,8 @@ async def _batch_update_edges(db: AsyncSession, neuron_ids: list[int], query_off
     # Batch insert new edges (ignore if already exist)
     for src, tgt in pairs:
         await db.execute(text(
-            "INSERT INTO neuron_edges (source_id, target_id, co_fire_count, weight, last_updated_query) "
-            "VALUES (:src, :tgt, 0, 0.0, 0) "
+            "INSERT INTO neuron_edges (source_id, target_id, co_fire_count, weight, last_updated_query, source, last_adjusted) "
+            "VALUES (:src, :tgt, 0, 0.0, 0, 'organic', now()) "
             "ON CONFLICT (source_id, target_id) DO NOTHING"
         ), {"src": src, "tgt": tgt})
 
@@ -406,6 +411,8 @@ async def _batch_update_edges(db: AsyncSession, neuron_ids: list[int], query_off
             "UPDATE neuron_edges "
             "SET co_fire_count = co_fire_count + 1, "
             "    weight = LEAST(1.0, (co_fire_count + 1) / 20.0), "
-            "    last_updated_query = :qoff "
+            "    last_updated_query = :qoff, "
+            "    source = CASE WHEN source = 'bootstrap' THEN 'organic' ELSE source END, "
+            "    last_adjusted = now() "
             "WHERE source_id = :src AND target_id = :tgt"
         ), {"src": src, "tgt": tgt, "qoff": query_offset})

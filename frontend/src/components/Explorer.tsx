@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { fetchTree, createCheckpoint } from '../api'
+import { fetchTree, createCheckpoint, fetchConceptNeurons, type ConceptNeuron } from '../api'
 import type { TreeNode } from '../types'
 import NeuronTree from './NeuronTree'
 import NeuronDetail from './NeuronDetail'
@@ -41,6 +41,8 @@ export default function Explorer({ navigateToNeuronId, onNavigateHandled }: {
   const [leftWidth, setLeftWidth] = useState(380);
   const [checkpointing, setCheckpointing] = useState(false);
   const [checkpointMsg, setCheckpointMsg] = useState('');
+  const [concepts, setConcepts] = useState<ConceptNeuron[]>([]);
+  const [conceptsOpen, setConceptsOpen] = useState(false);
   const dragging = useRef(false);
 
   const onMouseDown = useCallback(() => {
@@ -70,11 +72,12 @@ export default function Explorer({ navigateToNeuronId, onNavigateHandled }: {
     };
   }, []);
 
-  // Initial load: first 2 layers only
+  // Initial load: first 2 layers only + concept neurons
   useEffect(() => {
     fetchTree(undefined, 2)
       .then(data => { setTree(data); setDepartments(collectDepartments(data)); })
       .catch(e => setError(e.message));
+    fetchConceptNeurons().then(setConcepts).catch(() => {});
   }, []);
 
   // Handle cross-tab navigation to a specific neuron
@@ -161,6 +164,12 @@ export default function Explorer({ navigateToNeuronId, onNavigateHandled }: {
           selectedId={selectedId}
           onSelect={setSelectedId}
           onChildrenLoaded={handleChildrenLoaded}
+          conceptGroup={concepts.length > 0 && (!deptFilter || deptFilter === '') ? {
+            concepts,
+            open: conceptsOpen,
+            onToggle: () => setConceptsOpen(!conceptsOpen),
+            search,
+          } : undefined}
         />
       </div>
       <div className="explorer-resize-handle" onMouseDown={onMouseDown} />

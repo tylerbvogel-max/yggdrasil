@@ -327,9 +327,13 @@ async def spread_activation(
 
         for source_id, source_activation in frontier.items():
             for neighbor_id, edge_weight, edge_type in adjacency.get(source_id, []):
-                # Typed edge decay: stellate (local) uses lower decay, pyramidal (cross-dept) uses standard
+                # Typed edge decay: stellate (local), pyramidal (cross-dept), instantiates (concept)
                 if edge_type == "stellate":
                     decay = settings.spread_stellate_decay
+                elif edge_type == "instantiates":
+                    decay = settings.spread_instantiate_decay
+                    if edge_weight < settings.spread_instantiate_min_weight:
+                        continue
                 else:
                     decay = settings.spread_decay
                     # Pyramidal edges require higher minimum weight
@@ -585,7 +589,7 @@ async def get_neuron_tree(
     If max_depth is set, only builds tree to that depth (0=roots only, 2=roots+children+grandchildren).
     At 200K neurons, callers should use max_depth=2 or the /neurons/children endpoint.
     """
-    conditions = []
+    conditions = [Neuron.layer >= 0]  # Exclude concept neurons (layer=-1); shown separately
     if department:
         conditions.append(Neuron.department == department)
     if role_key:
@@ -593,7 +597,7 @@ async def get_neuron_tree(
     if max_depth is not None:
         conditions.append(Neuron.layer <= max_depth)
 
-    stmt = select(Neuron).where(*conditions) if conditions else select(Neuron)
+    stmt = select(Neuron).where(*conditions)
     stmt = stmt.order_by(Neuron.layer, Neuron.id)
     result = await db.execute(stmt)
     all_neurons = list(result.scalars().all())
@@ -628,11 +632,12 @@ async def get_graph_stats(db: AsyncSession) -> dict:
     total = (await db.execute(select(func.count(Neuron.id)))).scalar() or 0
 
     by_layer = {}
-    for layer in range(6):
+    for layer in range(-1, 6):
         count = (await db.execute(
             select(func.count(Neuron.id)).where(Neuron.layer == layer)
         )).scalar() or 0
-        by_layer[f"layer_{layer}"] = count
+        if count > 0 or layer >= 0:
+            by_layer[f"layer_{layer}"] = count
 
     by_type = {}
     type_result = await db.execute(
