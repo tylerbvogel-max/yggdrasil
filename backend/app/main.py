@@ -9,8 +9,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, func, text
 
+import httpx
 from app.database import engine, async_session
-from app.models import Base, Neuron, SystemState, BatchJob, SourceDocument, NeuronSourceLink, ManagementReview, ComplianceSnapshot, EvidenceMapping
+from app.models import Base, Neuron, SystemState, BatchJob, SourceDocument, NeuronSourceLink, ManagementReview, ComplianceSnapshot, EvidenceMapping, ObservationQueue
 from app.routers import query, neurons, admin, autopilot, performance, provenance, compliance, ingest
 from app.seed.loader import load_seed
 from app.seed.regulatory_seed import seed_regulatory
@@ -407,6 +408,29 @@ app.include_router(compliance.router)
 app.include_router(ingest.router)
 
 
+# Reverse proxy: /corvus/* → Corvus backend (localhost:8003)
+CORVUS_BACKEND = "http://127.0.0.1:8003"
+
+@app.api_route("/corvus/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+async def corvus_proxy(path: str, request: Request):
+    """Proxy requests to the Corvus backend for unified frontend access."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        url = f"{CORVUS_BACKEND}/{path}"
+        body = await request.body()
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
+        resp = await client.request(
+            method=request.method,
+            url=url,
+            content=body,
+            headers=headers,
+            params=dict(request.query_params),
+        )
+        return JSONResponse(
+            content=resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"raw": resp.text},
+            status_code=resp.status_code,
+        )
+
+
 @app.get("/health")
 async def health():
     async with async_session() as db:
@@ -429,13 +453,14 @@ if frontend_dist.exists():
         app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
     # SPA catch-all — must NOT match API prefixes
-    _api_prefixes = ("/neurons", "/queries", "/query", "/eval-scores", "/admin", "/health", "/docs", "/openapi")
+    _api_prefixes = ("/neurons", "/queries", "/query", "/context", "/eval-scores", "/admin", "/health", "/docs", "/openapi", "/ingest", "/corvus")
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        if full_path and any(full_path.startswith(p.lstrip("/")) for p in _api_prefixes):
-            raise HTTPException(status_code=404, detail="Not found")
+        # Check if it's a real static file first (before API prefix check)
         file_path = frontend_dist / full_path
         if full_path and file_path.exists() and file_path.is_file():
             return FileResponse(str(file_path))
+        if full_path and any(full_path.startswith(p.lstrip("/")) for p in _api_prefixes):
+            raise HTTPException(status_code=404, detail="Not found")
         return FileResponse(str(frontend_dist / "index.html"))

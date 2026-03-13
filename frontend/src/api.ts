@@ -162,6 +162,70 @@ export function submitQuery(message: string, slots: SlotSpec[]): Promise<QueryRe
   });
 }
 
+export interface StageEvent {
+  stage: string;
+  status: 'done' | 'skipped' | 'active';
+  detail?: Record<string, unknown>;
+}
+
+export function submitQueryStream(
+  message: string,
+  slots: SlotSpec[],
+  onStage: (event: StageEvent) => void,
+): { promise: Promise<QueryResponse>; abort: () => void } {
+  const controller = new AbortController();
+
+  const promise = (async () => {
+    const res = await fetch('/query/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, slots_v2: slots }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult: QueryResponse | null = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse SSE frames
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop()!; // keep incomplete frame
+
+      for (const part of parts) {
+        if (!part.trim()) continue;
+        let eventType = '';
+        let dataStr = '';
+        for (const line of part.split('\n')) {
+          if (line.startsWith('event: ')) eventType = line.slice(7);
+          else if (line.startsWith('data: ')) dataStr = line.slice(6);
+        }
+        if (!eventType || !dataStr) continue;
+        const parsed = JSON.parse(dataStr);
+        if (eventType === 'stage') {
+          onStage(parsed as StageEvent);
+        } else if (eventType === 'result') {
+          finalResult = parsed as QueryResponse;
+        } else if (eventType === 'error') {
+          throw new Error(parsed.message);
+        }
+      }
+    }
+
+    if (!finalResult) throw new Error('Stream ended without result');
+    return finalResult;
+  })();
+
+  return { promise, abort: () => controller.abort() };
+}
+
 export function evaluateQuery(queryId: number, model: 'haiku' | 'sonnet' | 'opus'): Promise<EvalResponse> {
   return json<EvalResponse>(`/query/${queryId}/evaluate`, {
     method: 'POST',

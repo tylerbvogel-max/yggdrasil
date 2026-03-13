@@ -110,13 +110,13 @@ async def performance_report(db: AsyncSession = Depends(get_db)):
         },
         "savings_vs_opus": round((1 - haiku_neuron_cost / opus_raw_cost) * 100, 1) if opus_raw_cost > 0 else 0,
         "savings_vs_sonnet": round((1 - haiku_neuron_cost / sonnet_raw_cost) * 100, 1) if sonnet_raw_cost > 0 else 0,
-        "projected_monthly_1k": {
-            "haiku_neuron": round(haiku_neuron_cost * 1000, 2),
-            "sonnet_raw": round(sonnet_raw_cost * 1000, 2),
-            "opus_raw": round(opus_raw_cost * 1000, 2),
+        "projected_monthly_100k": {
+            "haiku_neuron": round(haiku_neuron_cost * 100_000, 2),
+            "sonnet_raw": round(sonnet_raw_cost * 100_000, 2),
+            "opus_raw": round(opus_raw_cost * 100_000, 2),
         },
-        "annual_savings_vs_opus_1k": round((opus_raw_cost - haiku_neuron_cost) * 1000 * 12, 2),
-        "annual_savings_vs_sonnet_1k": round((sonnet_raw_cost - haiku_neuron_cost) * 1000 * 12, 2),
+        "annual_savings_vs_opus_100k": round((opus_raw_cost - haiku_neuron_cost) * 100_000 * 12, 2),
+        "annual_savings_vs_sonnet_100k": round((sonnet_raw_cost - haiku_neuron_cost) * 100_000 * 12, 2),
     }
 
     # --- 3. Quality by answer mode ---

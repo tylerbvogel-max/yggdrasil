@@ -11,8 +11,8 @@ interface CostModeling {
   avg_tokens: { classify_input: number; classify_output: number; execute_input: number; execute_output: number };
   per_query_cost: { haiku_neuron: number; sonnet_raw: number; opus_raw: number };
   savings_vs_opus: number; savings_vs_sonnet: number;
-  projected_monthly_1k: { haiku_neuron: number; sonnet_raw: number; opus_raw: number };
-  annual_savings_vs_opus_1k: number; annual_savings_vs_sonnet_1k: number;
+  projected_monthly_100k: { haiku_neuron: number; sonnet_raw: number; opus_raw: number };
+  annual_savings_vs_opus_100k: number; annual_savings_vs_sonnet_100k: number;
 }
 interface QualityMode {
   mode: string; n: number; accuracy: number; completeness: number; clarity: number; faithfulness: number; overall: number;
@@ -295,27 +295,27 @@ export default function PerformancePage() {
             </div>
           </div>
 
-          <h4>Projected at 1,000 queries/month</h4>
+          <h4>Projected at 100,000 queries/month</h4>
           <table className="perf-table">
             <thead><tr><th>Approach</th><th>Monthly</th><th>Annual</th><th>Annual Savings</th></tr></thead>
             <tbody>
               <tr>
                 <td><ModeLabel mode="haiku_neuron" /></td>
-                <td>${fmt(data.cost_modeling.projected_monthly_1k.haiku_neuron)}</td>
-                <td>${fmt(data.cost_modeling.projected_monthly_1k.haiku_neuron * 12)}</td>
+                <td>${fmt(data.cost_modeling.projected_monthly_100k.haiku_neuron)}</td>
+                <td>${fmt(data.cost_modeling.projected_monthly_100k.haiku_neuron * 12)}</td>
                 <td>—</td>
               </tr>
               <tr>
                 <td><ModeLabel mode="sonnet_raw" /></td>
-                <td>${fmt(data.cost_modeling.projected_monthly_1k.sonnet_raw)}</td>
-                <td>${fmt(data.cost_modeling.projected_monthly_1k.sonnet_raw * 12)}</td>
-                <td style={{ color: '#22c55e' }}>${fmt(data.cost_modeling.annual_savings_vs_sonnet_1k)}</td>
+                <td>${fmt(data.cost_modeling.projected_monthly_100k.sonnet_raw)}</td>
+                <td>${fmt(data.cost_modeling.projected_monthly_100k.sonnet_raw * 12)}</td>
+                <td style={{ color: '#22c55e' }}>${fmt(data.cost_modeling.annual_savings_vs_sonnet_100k)}</td>
               </tr>
               <tr>
                 <td><ModeLabel mode="opus_raw" /></td>
-                <td>${fmt(data.cost_modeling.projected_monthly_1k.opus_raw)}</td>
-                <td>${fmt(data.cost_modeling.projected_monthly_1k.opus_raw * 12)}</td>
-                <td style={{ color: '#22c55e' }}>${fmt(data.cost_modeling.annual_savings_vs_opus_1k)}</td>
+                <td>${fmt(data.cost_modeling.projected_monthly_100k.opus_raw)}</td>
+                <td>${fmt(data.cost_modeling.projected_monthly_100k.opus_raw * 12)}</td>
+                <td style={{ color: '#22c55e' }}>${fmt(data.cost_modeling.annual_savings_vs_opus_100k)}</td>
               </tr>
             </tbody>
           </table>

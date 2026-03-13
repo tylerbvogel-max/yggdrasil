@@ -4,6 +4,10 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass, field
+from typing import Callable, Awaitable
+
+# Optional callback for streaming pipeline progress
+StageCallback = Callable[[str, dict], Awaitable[None]] | None
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,16 +55,23 @@ async def prepare_context(
     top_k: int | None = None,
     candidate_pool: int | None = None,
     project_path: str | None = None,
+    on_stage: StageCallback = None,
 ) -> PreparedContext:
     """Run classify → score → spread → inhibit → assemble without LLM execution.
 
     This is the core neuron graph pipeline extracted for reuse by MCP and the REST API.
     """
+    async def _emit(stage: str, data: dict | None = None):
+        if on_stage:
+            await on_stage(stage, data or {"status": "done"})
+
     # Check structural resolver first (zero-cost fast path)
     from app.services.structural_resolver import try_structural_resolve
     structural = await try_structural_resolve(db, user_message)
     if structural is not None:
+        await _emit("structural_resolve", {"status": "done", "detail": "fast-path match"})
         return structural
+    await _emit("structural_resolve", {"status": "skipped"})
 
     effective_top_k = top_k or settings.top_k_neurons
     effective_pool = candidate_pool or settings.semantic_prefilter_top_n
@@ -84,11 +95,14 @@ async def prepare_context(
     except Exception as e:
         print(f"Query embedding failed, falling back to keywords: {e}")
 
+    await _emit("embed_query")
+
     classification = classify_result["classification"]
     intent = classification.get("intent", "general_query")
     departments = classification.get("departments", [])
     role_keys = classification.get("role_keys", [])
     keywords = classification.get("keywords", [])
+    await _emit("classify", {"status": "done", "detail": {"intent": intent, "departments": departments}})
 
     state = await get_system_state(db)
 
@@ -102,6 +116,7 @@ async def prepare_context(
         sem_ids = [nid for nid, _ in semantic_candidates]
         sem_sim_map = {nid: sim for nid, sim in semantic_candidates}
         candidates = await _load_candidates_by_ids(db, sem_ids, keywords)
+        await _emit("semantic_prefilter", {"status": "done", "detail": {"candidates": len(candidates)}})
         scored = await score_candidates(
             db, candidates, state.total_queries, keywords,
             departments, role_keys,
@@ -112,9 +127,13 @@ async def prepare_context(
         candidates = await get_neurons_by_filter(db, departments, role_keys, keywords)
         if not candidates:
             candidates = await get_neurons_by_filter(db)
+        await _emit("semantic_prefilter", {"status": "done", "detail": {"candidates": len(candidates)}})
         scored = await score_candidates(db, candidates, state.total_queries, keywords, departments, role_keys, query_embedding=query_embedding)
 
+    await _emit("score_neurons", {"status": "done", "detail": {"scored": len(scored)}})
+
     scored = await spread_activation(db, scored, effective_top_k)
+    await _emit("spread_activation", {"status": "done", "detail": {"propagated": len(scored)}})
 
     # Inhibitory regulation
     if settings.inhibition_enabled:
@@ -147,6 +166,7 @@ async def prepare_context(
 
     # Assemble system prompt
     system_prompt = assemble_prompt(intent, all_scored[:effective_top_k], neuron_map, budget_tokens=effective_budget)
+    await _emit("assemble_prompt", {"status": "done", "detail": {"neurons_activated": min(len(all_scored), effective_top_k)}})
 
     # Build neuron score dicts
     neuron_scores = [
@@ -205,6 +225,7 @@ async def execute_query(
     modes: list[str],
     token_budget: int | None = None,
     slots_v2: list[dict] | None = None,
+    on_stage: StageCallback = None,
 ) -> dict:
     """Run the pipeline for all requested slots.
 
@@ -252,6 +273,7 @@ async def execute_query(
             token_budget=max(s["token_budget"] for s in slot_specs if s["mode"] in NEURON_MODES),
             top_k=max_top_k,
             candidate_pool=max_candidate_pool,
+            on_stage=on_stage,
         )
         intent = ctx.intent
         departments = ctx.departments
@@ -335,14 +357,14 @@ async def execute_query(
                 _timed_chat(prompt, user_message, max_tokens=4096, model=model)
             ))
 
-    # Collect results
-    slot_results = []
-    for i, spec in enumerate(slot_specs):
-        result = await tasks[i]
+    # Collect results — emit per-slot events as each completes
+    slot_results: list[dict | None] = [None] * len(slot_specs)
+    async def _collect_slot(i: int, spec: dict, task: asyncio.Task):
+        result = await task
         mode = spec["mode"]
         budget = spec.get("token_budget", settings.token_budget)
         slot_top_k = spec.get("top_k", settings.top_k_neurons)
-        slot_results.append({
+        slot_results[i] = {
             "mode": mode,
             "model": MODEL_MAP.get(mode) or "opus",
             "neurons": mode in NEURON_MODES,
@@ -355,7 +377,16 @@ async def execute_query(
             "top_k": slot_top_k if mode in NEURON_MODES else None,
             "label": spec.get("label"),
             "model_version": result.get("model_version"),
-        })
+        }
+        if on_stage:
+            await on_stage("execute_llm", {"status": "done", "detail": {
+                "slot_index": i, "mode": mode,
+                "model": MODEL_MAP.get(mode) or "opus",
+                "duration_ms": result.get("duration_ms", 0),
+            }})
+
+    collect_tasks = [asyncio.create_task(_collect_slot(i, spec, tasks[i])) for i, spec in enumerate(slot_specs)]
+    await asyncio.gather(*collect_tasks)
 
     query.results_json = json.dumps(slot_results)
     if all_scored:

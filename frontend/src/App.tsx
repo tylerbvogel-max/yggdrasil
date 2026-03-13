@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import Explorer from './components/Explorer'
 import Dashboard from './components/Dashboard'
 import QueryLab from './components/QueryLab'
@@ -27,7 +27,19 @@ import NeuronUniverse from './components/NeuronUniverse'
 import ArchitecturePlanPage from './components/ArchitecturePlanPage'
 import ManagementReviewPage from './components/ManagementReviewPage'
 import EvidenceMapPage from './components/EvidenceMapPage'
-type Tab = 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'arch-plan' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks' | 'mgmt-reviews' | 'evidence-map';
+import CorvusPage from './components/CorvusPage'
+
+type Tab = 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'arch-plan' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks' | 'mgmt-reviews' | 'evidence-map' | 'corvus-feed' | 'corvus-observations';
+
+type Theme = 'corvus-native' | 'yggdrasil-dark' | 'yggdrasil-light' | 'high-contrast' | 'colorblind';
+
+const THEME_LABELS: Record<Theme, string> = {
+  'corvus-native': 'Corvus Native',
+  'yggdrasil-dark': 'Yggdrasil',
+  'yggdrasil-light': 'Yggdrasil Light',
+  'high-contrast': 'High Contrast',
+  'colorblind': 'Colorblind',
+};
 
 interface NavItem {
   key: Tab;
@@ -36,6 +48,13 @@ interface NavItem {
 }
 
 const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  {
+    label: 'Corvus',
+    items: [
+      { key: 'corvus-feed', label: 'Screen Watcher' },
+      { key: 'corvus-observations', label: 'Observations' },
+    ],
+  },
   {
     label: 'Query',
     items: [
@@ -96,6 +115,14 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   },
 ];
 
+function getInitialTheme(): Theme {
+  const saved = localStorage.getItem('corvus-theme');
+  if (saved && saved in THEME_LABELS) {
+    return saved as Theme;
+  }
+  return 'corvus-native';
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>('explorer');
   const [explorerNeuronId, setExplorerNeuronId] = useState<number | null>(null);
@@ -103,6 +130,19 @@ export default function App() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set()
   );
+  const [theme, setThemeState] = useState<Theme>(getInitialTheme);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('corvus-theme', theme);
+  }, [theme]);
+
+  function setTheme(t: Theme) {
+    setThemeState(t);
+    setThemeMenuOpen(false);
+  }
 
   function navigateToNeuron(id: number) {
     setExplorerNeuronId(id);
@@ -125,7 +165,8 @@ export default function App() {
     <div className="app app-sidebar-layout">
       <aside className={`sidebar${collapsed ? ' sidebar-collapsed' : ''}`}>
         <div className="sidebar-header">
-          {!collapsed && <h1 className="app-title">Yggdrasil</h1>}
+          <img src="/corvus-logo-128.png" alt="Corvus" className="sidebar-logo" />
+          {!collapsed && <h1 className="app-title">Corvus</h1>}
           <button
             className="sidebar-toggle"
             onClick={() => setCollapsed(c => !c)}
@@ -162,8 +203,51 @@ export default function App() {
             ))}
           </nav>
         )}
+        {/* Settings gear — always visible, even when collapsed */}
+        <div className="sidebar-settings-area">
+          <button
+            className="sidebar-settings-btn"
+            onClick={() => setThemeMenuOpen(o => !o)}
+            title="Settings"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+        </div>
       </aside>
+
+      {/* Settings popup */}
+      {themeMenuOpen && (
+        <>
+          <div className="settings-overlay" onClick={() => setThemeMenuOpen(false)} />
+          <div className="settings-popup">
+            <div className="settings-popup-header">
+              <span>Settings</span>
+              <button className="settings-popup-close" onClick={() => setThemeMenuOpen(false)}>&times;</button>
+            </div>
+            <div className="settings-popup-section">
+              <label className="settings-label">Theme</label>
+              <div className="settings-theme-options">
+                {(Object.keys(THEME_LABELS) as Theme[]).map(t => (
+                  <button
+                    key={t}
+                    className={`settings-theme-btn${theme === t ? ' active' : ''}`}
+                    onClick={() => setTheme(t)}
+                  >
+                    <span className={`settings-theme-swatch settings-theme-swatch--${t}`} />
+                    <span>{THEME_LABELS[t]}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
       <main className="app-main">
+        {tab === 'corvus-feed' && <CorvusPage />}
+        {tab === 'corvus-observations' && <CorvusObservationsPage />}
         {tab === 'explorer' && <Explorer navigateToNeuronId={explorerNeuronId} onNavigateHandled={() => setExplorerNeuronId(null)} />}
         {tab === 'graph' && <CirclePacking />}
         {tab === 'universe' && <NeuronUniverse />}
@@ -202,4 +286,126 @@ export default function App() {
       </main>
     </div>
   )
+}
+
+
+/** Observations page — shows Yggdrasil observation queue from Corvus ingestion */
+function CorvusObservationsPage() {
+  const [observations, setObservations] = useState<any[]>([]);
+  const [filter, setFilter] = useState('');
+
+  useEffect(() => {
+    fetchObs();
+  }, [filter]);
+
+  async function fetchObs() {
+    try {
+      const url = filter
+        ? `/ingest/observations?status=${filter}&limit=50`
+        : '/ingest/observations?limit=50';
+      const r = await fetch(url);
+      if (r.ok) setObservations(await r.json());
+    } catch {}
+  }
+
+  async function approve(id: number) {
+    await fetch(`/ingest/observations/${id}/approve`, { method: 'POST' });
+    fetchObs();
+  }
+
+  async function reject(id: number) {
+    await fetch(`/ingest/observations/${id}/reject`, { method: 'POST' });
+    fetchObs();
+  }
+
+  return (
+    <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text)' }}>
+          Corvus Observations
+        </h2>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {['', 'queued', 'approved', 'rejected', 'duplicate'].map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              style={{
+                padding: '3px 10px', fontSize: '0.75rem', borderRadius: 4,
+                background: filter === f ? 'var(--accent)' : 'var(--bg-input)',
+                color: filter === f ? '#000' : 'var(--text-dim)',
+                border: 'none', cursor: 'pointer',
+              }}
+            >
+              {f || 'All'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: 16 }}>
+        Observations from Corvus screen watching, queued for neuron creation in the knowledge graph.
+      </p>
+
+      {observations.length === 0 ? (
+        <div style={{ color: 'var(--text-dim)', padding: 20, textAlign: 'center' }}>
+          No observations yet. Corvus will submit observations at digest time when Yggdrasil integration is enabled.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {observations.map(o => (
+            <div key={o.id} className="result-card" style={{ padding: '12px 16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span style={{
+                    padding: '1px 6px', borderRadius: 3, fontSize: '0.65rem', fontWeight: 600,
+                    textTransform: 'uppercase',
+                    background: o.status === 'queued' ? 'rgba(56,189,248,0.15)' :
+                                o.status === 'approved' ? 'rgba(34,197,94,0.15)' :
+                                o.status === 'rejected' ? 'rgba(239,68,68,0.15)' :
+                                'rgba(255,255,255,0.05)',
+                    color: o.status === 'queued' ? 'var(--accent)' :
+                           o.status === 'approved' ? 'var(--precision)' :
+                           o.status === 'rejected' ? 'var(--impact)' :
+                           'var(--text-dim)',
+                  }}>
+                    {o.status}
+                  </span>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{o.observation_type}</span>
+                  {o.proposed_department && (
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>· {o.proposed_department}</span>
+                  )}
+                  {o.similarity_score != null && (
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>
+                      · {(o.similarity_score * 100).toFixed(0)}% similar
+                    </span>
+                  )}
+                </div>
+                {o.status === 'queued' && (
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button className="btn" onClick={() => approve(o.id)} style={{ fontSize: '0.65rem', padding: '2px 8px' }}>
+                      Approve
+                    </button>
+                    <button onClick={() => reject(o.id)} style={{
+                      fontSize: '0.65rem', padding: '2px 8px', borderRadius: 4,
+                      background: 'var(--bg-input)', color: 'var(--text-dim)',
+                      border: 'none', cursor: 'pointer',
+                    }}>
+                      Reject
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text)', lineHeight: 1.5 }}>
+                {o.text}
+              </div>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: 4 }}>
+                {o.created_at ? new Date(o.created_at).toLocaleString() : ''}
+                {o.created_neuron_id && <span> · Created neuron #{o.created_neuron_id}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

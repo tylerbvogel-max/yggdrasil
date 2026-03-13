@@ -9,9 +9,15 @@ export default defineConfig({
       '/neurons': 'http://127.0.0.1:8002',
       '/queries': 'http://127.0.0.1:8002',
       '/query': 'http://127.0.0.1:8002',
+      '/context': 'http://127.0.0.1:8002',
       '/admin': 'http://127.0.0.1:8002',
       '/health': 'http://127.0.0.1:8002',
       '/eval-scores': 'http://127.0.0.1:8002',
+      '/ingest': 'http://127.0.0.1:8002',
+      '/corvus': {
+        target: 'http://127.0.0.1:8003',
+        rewrite: (path) => path.replace(/^\/corvus/, ''),
+      },
     },
   },
 })

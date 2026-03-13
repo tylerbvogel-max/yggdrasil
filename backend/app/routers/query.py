@@ -1,7 +1,9 @@
 """POST /query — Main pipeline. POST /query/{id}/rate — User feedback."""
 
+import asyncio
 import json
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -321,6 +323,89 @@ async def post_query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
     result["output_checks"] = output_checks
 
     return QueryResponse(**result)
+
+
+@router.post("/query/stream")
+async def post_query_stream(req: QueryRequest, db: AsyncSession = Depends(get_db)):
+    """SSE streaming version of POST /query — emits pipeline stage events in real time."""
+
+    queue: asyncio.Queue[dict | None] = asyncio.Queue()
+
+    async def on_stage(stage: str, data: dict):
+        await queue.put({"event": "stage", "data": {"stage": stage, **data}})
+
+    async def run_pipeline():
+        try:
+            # Input guard
+            guard_result = check_input(req.message)
+            await on_stage("input_guard", {
+                "status": "done",
+                "detail": {"verdict": guard_result.verdict, "flag_count": len(guard_result.flags)},
+            })
+            if guard_result.verdict == "block":
+                await queue.put({"event": "error", "data": {"message": "Input blocked by safety filter"}})
+                return
+
+            # Execute pipeline with stage callbacks
+            if req.slots_v2:
+                for s in req.slots_v2:
+                    if s.mode not in VALID_MODES:
+                        await queue.put({"event": "error", "data": {"message": f"Invalid mode: {s.mode}"}})
+                        return
+                slots_v2 = [s.model_dump() for s in req.slots_v2]
+                result = await execute_query(db, req.message, modes=[], slots_v2=slots_v2, on_stage=on_stage)
+            else:
+                for m in req.modes:
+                    if m not in VALID_MODES:
+                        await queue.put({"event": "error", "data": {"message": f"Invalid mode: {m}"}})
+                        return
+                if not req.modes:
+                    await queue.put({"event": "error", "data": {"message": "At least one mode required"}})
+                    return
+                result = await execute_query(db, req.message, modes=req.modes, token_budget=req.token_budget, on_stage=on_stage)
+
+            # Output checks
+            output_checks: list[dict] = []
+            for slot in result.get("slots", []):
+                response_text = slot.get("response", "")
+                risk_flags = check_output_risk(response_text)
+                grounding = check_output_grounding(
+                    response_text, result.get("assembled_prompt"),
+                ) if slot.get("neurons") else {"grounded": None, "confidence": None, "reason": "Raw mode"}
+                output_checks.append({"mode": slot.get("mode"), "risk_flags": risk_flags, "grounding": grounding})
+
+            await on_stage("output_checks", {"status": "done", "detail": {"checked": len(output_checks)}})
+
+            result["input_guard"] = guard_result.to_dict()
+            result["output_checks"] = output_checks
+
+            # Final result
+            resp = QueryResponse(**result)
+            await queue.put({"event": "result", "data": resp.model_dump()})
+        except Exception as e:
+            await queue.put({"event": "error", "data": {"message": str(e)}})
+        finally:
+            await queue.put(None)
+
+    async def event_generator():
+        task = asyncio.create_task(run_pipeline())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                event_type = item["event"]
+                data_json = json.dumps(item["data"])
+                yield f"event: {event_type}\ndata: {data_json}\n\n"
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/query/{query_id}/evaluate", response_model=EvalResponse)

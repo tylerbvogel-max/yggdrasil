@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { submitQuery, submitRating, fetchQueryHistory, fetchQueryDetail, evaluateQuery, refineQuery, applyRefinements, fetchGraphCapacity } from '../api'
-import type { SlotSpec, GraphCapacity } from '../api'
+import { submitQueryStream, submitRating, fetchQueryHistory, fetchQueryDetail, evaluateQuery, refineQuery, applyRefinements, fetchGraphCapacity } from '../api'
+import type { SlotSpec, GraphCapacity, StageEvent } from '../api'
 import type { QueryResponse, QuerySummary, QueryDetail, SlotResult, EvalScoreOut, RefineResponse } from '../types'
 import TokenCharts from './TokenCharts'
 import SpreadTrail from './SpreadTrail'
@@ -614,12 +614,13 @@ function SlotBuilder({ slots, onChange, capacity }: {
 
 // ────────── Action Rail ──────────
 
-function ActionRail({ hasResult, hasMultiSlot, hasNeurons, evalDone, evalLoading, refinePhase, loading, onEval, onSubmit }: {
-  hasResult: boolean; hasMultiSlot: boolean; hasNeurons: boolean;
+function ActionRail({ result, hasMultiSlot, hasNeurons, evalDone, evalLoading, refinePhase, loading, stageStatuses, onEval, onSubmit }: {
+  result: QueryResponse | null; hasMultiSlot: boolean; hasNeurons: boolean;
   evalDone: boolean; evalLoading: boolean; refinePhase: RefinePhase;
-  loading: boolean; onEval: () => void; onSubmit: () => void;
+  loading: boolean; stageStatuses: Record<string, StageEvent>; onEval: () => void; onSubmit: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const hasResult = !!result;
 
   function scrollAndClick(id: string) {
     const el = document.getElementById(id);
@@ -629,24 +630,67 @@ function ActionRail({ hasResult, hasMultiSlot, hasNeurons, evalDone, evalLoading
     }
   }
 
-  let currentStep = 0;
-  if (hasResult) currentStep = 1;
-  if (evalDone) currentStep = 2;
-  if (refinePhase === 'has-suggestions' || refinePhase === 'loading') currentStep = 3;
-  if (refinePhase === 'applied') currentStep = 4;
+  // ── Pipeline stages ──
+  // These reflect the actual executor pipeline from prepare_context() → execute_query()
+  type StageStatus = 'pending' | 'active' | 'done' | 'skipped';
 
-  const steps = [
-    {
-      label: loading ? 'Running...' : 'Submit',
-      enabled: !loading,
-      active: currentStep === 0,
-      done: currentStep >= 1,
-      action: onSubmit,
-    },
+  interface PipelineStage {
+    label: string;
+    detail?: string;
+    status: StageStatus;
+    section?: string; // scroll target
+  }
+
+  const pipelineStages: PipelineStage[] = (() => {
+    if (!loading && !hasResult) return [];
+
+    const done = hasResult;
+    const hasClassification = done && !!result.intent;
+    const hasScores = done && result.neuron_scores.length > 0;
+    const hasSlots = done && result.slots.length > 0;
+    const hasGuard = done && !!result.input_guard;
+    const hasOutputChecks = done && (result.output_checks?.length ?? 0) > 0;
+
+    // Derive status from real SSE events when loading, or from result when done
+    function stageStatus(key: string, doneCondition: boolean): StageStatus {
+      if (done) return doneCondition ? 'done' : 'skipped';
+      const ev = stageStatuses[key];
+      if (ev) return ev.status as StageStatus;
+      return 'pending';
+    }
+
+    function stageDetail(key: string, doneDetail?: string): string | undefined {
+      const ev = stageStatuses[key];
+      if (done) return doneDetail;
+      if (ev?.detail) {
+        const d = ev.detail as Record<string, unknown>;
+        if (d.duration_ms) return `${d.duration_ms}ms`;
+        if (d.count) return `${d.count} items`;
+        if (d.intent) return String(d.intent);
+        if (d.verdict) return String(d.verdict);
+      }
+      return undefined;
+    }
+
+    return [
+      { label: 'Input Guard', detail: stageDetail('input_guard', hasGuard ? result.input_guard!.verdict : undefined), status: stageStatus('input_guard', hasGuard), section: 'section-guard' },
+      { label: 'Structural Resolve', detail: stageDetail('structural_resolve', 'Fast-path check'), status: stageStatus('structural_resolve', done!) },
+      { label: 'Embed Query', detail: stageDetail('embed_query', 'Vector embedding'), status: stageStatus('embed_query', done!) },
+      { label: 'Classify', detail: stageDetail('classify', hasClassification ? result.intent! : undefined), status: stageStatus('classify', hasClassification), section: 'section-classification' },
+      { label: 'Semantic Prefilter', detail: stageDetail('semantic_prefilter', hasScores ? `${result.neuron_scores.length} scored` : undefined), status: stageStatus('semantic_prefilter', hasScores) },
+      { label: 'Score Neurons', detail: stageDetail('score_neurons', hasScores ? '5-signal scoring' : undefined), status: stageStatus('score_neurons', hasScores), section: 'section-activations' },
+      { label: 'Spread Activation', detail: stageDetail('spread_activation', hasScores && result.neuron_scores[0]?.spread_boost > 0 ? 'propagated' : undefined), status: stageStatus('spread_activation', hasScores), section: 'section-spread' },
+      { label: 'Assemble Prompt', detail: stageDetail('assemble_prompt', done ? `${result.neurons_activated} neurons` : undefined), status: stageStatus('assemble_prompt', done! && result.neurons_activated > 0) },
+      { label: 'Execute LLM', detail: stageDetail('execute_llm', hasSlots ? result.slots.map(sl => sl.model).join(', ') : undefined), status: stageStatus('execute_llm', hasSlots), section: 'section-slots' },
+      { label: 'Output Checks', detail: stageDetail('output_checks', hasOutputChecks ? `${result.output_checks!.length} checked` : undefined), status: stageStatus('output_checks', hasOutputChecks) },
+    ];
+  })();
+
+  // ── Workflow actions ──
+  const workflowSteps = [
     {
       label: evalLoading ? 'Evaluating...' : evalDone ? 'Evaluated' : 'Evaluate',
       enabled: hasResult && hasMultiSlot && !evalLoading && !evalDone,
-      active: currentStep === 1 && hasMultiSlot,
       done: evalDone,
       action: () => {
         document.getElementById('section-compare')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -656,46 +700,72 @@ function ActionRail({ hasResult, hasMultiSlot, hasNeurons, evalDone, evalLoading
     {
       label: refinePhase === 'loading' ? 'Refining...' : refinePhase !== 'idle' && refinePhase !== 'ready' ? 'Refined' : 'Refine',
       enabled: evalDone && hasNeurons && (refinePhase === 'ready' || refinePhase === 'has-suggestions' || refinePhase === 'applied'),
-      active: currentStep === 2,
       done: refinePhase === 'has-suggestions' || refinePhase === 'applying' || refinePhase === 'applied',
       action: () => scrollAndClick('btn-refine'),
     },
     {
       label: refinePhase === 'applying' ? 'Applying...' : refinePhase === 'applied' ? 'Applied' : 'Apply',
       enabled: refinePhase === 'has-suggestions',
-      active: refinePhase === 'has-suggestions',
       done: refinePhase === 'applied',
       action: () => scrollAndClick('btn-apply'),
     },
     {
       label: 'Run Again',
       enabled: refinePhase === 'applied',
-      active: refinePhase === 'applied',
       done: false,
       action: onSubmit,
     },
   ];
 
+  const statusIcon = (s: StageStatus) =>
+    s === 'done' ? '\u2713' : s === 'active' ? '\u25CF' : s === 'skipped' ? '\u2014' : '\u25CB';
+
   return (
     <div className={`action-rail${collapsed ? ' collapsed' : ''}`}>
       <div className="rail-header" onClick={() => setCollapsed(c => !c)}>
         <span className={`section-chevron${!collapsed ? ' open' : ''}`} />
-        {!collapsed && <span>Actions</span>}
+        {!collapsed && <span>Pipeline</span>}
       </div>
       {!collapsed && (
-        <div className="rail-steps">
-          {steps.map((step, i) => (
-            <button
-              key={i}
-              className={`rail-step${step.active ? ' active' : ''}${step.done ? ' done' : ''}`}
-              disabled={!step.enabled && !step.done}
-              onClick={step.action}
-            >
-              <span className="rail-step-num">{step.done ? '\u2713' : i + 1}</span>
-              <span className="rail-step-label">{step.label}</span>
-            </button>
-          ))}
-        </div>
+        <>
+          {pipelineStages.length > 0 && (
+            <div className="rail-pipeline">
+              {pipelineStages.map((stage, i) => (
+                <div
+                  key={i}
+                  className={`rail-stage rail-stage--${stage.status}`}
+                  onClick={() => stage.section && document.getElementById(stage.section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                  style={{ cursor: stage.section ? 'pointer' : 'default' }}
+                >
+                  <span className="rail-stage-icon">{statusIcon(stage.status)}</span>
+                  <div className="rail-stage-text">
+                    <span className="rail-stage-label">{stage.label}</span>
+                    {stage.detail && <span className="rail-stage-detail">{stage.detail}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {hasResult && (
+            <>
+              <div className="rail-divider" />
+              <div className="rail-section-label">Actions</div>
+              <div className="rail-steps">
+                {workflowSteps.map((step, i) => (
+                  <button
+                    key={i}
+                    className={`rail-step${step.done ? ' done' : ''}`}
+                    disabled={!step.enabled && !step.done}
+                    onClick={step.action}
+                  >
+                    <span className="rail-step-num">{step.done ? '\u2713' : i + 1}</span>
+                    <span className="rail-step-label">{step.label}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </>
       )}
     </div>
   );
@@ -739,6 +809,8 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
   const [historyCollapsed, setHistoryCollapsed] = useState(false);
   const [refinePhase, setRefinePhase] = useState<RefinePhase>('idle');
   const [liveRefineRestore, setLiveRefineRestore] = useState<RefineResponse | null>(null);
+  const [stageStatuses, setStageStatuses] = useState<Record<string, StageEvent>>({});
+  const abortRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     loadHistory();
@@ -779,6 +851,8 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
   async function handleSubmit() {
     const specs = buildSlotSpecs();
     if (!message.trim() || specs.length === 0) return;
+    // Abort any in-flight stream
+    if (abortRef.current) { abortRef.current(); abortRef.current = null; }
     setLoading(true);
     setError('');
     setResult(null);
@@ -788,6 +862,7 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
     setRated(false);
     setRefinePhase('idle');
     setLiveRefineRestore(null);
+    setStageStatuses({});
     setView('new');
     setSelectedQuery(null);
     // Start elapsed timer
@@ -813,12 +888,19 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
     };
     setHistory(prev => [pendingEntry, ...prev]);
     try {
-      const res = await submitQuery(message, specs);
+      const { promise, abort } = submitQueryStream(message, specs, (event) => {
+        setStageStatuses(prev => ({ ...prev, [event.stage]: event }));
+      });
+      abortRef.current = abort;
+      const res = await promise;
       setResult(res);
       loadHistory();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Query failed');
+      if ((e as Error).name !== 'AbortError') {
+        setError(e instanceof Error ? e.message : 'Query failed');
+      }
     } finally {
+      abortRef.current = null;
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       setElapsedMs(elapsedRef.current); // freeze final value
       setLoading(false);
@@ -835,6 +917,7 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
     setRated(false);
     setRefinePhase('idle');
     setLiveRefineRestore(null);
+    setStageStatuses({});
     setError('');
     setView('new');
     setSelectedQuery(null);
@@ -849,6 +932,7 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
     setRated(false);
     setRefinePhase('idle');
     setLiveRefineRestore(null);
+    setStageStatuses({});
     setView('new');
     setSelectedQuery(null);
     document.querySelector('.query-form')?.scrollIntoView({ behavior: 'smooth' });
@@ -1012,15 +1096,16 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
         {selectedQuery && view === 'history' && <HistoryDetail query={selectedQuery} baseline={baseline} onNavigateToNeuron={onNavigateToNeuron} />}
       </div>
 
-      {hasResult && (
+      {(hasResult || loading) && (
         <ActionRail
-          hasResult={hasResult}
+          result={result}
           hasMultiSlot={hasMultiSlot}
           hasNeurons={hasNeurons}
           evalDone={!!evalText}
           evalLoading={evalLoading}
           refinePhase={refinePhase}
           loading={loading}
+          stageStatuses={stageStatuses}
           onEval={handleEval}
           onSubmit={handleSubmit}
         />
