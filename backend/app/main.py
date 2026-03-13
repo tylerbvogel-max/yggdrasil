@@ -9,10 +9,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, func, text
 
-import httpx
 from app.database import engine, async_session
 from app.models import Base, Neuron, SystemState, BatchJob, SourceDocument, NeuronSourceLink, ManagementReview, ComplianceSnapshot, EvidenceMapping, ObservationQueue
-from app.routers import query, neurons, admin, autopilot, performance, provenance, compliance, ingest
+from app.models_corvus import CorvusKnownApp, CorvusSession
+from app.routers import query, neurons, admin, autopilot, performance, provenance, compliance, ingest, corvus
 from app.seed.loader import load_seed
 from app.seed.regulatory_seed import seed_regulatory
 
@@ -276,6 +276,33 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Observation queue migration skipped: {e}")
 
+    # Migrate: add eval columns to observation_queue if missing
+    async with engine.begin() as conn:
+        try:
+            if await _table_exists(conn, "observation_queue"):
+                if not await _column_exists(conn, "observation_queue", "eval_json"):
+                    await conn.execute(text(
+                        "ALTER TABLE observation_queue ADD COLUMN eval_json TEXT"
+                    ))
+                    print("Migrated: added observation_queue.eval_json")
+                if not await _column_exists(conn, "observation_queue", "eval_model"):
+                    await conn.execute(text(
+                        "ALTER TABLE observation_queue ADD COLUMN eval_model VARCHAR(20)"
+                    ))
+                    print("Migrated: added observation_queue.eval_model")
+                if not await _column_exists(conn, "observation_queue", "eval_input_tokens"):
+                    await conn.execute(text(
+                        "ALTER TABLE observation_queue ADD COLUMN eval_input_tokens INTEGER DEFAULT 0"
+                    ))
+                    print("Migrated: added observation_queue.eval_input_tokens")
+                if not await _column_exists(conn, "observation_queue", "eval_output_tokens"):
+                    await conn.execute(text(
+                        "ALTER TABLE observation_queue ADD COLUMN eval_output_tokens INTEGER DEFAULT 0"
+                    ))
+                    print("Migrated: added observation_queue.eval_output_tokens")
+        except Exception as e:
+            print(f"Observation queue eval migration skipped: {e}")
+
     # Migrate: add context column to neuron_edges if missing
     async with engine.begin() as conn:
         try:
@@ -351,6 +378,34 @@ async def lifespan(app: FastAPI):
             await db.commit()
             print(f"Marked {len(interrupted)} batch job(s) as interrupted")
 
+    # Seed Corvus known apps if table is empty
+    async with async_session() as db:
+        try:
+            ka_count = (await db.execute(select(func.count(CorvusKnownApp.id)))).scalar() or 0
+            if ka_count == 0:
+                for app_id, name, desc in [
+                    ("teams", "Microsoft Teams", "Team messaging and collaboration"),
+                    ("outlook", "Microsoft Outlook", "Email client"),
+                    ("jira", "Jira", "Issue tracking and project management"),
+                    ("databricks", "Databricks", "Data engineering and analytics platform"),
+                ]:
+                    db.add(CorvusKnownApp(id=app_id, name=name, description=desc))
+                await db.commit()
+                print("Seeded Corvus known apps")
+        except Exception as e:
+            print(f"Corvus known apps seed skipped: {e}")
+
+    # Initialize Corvus subsystem (session, custom apps, interpretation loop)
+    try:
+        from app.corvus.interpreter import init_session, interpretation_loop
+        from app.corvus.capture import load_custom_apps
+        await init_session()
+        await load_custom_apps()
+        import asyncio
+        _corvus_task = asyncio.create_task(interpretation_loop())
+    except Exception as e:
+        print(f"Corvus init skipped: {e}")
+
     # Auto-seed evidence mappings if table is empty
     async with async_session() as db:
         try:
@@ -406,29 +461,7 @@ app.include_router(performance.router)
 app.include_router(provenance.router)
 app.include_router(compliance.router)
 app.include_router(ingest.router)
-
-
-# Reverse proxy: /corvus/* → Corvus backend (localhost:8003)
-CORVUS_BACKEND = "http://127.0.0.1:8003"
-
-@app.api_route("/corvus/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-async def corvus_proxy(path: str, request: Request):
-    """Proxy requests to the Corvus backend for unified frontend access."""
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        url = f"{CORVUS_BACKEND}/{path}"
-        body = await request.body()
-        headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
-        resp = await client.request(
-            method=request.method,
-            url=url,
-            content=body,
-            headers=headers,
-            params=dict(request.query_params),
-        )
-        return JSONResponse(
-            content=resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"raw": resp.text},
-            status_code=resp.status_code,
-        )
+app.include_router(corvus.router)
 
 
 @app.get("/health")

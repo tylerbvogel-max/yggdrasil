@@ -334,8 +334,12 @@ class ObservationQueue(Base):
     proposed_layer: Mapped[int] = mapped_column(Integer, default=3)
     similar_neuron_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=True)
     similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")  # queued|approved|rejected|duplicate
+    status: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")  # queued|evaluated|approved|rejected|duplicate
     created_neuron_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("neurons.id"), nullable=True)
+    eval_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    eval_model: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    eval_input_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    eval_output_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
 

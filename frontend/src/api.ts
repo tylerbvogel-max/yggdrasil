@@ -19,6 +19,10 @@ import type {
   DeptChordEntry,
   EgoGraphResponse,
   SpreadTrailResponse,
+  ObservationSummary,
+  ObservationDetail,
+  ObservationEvalResponse,
+  ObservationApplyResponse,
 } from './types';
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
@@ -994,4 +998,49 @@ export function fetchEvidenceContent(path: string): Promise<EvidenceContentRespo
 export function fetchComplianceReport(framework?: string): Promise<unknown> {
   const params = framework ? `?framework=${encodeURIComponent(framework)}` : '';
   return json<unknown>(`/admin/compliance-report${params}`);
+}
+
+// ── Observation Review Pipeline ──
+
+export function fetchObservations(status?: string, limit = 50): Promise<ObservationSummary[]> {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  params.set('limit', String(limit));
+  return json<ObservationSummary[]>(`/ingest/observations?${params}`);
+}
+
+export function fetchObservationDetail(obsId: number): Promise<ObservationDetail> {
+  return json<ObservationDetail>(`/ingest/observations/${obsId}`);
+}
+
+export function evaluateObservation(obsId: number, model: string): Promise<ObservationEvalResponse> {
+  return json<ObservationEvalResponse>(`/ingest/observations/${obsId}/evaluate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  });
+}
+
+export function evaluateObservationBatch(ids: number[], model: string): Promise<ObservationEvalResponse[]> {
+  return json<ObservationEvalResponse[]>('/ingest/observations/evaluate-batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ observation_ids: ids, model }),
+  });
+}
+
+export function applyObservation(obsId: number, updateIndices: number[], newNeuronIndices: number[]): Promise<ObservationApplyResponse> {
+  return json<ObservationApplyResponse>(`/ingest/observations/${obsId}/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ update_indices: updateIndices, new_neuron_indices: newNeuronIndices }),
+  });
+}
+
+export function approveObservation(obsId: number): Promise<{ observation_id: number; neuron_id: number }> {
+  return json<{ observation_id: number; neuron_id: number }>(`/ingest/observations/${obsId}/approve`, { method: 'POST' });
+}
+
+export function rejectObservation(obsId: number): Promise<{ observation_id: number; status: string }> {
+  return json<{ observation_id: number; status: string }>(`/ingest/observations/${obsId}/reject`, { method: 'POST' });
 }

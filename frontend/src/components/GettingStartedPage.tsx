@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-type Section = 'setup' | 'training';
+type Section = 'setup' | 'corvus' | 'training';
 
 export default function GettingStartedPage() {
   const [section, setSection] = useState<Section>('setup');
@@ -37,9 +37,22 @@ export default function GettingStartedPage() {
         >
           Training Walkthrough
         </button>
+        <button
+          className={section === 'corvus' ? 'active' : ''}
+          style={{
+            padding: '6px 16px', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
+            border: section === 'corvus' ? '1px solid #c87533' : '1px solid #334155',
+            background: section === 'corvus' ? '#3a2510' : 'transparent',
+            color: section === 'corvus' ? '#d4915a' : '#c8d0dc',
+          }}
+          onClick={() => setSection('corvus')}
+        >
+          Corvus Integration
+        </button>
       </div>
 
       {section === 'setup' && <SetupGuide />}
+      {section === 'corvus' && <CorvusSetupGuide />}
       {section === 'training' && <TrainingWalkthrough />}
     </div>
   );
@@ -300,6 +313,295 @@ cd backend && pytest tests/ -v`}</CodeBlock>
             <tr><td><code>SPREAD_ENABLED</code></td><td><code>true</code></td><td>Enable co-firing spread activation</td></tr>
             <tr><td><code>SPREAD_MAX_HOPS</code></td><td><code>3</code></td><td>Max graph hops for spread activation</td></tr>
             <tr><td><code>CANDIDATE_LIMIT</code></td><td><code>500</code></td><td>Pre-filter cap before scoring</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </>
+  );
+}
+
+function CorvusSetupGuide() {
+  const [checkResult, setCheckResult] = useState<{
+    backend: boolean;
+    extension: boolean;
+    capturing: boolean;
+    message: string;
+  } | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const runHealthCheck = async () => {
+    setChecking(true);
+    const result = { backend: false, extension: false, capturing: false, message: '' };
+
+    try {
+      // Check 1: Is the Corvus service reachable within Yggdrasil?
+      const statusRes = await fetch('/corvus/status');
+      if (statusRes.ok) {
+        const data = await statusRes.json();
+        result.backend = true;
+        result.capturing = (data.captures_stored || 0) > 0;
+
+        // If backend is up but no captures, extension may not be sending frames
+        if (!result.capturing) {
+          result.message = 'Backend is running but no captures received yet. Make sure the Chrome extension is installed and you have started a capture session.';
+        } else {
+          result.extension = true;
+          result.message = `All systems operational. ${data.captures_stored} captures stored, ${data.interpretations} interpretations generated.`;
+        }
+      } else {
+        result.message = 'Corvus endpoint returned an error. Check that Yggdrasil is running on port 8002.';
+      }
+    } catch {
+      result.message = 'Cannot reach Corvus. Make sure Yggdrasil is running on port 8002.';
+    }
+
+    setCheckResult(result);
+    setChecking(false);
+  };
+
+  return (
+    <>
+      <section className="about-section">
+        <h3>Overview</h3>
+        <p style={{ lineHeight: 1.7, marginBottom: 12 }}>
+          Corvus is a silent screen watcher that captures your screen, extracts text via OCR,
+          and periodically generates AI-powered interpretations of what you're working on.
+          These observations flow into Yggdrasil's neuron graph via the Observation Review pipeline.
+        </p>
+        <p style={{ lineHeight: 1.7 }}>
+          Corvus is fully integrated into Yggdrasil — there is no separate backend to run.
+          The only external component is a <strong>Chrome extension</strong> that captures screen frames
+          and sends them to Yggdrasil. The extension runs in ChromeOS proper (where it can see your displays),
+          while Yggdrasil handles capture processing, OCR, and AI interpretation.
+        </p>
+      </section>
+
+      <section className="about-section">
+        <h3>Prerequisites</h3>
+        <table className="about-table" style={{ fontSize: '0.85rem' }}>
+          <thead>
+            <tr><th>Requirement</th><th>Details</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Chrome browser</td><td>With developer mode enabled (for sideloading the extension)</td></tr>
+            <tr><td>Tesseract OCR</td><td><code>sudo apt install tesseract-ocr</code> in Crostini</td></tr>
+            <tr><td>Anthropic API key</td><td>Same key used for Yggdrasil (Haiku for interpretations)</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section className="about-section">
+        <h3>Step 1: Verify Yggdrasil is Running</h3>
+
+        <StepCard number={1} title="Ensure Yggdrasil backend is running">
+          <p>
+            Corvus is integrated into Yggdrasil — no separate backend needed.
+            Just make sure Yggdrasil is running on port 8002:
+          </p>
+          <CodeBlock>{`curl http://localhost:8002/corvus/health
+# Should return: {"status":"ok","service":"corvus","version":"0.3.0"}`}</CodeBlock>
+        </StepCard>
+      </section>
+
+      <section className="about-section">
+        <h3>Step 2: Install the Chrome Extension</h3>
+
+        <StepCard number={4} title="Enable Chrome Developer Mode">
+          <p>
+            Open Chrome and navigate to <code style={{ color: '#d4915a' }}>chrome://extensions</code>.
+            Toggle the <strong>Developer mode</strong> switch in the top-right corner.
+          </p>
+        </StepCard>
+
+        <StepCard number={5} title="Load the extension">
+          <p>
+            Click <strong>"Load unpacked"</strong> and select the extension directory:
+          </p>
+          <CodeBlock>{`~/Projects/corvus/extension/`}</CodeBlock>
+          <p style={{ marginTop: 8 }}>
+            On ChromeOS, this path resolves to <code>Linux files/Projects/corvus/extension/</code>
+            in the file picker. The extension should appear in your toolbar as "Corvus".
+            It connects to port 8002 (Yggdrasil) for all capture and status endpoints.
+          </p>
+        </StepCard>
+
+        <StepCard number={6} title="Grant permissions">
+          <p>
+            The extension requires these permissions:
+          </p>
+          <ul style={{ margin: '4px 0 0 16px', lineHeight: 1.8 }}>
+            <li><strong>desktopCapture</strong> — to capture your screen</li>
+            <li><strong>tabs</strong> — to open the dashboard tab</li>
+            <li><strong>debugger</strong> — for the Computer Use feature (optional)</li>
+          </ul>
+          <p style={{ marginTop: 8 }}>
+            Chrome will prompt for these when you first use each feature.
+          </p>
+        </StepCard>
+
+        <StepCard number={7} title="Open the Corvus dashboard">
+          <p>
+            Click the Corvus icon in the Chrome toolbar. This opens the built-in dashboard
+            where you can start a capture session, adjust settings, and see live interpretations.
+          </p>
+          <p style={{ marginTop: 8 }}>
+            Access the Corvus dashboard from the Yggdrasil UI under{' '}
+            <strong>Corvus &gt; Screen Watcher</strong>.
+          </p>
+        </StepCard>
+      </section>
+
+      <section className="about-section">
+        <h3>Step 3: Start Capturing</h3>
+
+        <StepCard number={8} title="Select a screen to capture">
+          <p>
+            In the Corvus dashboard, click <strong>"Start Watching"</strong>. Chrome will show
+            a screen picker — select the monitor or window you want Corvus to watch.
+          </p>
+          <p style={{ marginTop: 8 }}>
+            Corvus captures frames periodically and sends them to Yggdrasil at{' '}
+            <code>localhost:8002/corvus/capture</code> as JPEG data.
+          </p>
+        </StepCard>
+
+        <StepCard number={9} title="Configure interpretation settings">
+          <p>
+            Adjust these settings in the Corvus dashboard or via the Yggdrasil Screen Watcher page:
+          </p>
+          <ul style={{ margin: '4px 0 0 16px', lineHeight: 1.8 }}>
+            <li><strong>Effort level</strong> — Low (minimal tokens), Normal (balanced), High (detailed analysis)</li>
+            <li><strong>Cadence</strong> — How often the AI interprets accumulated frames (default: every few minutes)</li>
+            <li><strong>Working context</strong> — Optional text hint for what you're working on (improves relevance)</li>
+            <li><strong>Crop regions</strong> — Focus on specific screen areas per app</li>
+          </ul>
+        </StepCard>
+      </section>
+
+      <section className="about-section">
+        <h3>Step 4: Configure Enrichment</h3>
+
+        <StepCard number={10} title="Configure Yggdrasil enrichment settings">
+          <p>
+            Since Corvus is integrated into Yggdrasil, observations flow into the neuron graph automatically.
+            Go to <strong>Corvus &gt; Screen Watcher</strong> and click the{' '}
+            <strong>Yggdrasil Link</strong> tab to control enrichment behavior:
+          </p>
+          <ul style={{ margin: '4px 0 0 16px', lineHeight: 1.8 }}>
+            <li><strong>Enabled</strong> — Toggle on to activate observation ingestion</li>
+            <li><strong>Enrichment mode</strong> — "entities" (send on entity detection) or "always" (send every digest)</li>
+            <li><strong>Project path</strong> — Your working project directory (for project-specific neuron boosting)</li>
+          </ul>
+        </StepCard>
+
+        <StepCard number={11} title="Verify the observation pipeline">
+          <p>
+            Once Corvus generates a digest with Yggdrasil integration enabled, it will{' '}
+            <code>POST</code> to <code>/ingest/observation</code>. Check the{' '}
+            <strong>Corvus &gt; Observations</strong> page to see queued observations.
+          </p>
+          <p style={{ marginTop: 8 }}>
+            From there, use <strong>Evaluate</strong> to have an LLM propose neuron actions (create, update, merge, or dismiss),
+            then <strong>Apply</strong> the ones you approve. This is how screen-captured knowledge enters the graph.
+          </p>
+        </StepCard>
+      </section>
+
+      <section className="about-section">
+        <h3>Connection Check</h3>
+        <p style={{ marginBottom: 12, lineHeight: 1.6 }}>
+          Run a quick check to verify all components are connected properly.
+        </p>
+        <button
+          className="btn"
+          onClick={runHealthCheck}
+          disabled={checking}
+          style={{ fontSize: '0.85rem', padding: '8px 20px', marginBottom: 16 }}
+        >
+          {checking ? 'Checking...' : 'Run Connection Check'}
+        </button>
+
+        {checkResult && (
+          <div style={{
+            background: 'var(--bg-input)', borderRadius: 8, padding: '16px 20px',
+            border: `1px solid ${checkResult.backend && checkResult.extension ? 'rgba(122,154,109,0.3)' : 'rgba(184,84,80,0.3)'}`,
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: '1rem' }}>{checkResult.backend ? '\u2705' : '\u274C'}</span>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text)' }}>
+                  Corvus (via Yggdrasil port 8002)
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: '1rem' }}>{checkResult.extension ? '\u2705' : '\u274C'}</span>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text)' }}>
+                  Chrome Extension (sending captures)
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: '1rem' }}>{checkResult.capturing ? '\u2705' : '\u274C'}</span>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text)' }}>
+                  Captures being received
+                </span>
+              </div>
+            </div>
+            <p style={{
+              fontSize: '0.8rem', color: 'var(--text-dim)', marginTop: 12,
+              lineHeight: 1.6, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)',
+            }}>
+              {checkResult.message}
+            </p>
+          </div>
+        )}
+      </section>
+
+      <section className="about-section">
+        <h3>Architecture</h3>
+        <CodeBlock>{`ChromeOS (Chrome Extension)          Crostini Linux VM
+┌────────────────────────┐          ┌────────────────────────┐
+│  desktopCapture API    │          │  Yggdrasil (port 8002) │
+│  ──────────────────    │  JPEG    │                        │
+│  Screen → JPEG frames  │────────→│  /corvus/capture       │
+│  Audio  → WebM chunks  │  POST   │  /corvus/audio-chunk   │
+└────────────────────────┘          │                        │
+                                    │  OCR + Dedup + Haiku   │
+                                    │  Interpretations       │
+                                    │          │             │
+                                    │          ↓ (internal)  │
+                                    │  Classify + Queue      │
+                                    │  Evaluate + Apply      │
+                                    │  → Neuron Graph        │
+                                    └────────────────────────┘`}</CodeBlock>
+      </section>
+
+      <section className="about-section">
+        <h3>Troubleshooting</h3>
+        <table className="about-table" style={{ fontSize: '0.85rem' }}>
+          <thead>
+            <tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Extension not visible in toolbar</td>
+              <td>Not loaded or developer mode off</td>
+              <td>Go to <code>chrome://extensions</code>, enable Developer mode, click "Load unpacked"</td>
+            </tr>
+            <tr>
+              <td>"Cannot reach backend" in dashboard</td>
+              <td>Yggdrasil not running on port 8002</td>
+              <td>Start Yggdrasil and verify with <code>curl http://localhost:8002/corvus/health</code></td>
+            </tr>
+            <tr>
+              <td>Captures not appearing</td>
+              <td>Screen share not started</td>
+              <td>Click "Start Watching" in the Corvus dashboard and select a screen</td>
+            </tr>
+            <tr>
+              <td>No observations in Yggdrasil</td>
+              <td>Enrichment not enabled</td>
+              <td>Check <strong>Corvus &gt; Screen Watcher &gt; Yggdrasil Link</strong> tab</td>
+            </tr>
           </tbody>
         </table>
       </section>

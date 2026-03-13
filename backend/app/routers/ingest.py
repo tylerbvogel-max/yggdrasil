@@ -9,7 +9,10 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Neuron, NeuronEdge, ObservationQueue
+from app.models import Neuron, NeuronEdge, NeuronRefinement, ObservationQueue
+from app.services.claude_cli import claude_chat
+from app.schemas import ObservationEvalRequest, ObservationBatchEvalRequest, ObservationApplyRequest
+from app.services.reference_hooks import populate_external_references
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
@@ -251,6 +254,388 @@ async def reject_observation(obs_id: int, db: AsyncSession = Depends(get_db)):
     obs.status = "rejected"
     await db.commit()
     return {"observation_id": obs.id, "status": "rejected"}
+
+
+@router.get("/observations/{obs_id}")
+async def get_observation_detail(obs_id: int, db: AsyncSession = Depends(get_db)):
+    """Get full observation detail including eval proposals and nearby neurons."""
+    obs = await db.get(ObservationQueue, obs_id)
+    if not obs:
+        raise HTTPException(status_code=404, detail="Observation not found")
+
+    # Load similar neuron details
+    similar_neuron_data = None
+    if obs.similar_neuron_id:
+        sn = await db.get(Neuron, obs.similar_neuron_id)
+        if sn:
+            similar_neuron_data = {
+                "id": sn.id, "label": sn.label, "layer": sn.layer,
+                "node_type": sn.node_type, "department": sn.department,
+                "role_key": sn.role_key, "summary": sn.summary,
+                "content": sn.content, "invocations": sn.invocations,
+                "avg_utility": float(sn.avg_utility or 0),
+            }
+
+    # Load nearby neurons in same department/role
+    nearby = []
+    if obs.proposed_department:
+        q = select(Neuron).where(
+            Neuron.is_active == True,
+            Neuron.department == obs.proposed_department,
+        ).order_by(Neuron.layer, Neuron.invocations.desc()).limit(10)
+        if obs.similar_neuron_id:
+            q = q.where(Neuron.id != obs.similar_neuron_id)
+        result = await db.execute(q)
+        for n in result.scalars().all():
+            nearby.append({
+                "id": n.id, "label": n.label, "layer": n.layer,
+                "node_type": n.node_type, "summary": (n.summary or "")[:200],
+                "invocations": n.invocations,
+                "avg_utility": float(n.avg_utility or 0),
+            })
+
+    eval_data = None
+    if obs.eval_json:
+        try:
+            eval_data = json.loads(obs.eval_json)
+        except Exception:
+            pass
+
+    return {
+        "id": obs.id,
+        "source": obs.source,
+        "user_id": obs.user_id,
+        "observation_type": obs.observation_type,
+        "text": obs.text,
+        "entities": json.loads(obs.entities_json) if obs.entities_json else [],
+        "app_context": obs.app_context,
+        "project_path": obs.project_path,
+        "proposed_department": obs.proposed_department,
+        "proposed_role_key": obs.proposed_role_key,
+        "proposed_layer": obs.proposed_layer,
+        "similar_neuron_id": obs.similar_neuron_id,
+        "similarity_score": obs.similarity_score,
+        "similar_neuron": similar_neuron_data,
+        "nearby_neurons": nearby,
+        "status": obs.status,
+        "eval_json": eval_data,
+        "eval_model": obs.eval_model,
+        "eval_input_tokens": obs.eval_input_tokens,
+        "eval_output_tokens": obs.eval_output_tokens,
+        "created_neuron_id": obs.created_neuron_id,
+        "created_at": obs.created_at.isoformat() if obs.created_at else None,
+    }
+
+
+@router.post("/observations/{obs_id}/evaluate")
+async def evaluate_observation(
+    obs_id: int, req: ObservationEvalRequest, db: AsyncSession = Depends(get_db)
+):
+    """LLM-evaluate an observation and propose neuron actions."""
+    obs = await db.get(ObservationQueue, obs_id)
+    if not obs:
+        raise HTTPException(status_code=404, detail="Observation not found")
+    if obs.status not in ("queued", "evaluated"):
+        raise HTTPException(status_code=400, detail=f"Observation is {obs.status}, must be queued or evaluated")
+
+    # Gather context: similar neuron + parent chain
+    similar_context = ""
+    if obs.similar_neuron_id:
+        sn = await db.get(Neuron, obs.similar_neuron_id)
+        if sn:
+            similar_context = (
+                f"\n## Most Similar Neuron (similarity: {obs.similarity_score:.2f})\n"
+                f"ID: {sn.id} | Layer: L{sn.layer} | Type: {sn.node_type}\n"
+                f"Label: {sn.label}\n"
+                f"Department: {sn.department} | Role: {sn.role_key}\n"
+                f"Invocations: {sn.invocations} | Utility: {sn.avg_utility:.2f}\n"
+                f"Summary: {sn.summary or '(none)'}\n"
+                f"Content: {(sn.content or '(none)')[:1000]}\n"
+            )
+            # Parent chain (up 2 levels)
+            parent = await db.get(Neuron, sn.parent_id) if sn.parent_id else None
+            if parent:
+                similar_context += f"\nParent: [{parent.id}] L{parent.layer} {parent.label}\n"
+                grandparent = await db.get(Neuron, parent.parent_id) if parent.parent_id else None
+                if grandparent:
+                    similar_context += f"Grandparent: [{grandparent.id}] L{grandparent.layer} {grandparent.label}\n"
+
+            # Siblings
+            sibling_result = await db.execute(
+                select(Neuron.id, Neuron.label, Neuron.layer).where(
+                    Neuron.parent_id == sn.parent_id,
+                    Neuron.id != sn.id,
+                    Neuron.is_active == True,
+                ).limit(5)
+            )
+            siblings = sibling_result.all()
+            if siblings:
+                similar_context += "\nSiblings:\n"
+                for sid, slabel, slayer in siblings:
+                    similar_context += f"  [{sid}] L{slayer} {slabel}\n"
+
+    # Nearby neurons in same department
+    nearby_context = ""
+    if obs.proposed_department:
+        q = select(Neuron).where(
+            Neuron.is_active == True,
+            Neuron.department == obs.proposed_department,
+        ).order_by(Neuron.layer, Neuron.invocations.desc()).limit(10)
+        if obs.similar_neuron_id:
+            q = q.where(Neuron.id != obs.similar_neuron_id)
+        result = await db.execute(q)
+        nearby_neurons = result.scalars().all()
+        if nearby_neurons:
+            nearby_context = "\n## Nearby Neurons in Department\n"
+            for n in nearby_neurons:
+                nearby_context += (
+                    f"  [{n.id}] L{n.layer} {n.label} "
+                    f"(inv:{n.invocations}, util:{n.avg_utility:.2f}) "
+                    f"— {(n.summary or '')[:100]}\n"
+                )
+
+    # Entities
+    entities_text = ""
+    try:
+        entities = json.loads(obs.entities_json) if obs.entities_json else []
+        if entities:
+            entities_text = "\nEntities: " + ", ".join(
+                f"{e.get('type','?')}:{e.get('value','?')}" for e in entities[:10]
+            )
+    except Exception:
+        pass
+
+    system_prompt = """You are a neuron graph architect reviewing a screen-capture observation for potential ingestion into a knowledge graph.
+
+The graph has 6 layers:
+- L0: Department (organizational unit)
+- L1: Role (functional role within department)
+- L2: Task (specific responsibility)
+- L3: System/Process (procedures, tools, workflows)
+- L4: Decision (judgment calls, criteria, thresholds)
+- L5: Output/Communication (deliverables, reports, notifications)
+
+You must decide ONE action for this observation:
+- **create**: New knowledge not captured by any existing neuron. Specify parent_id, layer, label, content, summary.
+- **update**: The observation corrects or enhances a specific field on an existing neuron. Specify neuron_id, field, old_value, new_value.
+- **merge**: The observation adds operational detail to an existing neuron's content. Specify merge_target_id and the content to append.
+- **dismiss**: The observation is noise, already captured, or too ephemeral for the graph.
+
+Rules:
+- New neurons MUST attach under an existing parent (use a nearby neuron's parent_id or a nearby neuron itself as parent).
+- Keep content concise and factual — this is operational knowledge from screen observation, not authoritative.
+- Prefer merge/update over create when the knowledge overlaps significantly with existing neurons.
+- For merge, provide only the NEW content delta to append, not the full existing content.
+
+Respond with ONLY a JSON object (no markdown fences):
+{
+  "reasoning": "Brief explanation of your decision",
+  "action": "create|update|merge|dismiss",
+  "updates": [{"neuron_id": N, "field": "content|summary|label", "old_value": "...", "new_value": "...", "reason": "..."}],
+  "new_neurons": [{"parent_id": N, "layer": N, "node_type": "system|decision|output", "label": "...", "content": "...", "summary": "...", "department": "...", "role_key": "...", "reason": "..."}],
+  "merge_target_id": null,
+  "merge_content_delta": null
+}
+
+Only populate the relevant array/fields for your chosen action. Leave others empty/null."""
+
+    user_message = (
+        f"## Observation\n"
+        f"Type: {obs.observation_type}\n"
+        f"App: {obs.app_context or 'unknown'}\n"
+        f"Department: {obs.proposed_department or 'unclassified'}\n"
+        f"Role: {obs.proposed_role_key or 'unclassified'}\n"
+        f"{entities_text}\n\n"
+        f"Text:\n{obs.text}\n"
+        f"{similar_context}"
+        f"{nearby_context}"
+    )
+
+    # Call LLM
+    result = await claude_chat(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        max_tokens=4096,
+        model=req.model,
+    )
+
+    # Parse response
+    try:
+        eval_data = json.loads(result["text"])
+    except json.JSONDecodeError:
+        # Try to extract JSON from response
+        import re
+        match = re.search(r'\{[\s\S]*\}', result["text"])
+        if match:
+            eval_data = json.loads(match.group())
+        else:
+            raise HTTPException(status_code=500, detail="LLM response was not valid JSON")
+
+    # Store evaluation
+    obs.eval_json = json.dumps(eval_data)
+    obs.eval_model = req.model
+    obs.eval_input_tokens = result.get("input_tokens", 0)
+    obs.eval_output_tokens = result.get("output_tokens", 0)
+    obs.status = "evaluated"
+    await db.commit()
+
+    return {
+        "observation_id": obs.id,
+        "model": req.model,
+        "input_tokens": result.get("input_tokens", 0),
+        "output_tokens": result.get("output_tokens", 0),
+        "cost_usd": result.get("cost_usd", 0),
+        **eval_data,
+    }
+
+
+@router.post("/observations/evaluate-batch")
+async def evaluate_observation_batch(
+    req: ObservationBatchEvalRequest, db: AsyncSession = Depends(get_db)
+):
+    """Evaluate multiple observations sequentially."""
+    if len(req.observation_ids) > 20:
+        raise HTTPException(status_code=400, detail="Max 20 observations per batch")
+
+    results = []
+    for obs_id in req.observation_ids:
+        try:
+            eval_req = ObservationEvalRequest(model=req.model)
+            result = await evaluate_observation(obs_id, eval_req, db)
+            results.append(result)
+        except HTTPException as e:
+            results.append({"observation_id": obs_id, "error": e.detail})
+        except Exception as e:
+            results.append({"observation_id": obs_id, "error": str(e)})
+
+    return results
+
+
+@router.post("/observations/{obs_id}/apply")
+async def apply_observation(
+    obs_id: int, req: ObservationApplyRequest, db: AsyncSession = Depends(get_db)
+):
+    """Apply evaluated proposals: create neurons, update fields, merge content."""
+    obs = await db.get(ObservationQueue, obs_id)
+    if not obs:
+        raise HTTPException(status_code=404, detail="Observation not found")
+    if obs.status != "evaluated":
+        raise HTTPException(status_code=400, detail=f"Observation is {obs.status}, must be evaluated first")
+    if not obs.eval_json:
+        raise HTTPException(status_code=400, detail="No evaluation data found")
+
+    eval_data = json.loads(obs.eval_json)
+    action = eval_data.get("action", "dismiss")
+    updates_list = eval_data.get("updates", [])
+    new_neurons_list = eval_data.get("new_neurons", [])
+    merge_target_id = eval_data.get("merge_target_id")
+    merge_content_delta = eval_data.get("merge_content_delta")
+
+    updated_count = 0
+    created_count = 0
+    merged_count = 0
+    created_neuron_ids = []
+
+    # Apply selected updates
+    for idx in req.update_indices:
+        if idx < 0 or idx >= len(updates_list):
+            continue
+        u = updates_list[idx]
+        neuron = await db.get(Neuron, u["neuron_id"])
+        if not neuron:
+            continue
+        field = u["field"]
+        new_val = u["new_value"]
+        old_val = u.get("old_value", "")
+        if field == "content":
+            neuron.content = new_val
+        elif field == "summary":
+            neuron.summary = new_val
+        elif field == "label":
+            neuron.label = new_val
+        if field in ("content", "summary"):
+            populate_external_references(neuron)
+        db.add(NeuronRefinement(
+            neuron_id=u["neuron_id"],
+            action="update",
+            field=field,
+            old_value=str(old_val),
+            new_value=str(new_val),
+            reason=u.get("reason", f"Corvus observation #{obs.id}"),
+        ))
+        updated_count += 1
+
+    # Apply selected new neurons
+    for idx in req.new_neuron_indices:
+        if idx < 0 or idx >= len(new_neurons_list):
+            continue
+        n = new_neurons_list[idx]
+        neuron = Neuron(
+            parent_id=n.get("parent_id"),
+            layer=n.get("layer", 3),
+            node_type=n.get("node_type", "system"),
+            label=n.get("label", ""),
+            content=n.get("content", ""),
+            summary=n.get("summary", ""),
+            department=n.get("department") or obs.proposed_department,
+            role_key=n.get("role_key") or obs.proposed_role_key,
+            is_active=True,
+            source_origin="corvus",
+        )
+        populate_external_references(neuron)
+        db.add(neuron)
+        await db.flush()
+        created_neuron_ids.append(neuron.id)
+        db.add(NeuronRefinement(
+            neuron_id=neuron.id,
+            action="create",
+            field=None,
+            old_value=None,
+            new_value=n.get("label", ""),
+            reason=n.get("reason", f"Corvus observation #{obs.id}"),
+        ))
+        created_count += 1
+
+    # Apply merge if action was merge and no specific indices were selected
+    if action == "merge" and merge_target_id and merge_content_delta:
+        if not req.update_indices and not req.new_neuron_indices:
+            # Default merge behavior when no specific selections made
+            target = await db.get(Neuron, merge_target_id)
+            if target:
+                old_content = target.content or ""
+                target.content = old_content + "\n\n" + merge_content_delta
+                populate_external_references(target)
+                db.add(NeuronRefinement(
+                    neuron_id=merge_target_id,
+                    action="update",
+                    field="content",
+                    old_value=old_content[:500],
+                    new_value=target.content[:500],
+                    reason=f"Merged from Corvus observation #{obs.id}",
+                ))
+                merged_count += 1
+
+    # Strengthen entity edges
+    try:
+        entities = json.loads(obs.entities_json) if obs.entities_json else []
+        if entities:
+            anchor_id = created_neuron_ids[0] if created_neuron_ids else (merge_target_id or obs.similar_neuron_id)
+            await _strengthen_entity_edges(db, entities, anchor_id)
+    except Exception:
+        pass
+
+    obs.status = "approved"
+    if created_neuron_ids:
+        obs.created_neuron_id = created_neuron_ids[0]
+    await db.commit()
+
+    return {
+        "observation_id": obs.id,
+        "updated": updated_count,
+        "created": created_count,
+        "merged": merged_count,
+        "created_neuron_ids": created_neuron_ids,
+    }
 
 
 async def _classify_observation(

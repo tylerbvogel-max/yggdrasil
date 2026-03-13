@@ -377,3 +377,98 @@ export interface NeuronRefinementEntry {
   neuron_label: string | null;
   query_snippet: string | null;
 }
+
+export interface ObservationSummary {
+  id: number;
+  source: string;
+  user_id: string;
+  observation_type: string;
+  text: string;
+  proposed_department: string | null;
+  proposed_layer: number;
+  similar_neuron_id: number | null;
+  similarity_score: number | null;
+  status: string;
+  created_neuron_id: number | null;
+  created_at: string | null;
+  eval_model: string | null;
+}
+
+export interface NearbyNeuron {
+  id: number;
+  label: string;
+  layer: number;
+  node_type: string;
+  summary: string;
+  invocations: number;
+  avg_utility: number;
+}
+
+export interface SimilarNeuronDetail {
+  id: number;
+  label: string;
+  layer: number;
+  node_type: string;
+  department: string | null;
+  role_key: string | null;
+  summary: string | null;
+  content: string | null;
+  invocations: number;
+  avg_utility: number;
+}
+
+export interface ObservationEvalData {
+  reasoning: string;
+  action: 'create' | 'update' | 'merge' | 'dismiss';
+  updates: NeuronUpdateSuggestion[];
+  new_neurons: NewNeuronSuggestion[];
+  merge_target_id: number | null;
+  merge_content_delta: string | null;
+}
+
+export interface ObservationDetail {
+  id: number;
+  source: string;
+  user_id: string;
+  observation_type: string;
+  text: string;
+  entities: { type: string; value: string }[];
+  app_context: string | null;
+  project_path: string | null;
+  proposed_department: string | null;
+  proposed_role_key: string | null;
+  proposed_layer: number;
+  similar_neuron_id: number | null;
+  similarity_score: number | null;
+  similar_neuron: SimilarNeuronDetail | null;
+  nearby_neurons: NearbyNeuron[];
+  status: string;
+  eval_json: ObservationEvalData | null;
+  eval_model: string | null;
+  eval_input_tokens: number;
+  eval_output_tokens: number;
+  created_neuron_id: number | null;
+  created_at: string | null;
+}
+
+export interface ObservationEvalResponse {
+  observation_id: number;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  reasoning: string;
+  action: string;
+  updates: NeuronUpdateSuggestion[];
+  new_neurons: NewNeuronSuggestion[];
+  merge_target_id: number | null;
+  merge_content_delta: string | null;
+}
+
+export interface ObservationApplyResponse {
+  observation_id: number;
+  updated: number;
+  created: number;
+  merged: number;
+  created_neuron_ids: number[];
+}

@@ -360,3 +360,17 @@ class AutopilotTickResponse(BaseModel):
     status: str
     run_id: int | None = None
     message: str | None = None
+
+
+class ObservationEvalRequest(BaseModel):
+    model: str = Field("haiku", pattern="^(haiku|sonnet|opus)$")
+
+
+class ObservationBatchEvalRequest(BaseModel):
+    observation_ids: list[int] = Field(..., max_length=20)
+    model: str = Field("haiku", pattern="^(haiku|sonnet|opus)$")
+
+
+class ObservationApplyRequest(BaseModel):
+    update_indices: list[int] = []
+    new_neuron_indices: list[int] = []
