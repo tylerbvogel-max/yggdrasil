@@ -84,6 +84,68 @@ export default function NextSteps() {
               <td>The <code>claude -p --output-format json</code> contract is undocumented and untested. If the CLI binary updates, changes output format, or the node path shifts, the entire system breaks silently.</td>
               <td>Health-check endpoint that validates CLI availability and output format. Version pinning. Graceful error surfacing when the CLI contract breaks.</td>
             </tr>
+            <tr>
+              <td style={{ fontWeight: 600 }}>Regulatory knowledge assessments</td>
+              <td>The neuron graph needs validated coverage across all applicable regulatory bodies and professional standards. Without systematic assessment, gaps in regulatory knowledge go undetected until a compliance query fails.</td>
+              <td>
+                <p style={{ marginBottom: 8 }}>Apply knowledge assessments against the following regulatory bodies and standards:</p>
+                <details style={{ marginBottom: 8 }}>
+                  <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Government Regulatory Bodies ({27})</summary>
+                  <table style={{ width: '100%', fontSize: '0.85em', marginTop: 4 }}>
+                    <thead><tr><th>Entity</th><th>Region</th><th>Domain</th></tr></thead>
+                    <tbody>
+                      <tr><td>FAA</td><td>United States</td><td>Civil aviation</td></tr>
+                      <tr><td>EASA</td><td>European Union</td><td>Civil aviation</td></tr>
+                      <tr><td>DoD</td><td>United States</td><td>Defense</td></tr>
+                      <tr><td>DCMA</td><td>United States</td><td>Defense contract management</td></tr>
+                      <tr><td>DDTC</td><td>United States</td><td>ITAR export controls</td></tr>
+                      <tr><td>BIS</td><td>United States</td><td>EAR export controls</td></tr>
+                      <tr><td>NASA</td><td>United States</td><td>Space programs</td></tr>
+                      <tr><td>OSHA</td><td>United States</td><td>Occupational safety</td></tr>
+                      <tr><td>EPA</td><td>United States</td><td>Environmental</td></tr>
+                      <tr><td>DOT (PHMSA)</td><td>United States</td><td>Hazardous materials transport</td></tr>
+                      <tr><td>DLA</td><td>United States</td><td>Defense logistics</td></tr>
+                      <tr><td>TCCA</td><td>Canada</td><td>Civil aviation</td></tr>
+                      <tr><td>CAA</td><td>United Kingdom</td><td>Civil aviation</td></tr>
+                      <tr><td>CAAC</td><td>China</td><td>Civil aviation</td></tr>
+                      <tr><td>ANAC</td><td>Brazil</td><td>Civil aviation</td></tr>
+                      <tr><td>CASA</td><td>Australia</td><td>Civil aviation</td></tr>
+                      <tr><td>DGCA</td><td>India</td><td>Civil aviation</td></tr>
+                      <tr><td>ICAO</td><td>International (UN)</td><td>Global civil aviation standards</td></tr>
+                      <tr><td>MOD</td><td>United Kingdom</td><td>Defense</td></tr>
+                      <tr><td>EDA</td><td>European Union</td><td>Defense</td></tr>
+                      <tr><td>ESA</td><td>European Union</td><td>Space</td></tr>
+                      <tr><td>CSA</td><td>Canada</td><td>Space</td></tr>
+                      <tr><td>UK Space Agency</td><td>United Kingdom</td><td>Space</td></tr>
+                      <tr><td>ECHA</td><td>European Union</td><td>REACH chemicals</td></tr>
+                      <tr><td>FAA AST</td><td>United States</td><td>Commercial space launches</td></tr>
+                      <tr><td>NADCAP (PRI)</td><td>International</td><td>Special processes accreditation</td></tr>
+                      <tr><td>CMMC-AB</td><td>United States</td><td>Cybersecurity certification</td></tr>
+                    </tbody>
+                  </table>
+                </details>
+                <details>
+                  <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Professional Standards ({11})</summary>
+                  <table style={{ width: '100%', fontSize: '0.85em', marginTop: 4 }}>
+                    <thead><tr><th>Standard</th><th>Region</th><th>Domain</th></tr></thead>
+                    <tbody>
+                      <tr><td>AS9100</td><td>International</td><td>Quality management (IAQG/SAE)</td></tr>
+                      <tr><td>AS9110</td><td>International</td><td>Maintenance/repair</td></tr>
+                      <tr><td>AS9120</td><td>International</td><td>Stockist/distributors</td></tr>
+                      <tr><td>ISO 9001</td><td>International</td><td>General quality management</td></tr>
+                      <tr><td>SAE standards (AMS, ARP)</td><td>US/International</td><td>Materials, processes</td></tr>
+                      <tr><td>NAS standards</td><td>United States</td><td>National Aerospace Standards</td></tr>
+                      <tr><td>ISO 14001</td><td>International</td><td>Environmental management</td></tr>
+                      <tr><td>ISO 45001</td><td>International</td><td>Occupational health &amp; safety</td></tr>
+                      <tr><td>RTCA DO standards (DO-178C)</td><td>International</td><td>Software/equipment</td></tr>
+                      <tr><td>EUROCAE</td><td>Europe</td><td>Aviation electronics</td></tr>
+                      <tr><td>ASTM standards</td><td>International</td><td>Materials/testing</td></tr>
+                      <tr><td>NFPA standards</td><td>United States</td><td>Fire protection</td></tr>
+                    </tbody>
+                  </table>
+                </details>
+              </td>
+            </tr>
           </tbody>
         </table>
       </section>
