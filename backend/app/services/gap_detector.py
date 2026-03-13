@@ -20,7 +20,7 @@ from app.models import EmergentQueue, Neuron, Query, EvalScore, AutopilotRun
 
 @dataclass
 class GapTarget:
-    source: str  # "emergent_queue" | "low_eval" | "thin_neuron" | "sparse_subtree"
+    source: str  # "emergent_queue" | "low_eval" | "thin_neuron" | "sparse_subtree" | "emergent_cluster"
     description: str  # Human-readable gap description for query generation
     context_neuron_ids: list[int]  # Nearby neurons for context
     emergent_queue_id: int | None = None
@@ -50,6 +50,11 @@ async def detect_gap(
 
     # 4. Sparse subtrees — roles/tasks with few children
     target = await _check_sparse_subtrees(db, focus_neuron_id)
+    if target:
+        return target
+
+    # 5. Emergent clusters — cross-department clusters without corresponding Task neuron
+    target = await _check_emergent_clusters(db, focus_neuron_id)
     if target:
         return target
 
@@ -281,3 +286,54 @@ async def _get_ancestor_ids(db: AsyncSession, neuron_id: int) -> list[int]:
         ancestors.insert(0, current.parent_id)
         current = await db.get(Neuron, current.parent_id)
     return ancestors
+
+
+async def _check_emergent_clusters(
+    db: AsyncSession, focus_neuron_id: int | None
+) -> GapTarget | None:
+    """Find cross-department clusters with no corresponding Task-level neuron."""
+    from app.services.clustering import find_clusters
+
+    clusters = await find_clusters(db, min_weight=0.3, min_size=3, min_departments=2)
+    if not clusters:
+        return None
+
+    for cluster in clusters:
+        nids = cluster["neuron_ids"]
+        depts = cluster["departments"]
+        suggested = cluster["suggested_label"]
+
+        # Check if there's already a Task-level neuron (L2) that covers this cluster
+        # by looking for neurons whose labels overlap significantly with the cluster keywords
+        task_result = await db.execute(
+            select(Neuron).where(
+                Neuron.is_active == True,
+                Neuron.layer == 2,
+                Neuron.id.in_(nids),
+            )
+        )
+        existing_tasks = task_result.scalars().all()
+        if existing_tasks:
+            continue  # Already has Task-level neurons in the cluster
+
+        # If focused, check overlap with focus subtree
+        if focus_neuron_id:
+            subtree_ids = await _get_subtree_ids(db, focus_neuron_id)
+            if not any(nid in subtree_ids for nid in nids):
+                continue
+
+        context_ids = nids[:5]
+
+        return GapTarget(
+            source="emergent_cluster",
+            description=(
+                f"A cross-department cluster spanning {', '.join(depts)} "
+                f"({len(nids)} neurons, suggested topic: '{suggested}') "
+                f"has no Task-level neuron to anchor it. Generate a question that "
+                f"would require synthesizing knowledge across these departments "
+                f"on the topic of {suggested}."
+            ),
+            context_neuron_ids=context_ids,
+        )
+
+    return None

@@ -65,7 +65,7 @@ export default function SecurityPage() {
     { id: 'GOV-1.4', title: 'Transparent Documentation', status: 'addressed',
       detail: 'Full query provenance (intent, scores, neuron hits, assembled prompt, response) logged and visible in UI. System card documents architecture and data practices.' },
     { id: 'GOV-1.5', title: 'Ongoing Monitoring & Review', status: 'addressed',
-      detail: 'Blind A/B framework for periodic quality checks. Scoring Health Monitor on Dashboard tracks per-signal distributions (baseline vs recent window) with automated z-score drift detection and visual alerting.' },
+      detail: 'Blind A/B framework for periodic quality checks. Scoring Health Monitor on Dashboard tracks per-signal distributions (baseline vs recent window) with automated z-score drift detection and visual alerting. Management review infrastructure with cadence tracking enforces periodic reviews across 7 review types. Compliance snapshots capture posture over time.' },
     { id: 'GOV-1.6', title: 'AI System Inventory', status: 'addressed',
       detail: 'System card (system-card.md) documents all components, models used, data flows, and dependencies.' },
     { id: 'GOV-1.7', title: 'Decommissioning Procedures', status: 'addressed',

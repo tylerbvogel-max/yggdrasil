@@ -58,8 +58,8 @@ export default function MethodologicalRisks() {
       mechanism:
         'The system will confidently select the best neurons for the wrong interpretation. Because the rest of the pipeline works well, the output may look polished while being grounded in irrelevant context. There is no mechanism to detect "I classified this wrong" after the fact. The error is invisible in the final output quality — it reads well but answers the wrong question.',
       mitigation:
-        'Semantic prefilter (built) as primary candidate selection means classification no longer gates which neurons are candidates — all neurons are ranked by embedding similarity regardless of classified departments. Classification output is now scoring context (dept/role boosts), not a filter. A total misclassification degrades scoring boosts but doesn\'t exclude relevant neurons. Multi-query decomposition (planned) would further reduce dependency.',
-      status: 'Substantially mitigated — semantic prefilter makes classification non-blocking; misclassification degrades boosts but doesn\'t exclude candidates',
+        'Semantic prefilter (built) as primary candidate selection means classification no longer gates which neurons are candidates — all neurons are ranked by embedding similarity regardless of classified departments. Classification output is now scoring context (dept/role boosts), not a filter. A total misclassification degrades scoring boosts but doesn\'t exclude relevant neurons. Multi-query decomposition (planned) would further reduce dependency. Additionally, the structural resolver (built) bypasses classification entirely for deterministic queries — "list departments", "neurons about ITAR", etc. are resolved directly from the database at zero API cost.',
+      status: 'Substantially mitigated — semantic prefilter makes classification non-blocking; structural resolver bypasses it entirely for deterministic queries',
     },
     {
       id: 5,
@@ -86,6 +86,19 @@ export default function MethodologicalRisks() {
       mitigation:
         'Summary-only fallback in assembly partially addresses this (coarser retrieval when budget is tight). Community summaries (Phase 5) would provide a "zoom out" option. Hierarchical retrieval — return the neuron plus its parent context — could adapt resolution dynamically.',
       status: 'Partially mitigated — summary fallback exists',
+    },
+    {
+      id: 7,
+      title: 'MCP Context Without Execution',
+      severity: 'medium',
+      color: '#fb923c',
+      description:
+        'When used via MCP, Claude Code receives the neuron-assembled context but makes its own execution decisions. The neuron graph has no control over how the downstream model interprets or uses the provided context.',
+      mechanism:
+        'The neuron graph carefully scores, ranks, and assembles context optimized for a specific intent. But the receiving model may ignore relevant neurons, misinterpret the hierarchical structure, or combine the neuron context with other information in ways that dilute its value. There is no feedback loop from MCP usage back to the neuron graph — the system cannot learn whether its context was actually helpful.',
+      mitigation:
+        'Per-project caching (built) provides an indirect feedback signal — neurons that are repeatedly queried for the same project accumulate relevance, creating a weak proxy for usefulness. The query_graph tool returns neuron metadata alongside the prompt, allowing the calling model to understand the scoring rationale. Future: structured feedback from MCP clients back to the neuron firing/utility system.',
+      status: 'Partially mitigated — per-project caching provides indirect signal; direct MCP feedback loop planned',
     },
   ];
 

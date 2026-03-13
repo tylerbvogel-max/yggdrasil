@@ -122,6 +122,11 @@ export default function NextSteps() {
             <tr><td>Cache-Aware Cost Calculation</td><td>Separated base_input (1x), cache_creation (1.25x), cache_read (0.10x) pricing. Reduced reported cost inflation ~47%.</td></tr>
             <tr><td>Pipeline Test Suite</td><td>79 automated tests covering scoring engine (all 6 signals), spread activation (typed edges, stellate/pyramidal), and compute_score integration.</td></tr>
             <tr><td>3D Neuron Universe</td><td>Three.js force-directed graph of entire neuron network. Colorable by department or layer, directional edge particles, filter controls, zoom-to-fit.</td></tr>
+            <tr><td>MCP Server Mode</td><td>7-tool stdio MCP server for Claude Code integration. <code>query_graph</code> runs the full neuron pipeline and returns enriched context without LLM execution. Tools: query_graph, impact_analysis, neuron_detail, browse_departments, graph_stats, cost_report, discover_clusters.</td></tr>
+            <tr><td>Structural Fast Path</td><td>Deterministic resolver for structural queries (list departments, roles in X, neurons about Y, graph stats, connections). Regex + keyword pattern matching at zero API cost &mdash; bypasses Haiku classification entirely.</td></tr>
+            <tr><td>Per-Project Neuron Caching</td><td>ProjectProfile model tracks neuron relevance per project path. After 3+ queries, frequently useful neurons get a 1.0&ndash;1.3&times; scoring boost. EMA-weighted relevance accumulation.</td></tr>
+            <tr><td>Auto-Clustering</td><td>Label propagation on co-firing edges discovers emergent cross-department neuron clusters. API endpoint (<code>GET /neurons/clusters</code>), MCP tool (<code>discover_clusters</code>), and autopilot gap source (<code>emergent_cluster</code>).</td></tr>
+            <tr><td>prepare_context() Extraction</td><td>Core pipeline (classify &rarr; score &rarr; spread &rarr; inhibit &rarr; assemble) extracted from <code>execute_query()</code> into standalone <code>prepare_context()</code> function. Enables MCP server and REST API to share the same pipeline code.</td></tr>
           </tbody>
         </table>
       </section>
@@ -516,6 +521,10 @@ export default function NextSteps() {
             <tr><td>&mdash;</td><td>Scoring health monitor + drift detection</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>Pipeline test suite (79 tests: scoring engine + spread activation)</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>&mdash;</td><td>3D neuron universe (Three.js force graph)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>MCP server mode (7 tools, stdio transport)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Structural fast path (zero-cost deterministic resolver)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Per-project neuron caching (ProjectProfile + boost)</td><td><span className="status-badge built">Built</span></td></tr>
+            <tr><td>&mdash;</td><td>Auto-clustering (label propagation + emergent_cluster gap)</td><td><span className="status-badge built">Built</span></td></tr>
             <tr><td>1</td><td>Role bolstering (2,054 &rarr; 3,000+ neurons)</td><td><span className="status-badge planned">Active</span></td></tr>
             <tr><td>2</td><td>Emergent Queue UI + ingestion pipeline</td><td><span className="status-badge planned">Next</span></td></tr>
             <tr><td>2</td><td>Source Coverage analytics + verification</td><td><span className="status-badge planned">Next</span></td></tr>

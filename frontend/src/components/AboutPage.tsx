@@ -27,6 +27,7 @@ export default function AboutPage() {
               Organizations routing every query to the most expensive model are burning budget on tasks where
               a well-contextualized cheap model produces equivalent results. Yggdrasil proves the thesis:
               <strong> structured domain knowledge + cheap model &asymp; expensive model quality at 1/60th the cost.</strong>
+              {' '}Additional cost and latency mitigations include: an MCP server mode that stops after context assembly (no execution cost), a structural fast-path resolver that answers deterministic queries at zero API cost, and per-project neuron caching that avoids redundant scoring by remembering which neurons matter for each codebase.
             </p>
           </div>
           <div className="about-thesis-card">

@@ -67,19 +67,21 @@ async def link_concept_to_neurons(
     concept_id: int,
     target_ids: list[int],
     weight: float = 0.5,
+    concept_label: str | None = None,
 ) -> int:
     """Create 'instantiates' edges from a concept neuron to target neurons.
 
     Returns count of edges created.
     """
+    context_text = f"instantiates concept: {concept_label}" if concept_label else None
     created = 0
     for tid in target_ids:
         src, tgt = min(concept_id, tid), max(concept_id, tid)
         await db.execute(text(
-            "INSERT INTO neuron_edges (source_id, target_id, co_fire_count, weight, last_updated_query, edge_type, source, last_adjusted) "
-            "VALUES (:src, :tgt, 1, :w, 0, 'instantiates', 'concept_seed', now()) "
-            "ON CONFLICT (source_id, target_id) DO UPDATE SET edge_type = 'instantiates', weight = GREATEST(neuron_edges.weight, :w), last_adjusted = now()"
-        ), {"src": src, "tgt": tgt, "w": weight})
+            "INSERT INTO neuron_edges (source_id, target_id, co_fire_count, weight, last_updated_query, edge_type, source, last_adjusted, context) "
+            "VALUES (:src, :tgt, 1, :w, 0, 'instantiates', 'concept_seed', now(), :ctx) "
+            "ON CONFLICT (source_id, target_id) DO UPDATE SET edge_type = 'instantiates', weight = GREATEST(neuron_edges.weight, :w), last_adjusted = now(), context = COALESCE(:ctx, neuron_edges.context)"
+        ), {"src": src, "tgt": tgt, "w": weight, "ctx": context_text})
         created += 1
 
     await db.flush()
@@ -905,7 +907,613 @@ CONCEPT_DEFINITIONS: list[dict] = [
             "%process capability%", "%sampling%interval%", "% cpk%",
         ],
     },
+    # ── Wave 3: Peripheral neuron aggregators (connectivity sweep 2026-03-11) ──
+    {
+        "label": "Databricks Streaming & Ingestion",
+        "summary": "Real-time and batch data ingestion patterns: Auto Loader, Structured Streaming, COPY INTO, schema evolution, and checkpoint management",
+        "content": (
+            "Data ingestion into the lakehouse encompasses both streaming and batch patterns. "
+            "Auto Loader (cloudFiles) provides incremental file ingestion with automatic schema "
+            "inference and evolution, checkpoint-based exactly-once guarantees, and rescue data "
+            "columns for malformed records. Structured Streaming enables continuous processing "
+            "with configurable triggers (availableNow for batch-like semantics, processingTime "
+            "for micro-batch, continuous for low-latency). COPY INTO provides idempotent batch "
+            "loading with file-level deduplication. Key concerns: schema drift handling (mergeSchema "
+            "vs rescue columns), watermark management for late-arriving data, trigger interval "
+            "tuning for cost/latency trade-offs, and checkpoint location management across "
+            "environments. Cross-departmental: Engineering defines source schemas, Manufacturing "
+            "generates sensor/IoT data streams, Quality monitors data quality metrics on ingested "
+            "records, and Finance tracks compute costs of streaming workloads."
+        ),
+        "direct_patterns": ["%auto loader%", "%structured streaming%", "%copy into%"],
+        "content_patterns": [
+            "%auto loader%", "%cloudfiles%", "%structured streaming%",
+            "%copy into%", "%schema evolution%", "%schema drift%",
+            "%watermark%", "%trigger%availablenow%", "%checkpoint%",
+            "%rescue%data%column%", "%mergeschema%",
+            "%file notification%", "%incremental%ingest%",
+            "%jdbc%", "%rest api%ingest%", "%file format%",
+        ],
+    },
+    {
+        "label": "Spark SQL Transformation Patterns",
+        "summary": "Data transformation patterns in Spark SQL: deduplication, joins, window functions, pivots, array/map operations, and aggregation rollups",
+        "content": (
+            "Spark SQL transformations form the core data processing layer in the lakehouse. "
+            "Key patterns include: deduplication strategies (ROW_NUMBER windows, dropDuplicates, "
+            "QUALIFY clauses), join optimization (broadcast hints, skew joins, range joins), "
+            "window functions (ranking with ROW_NUMBER/RANK/DENSE_RANK, running aggregates, "
+            "LAG/LEAD for change detection), pivot/unpivot for reshaping, higher-order functions "
+            "for nested array/map manipulation (TRANSFORM, FILTER, AGGREGATE, EXISTS), and "
+            "multi-dimensional aggregation (GROUPING SETS, CUBE, ROLLUP). Null handling patterns "
+            "(COALESCE, NULLIF, NVL, null-safe equality <=>) are critical for data quality. "
+            "String functions (regexp_extract, split, concat_ws) and date functions (date_trunc, "
+            "months_between, window for time-series bucketing) round out the toolkit. "
+            "Cross-departmental: these patterns support Finance (cost rollups), Quality (trend "
+            "analysis), Manufacturing (production metrics), and Engineering (test data analysis)."
+        ),
+        "direct_patterns": ["%spark sql%transform%"],
+        "content_patterns": [
+            "%dedup%", "%row_number%", "%window function%",
+            "%pivot%unpivot%", "%higher.order function%", "%grouping sets%",
+            "%null handling%", "%regexp_extract%", "%date_trunc%",
+            "%broadcast%join%", "%skew%join%",
+            "%coalesce%", "%na.fill%", "%na.drop%",
+            "%explode%", "%posexplode%", "%flatten%nested%",
+            "%string function%", "%date function%", "%ranking%",
+            "%array%operation%", "%rollup%", "%aggregate%scope%",
+        ],
+    },
+    {
+        "label": "Delta Lake Table Operations",
+        "summary": "Delta Lake DML and table management: MERGE, OPTIMIZE, ZORDER, time travel, liquid clustering, vacuum, and table cloning",
+        "content": (
+            "Delta Lake provides ACID transactions on the lakehouse with rich DML and table "
+            "management capabilities. MERGE INTO enables upsert/SCD patterns with matched and "
+            "not-matched clauses supporting insert, update, and delete actions. Table optimization "
+            "includes OPTIMIZE (bin-packing small files into larger Parquet files), ZORDER "
+            "(co-locating related data for data skipping), and liquid clustering (dynamic "
+            "clustering that adapts to query patterns without manual ZORDER). Time travel enables "
+            "querying historical versions (VERSION AS OF, TIMESTAMP AS OF) and RESTORE for "
+            "rollback. VACUUM removes old files beyond retention period. CLONE (deep and shallow) "
+            "enables zero-copy table duplication for testing and development. DELETE and UPDATE "
+            "operate on the transaction log level. Cross-departmental: Manufacturing uses MERGE "
+            "for sensor data upserts, Finance uses time travel for point-in-time reporting, "
+            "Quality uses CLONE for validation environments, and Engineering uses ZORDER for "
+            "test result query performance."
+        ),
+        "direct_patterns": ["%delta lake%", "%merge into%"],
+        "content_patterns": [
+            "%merge into%", "%optimize%zorder%", "%liquid clustering%",
+            "%time travel%", "%version as of%", "%vacuum%retention%",
+            "%deep clone%", "%shallow clone%", "%delta%transaction%log%",
+        ],
+    },
+    {
+        "label": "Unity Catalog Governance",
+        "summary": "Databricks Unity Catalog: three-level namespace, access control, row/column security, data lineage, and managed vs external storage",
+        "content": (
+            "Unity Catalog provides unified governance for the Databricks lakehouse across "
+            "catalogs, schemas, and tables/views/functions/models. Three-level namespace "
+            "(catalog.schema.table) enables organizational data isolation. Access control includes "
+            "GRANT/REVOKE on securable objects, ownership transfer, and inherited permissions. "
+            "Fine-grained security features: row filters (restrict visible rows per user/group), "
+            "column masks (redact sensitive column values), and dynamic views for complex access "
+            "policies. Storage model: managed tables (Unity Catalog controls storage location and "
+            "lifecycle) vs external tables (user-managed storage with registered metadata). "
+            "Data lineage tracking captures table-to-table and column-to-column dependencies "
+            "automatically. Cross-departmental: IT manages catalog structure and access policies, "
+            "Finance enforces data classification for SOX compliance, Contracts ensures CUI "
+            "markings propagate through lineage, and Engineering consumes shared feature stores."
+        ),
+        "direct_patterns": ["%unity catalog%"],
+        "content_patterns": [
+            "%unity catalog%", "%catalog%schema%table%", "%row filter%",
+            "%column mask%", "%grant%revoke%", "%managed%external%table%",
+            "%data lineage%", "%securable%object%",
+            "%three-level namespace%", "%acl%permission%",
+            "%ownership%transfer%", "%dynamic view%",
+        ],
+    },
+    {
+        "label": "Workflow Orchestration & Performance Tuning",
+        "summary": "Databricks job orchestration, cluster configuration, Adaptive Query Execution, caching strategies, and compute cost optimization",
+        "content": (
+            "Databricks workflow orchestration and performance tuning govern how data pipelines "
+            "are scheduled, executed, and optimized. Job orchestration includes multi-task "
+            "workflows with dependency graphs, taskValues for inter-task communication, "
+            "conditional task execution (if/else branching), and retry policies. Cluster "
+            "configuration spans autoscaling policies, instance pool reuse, spot vs on-demand "
+            "cost trade-offs, and photon acceleration for SQL workloads. Adaptive Query Execution "
+            "(AQE) dynamically optimizes queries at runtime: coalescing shuffle partitions, "
+            "converting sort-merge joins to broadcast, and optimizing skewed joins. Caching "
+            "strategies include Delta caching (SSD-level), disk caching, and result set caching. "
+            "Performance diagnostics: Spark UI stage analysis, shuffle metrics, spill detection, "
+            "and query profile flame graphs. Cross-departmental: Finance monitors compute costs, "
+            "Engineering tunes pipeline SLAs, Manufacturing requires real-time processing "
+            "guarantees, and IT manages cluster policies and governance."
+        ),
+        "direct_patterns": ["%workflow orchestration%", "%adaptive query execution%"],
+        "content_patterns": [
+            "%taskvalues%", "%multi.task%workflow%", "%autoscal%cluster%",
+            "%adaptive query%", "% aqe %", "%photon%",
+            "%delta cach%", "%shuffle%partition%", "%spark ui%",
+            "%instance pool%", "%cluster siz%", "%spot instance%",
+            "%partition prun%", "%caching%strategy%",
+            "%job config%", "%retry polic%",
+        ],
+    },
+    {
+        "label": "Work Systems & Methods Engineering",
+        "summary": "Industrial engineering work measurement and design: time study, motion study, methods engineering, performance rating, and workplace layout",
+        "content": (
+            "Work systems and methods engineering form the foundation of industrial engineering "
+            "practice. Time study (stopwatch timing with performance rating and allowances) "
+            "establishes standard times for operations. Predetermined time systems (MTM, MOST, "
+            "MODAPTS) derive standard times from elemental motion analysis without direct "
+            "observation. Methods engineering systematically improves work processes through "
+            "operation process charts, flow process charts, worker-machine charts, and simo charts. "
+            "Performance rating scales (100/133, Westinghouse, objective rating) normalize "
+            "observed times to standard pace. Allowance factors account for fatigue, personal "
+            "needs, and unavoidable delays. Workplace layout optimization includes principles of "
+            "motion economy (minimize therbligs, arrange workstation within normal/maximum work "
+            "area, pre-position tools). Line balancing allocates tasks to workstations to minimize "
+            "idle time and balance cycle times. Cross-departmental: Manufacturing uses standards "
+            "for labor planning, Finance uses them for cost estimation, Quality uses them for "
+            "inspection time allocation, and Program Management for schedule development."
+        ),
+        "direct_patterns": ["%work system%", "%methods engineering%", "%time study%"],
+        "content_patterns": [
+            "%time study%", "%motion study%", "%methods engineer%",
+            "%performance rating%", "%predetermined time%", "% mtm %",
+            "% most %motion%", "%work measurement%", "%line balancing%",
+            "%motion economy%", "%work sampling%", "%standard data%",
+            "%fixture%redesign%", "%assembly motion%", "%non-value-added%",
+            "%recording%analysis%tool%", "%work environment%design%",
+            "%operations analysis%", "%tool design%", "%work design%",
+            "%allowance%", "%performance metric%exploratory%",
+        ],
+    },
+    {
+        "label": "Operations Research & Optimization",
+        "summary": "Mathematical optimization and decision science: linear/integer/dynamic programming, queuing theory, simulation, and metaheuristics",
+        "content": (
+            "Operations research provides the mathematical foundations for optimal decision-making "
+            "in complex systems. Linear programming (LP) optimizes continuous variables subject "
+            "to linear constraints (simplex method, duality theory, sensitivity analysis). "
+            "Integer programming (IP/MIP) handles discrete decisions (branch-and-bound, cutting "
+            "planes). Dynamic programming decomposes sequential decisions into recursive "
+            "subproblems (Bellman equation). Nonlinear programming addresses curved objective "
+            "functions and constraints (gradient methods, KKT conditions). Queuing theory models "
+            "waiting lines and service systems (M/M/1, M/M/c, M/G/1) for capacity planning. "
+            "Discrete event simulation models stochastic systems too complex for analytical "
+            "solutions. Metaheuristics (genetic algorithms, simulated annealing, tabu search) "
+            "find near-optimal solutions for NP-hard problems. Stochastic models incorporate "
+            "uncertainty through Markov chains and decision trees. Cross-departmental: "
+            "Manufacturing uses LP for production scheduling, Engineering for design optimization, "
+            "Finance for portfolio optimization, and Supply Chain for network design."
+        ),
+        "direct_patterns": ["%operations research%", "%linear programming%"],
+        "content_patterns": [
+            "%linear programming%", "%integer programming%", "%dynamic programming%",
+            "%queuing theory%", "%discrete event simulation%", "%metaheuristic%",
+            "%genetic algorithm%", "%simulated annealing%", "%simplex method%",
+            "%stochastic%model%", "%markov chain%", "%network model%",
+            "%nonlinear programming%", "%combinatorial%", "%decision analysis%",
+            "%birth-death%", "%m/m/1%",
+        ],
+    },
+    {
+        "label": "Engineering Economy",
+        "summary": "Economic analysis for engineering decisions: time value of money, comparison of alternatives, depreciation, break-even analysis, and capital budgeting",
+        "content": (
+            "Engineering economy applies economic principles to engineering decision-making. "
+            "Time value of money (TVM) provides the foundation: present worth (PW), annual worth "
+            "(AW), future worth (FW), and rate of return (ROR) methods for comparing cash flow "
+            "streams. Comparison of alternatives uses incremental analysis to select among "
+            "mutually exclusive projects with different lives (study period method, LCM method). "
+            "Depreciation methods (straight-line, declining balance, MACRS) determine tax "
+            "implications and book value trajectories. Break-even analysis identifies the "
+            "production volume or utilization rate where alternatives become equivalent. "
+            "Benefit-cost ratio analysis (B/C) applies to public sector and government projects. "
+            "Sensitivity analysis and risk simulation (Monte Carlo) quantify decision robustness "
+            "under parameter uncertainty. Capital budgeting under constraints uses LP to maximize "
+            "portfolio NPV within budget limits. Cross-departmental: Engineering evaluates "
+            "make-vs-buy and technology investments, Finance manages capital allocation, "
+            "Manufacturing justifies automation and equipment, and Program Management evaluates "
+            "bid/no-bid economics."
+        ),
+        "direct_patterns": ["%engineering economy%", "%engineering economic%"],
+        "content_patterns": [
+            "%time value of money%", "%present worth%", "%annual worth%",
+            "%rate of return%", "%depreciation%", "%break.even%",
+            "%benefit.cost ratio%", "%capital budget%", "%incremental analysis%",
+            "%comparison of alternatives%", "%replacement%retention%",
+            "%risk%uncertainty%economic%", "%tax effect%", "%project selection%",
+        ],
+    },
+    {
+        "label": "Ergonomics & Human Factors Engineering",
+        "summary": "Human-centered design: anthropometry, biomechanics, cognitive ergonomics, fatigue/recovery, manual material handling, and environmental factors",
+        "content": (
+            "Ergonomics and human factors engineering optimize the interface between humans and "
+            "work systems. Anthropometry (body dimension measurement and application using "
+            "percentile design — 5th/50th/95th) drives workstation and equipment sizing. "
+            "Biomechanics applies Newtonian mechanics to the musculoskeletal system (compressive "
+            "forces, moment analysis, NIOSH lifting equation for recommended weight limits). "
+            "Cognitive ergonomics addresses mental workload, situation awareness, human error "
+            "classification (slips, lapses, mistakes, violations per Reason's model), and "
+            "human-computer interaction design. Fatigue management includes work-rest scheduling, "
+            "fatigue risk assessment, and cumulative trauma disorder prevention. Manual material "
+            "handling analysis uses the NIOSH RWL, Snook tables, and Liberty Mutual guidelines "
+            "to design safe lifting, pushing, pulling, and carrying tasks. Environmental "
+            "ergonomics covers thermal comfort (WBGT, PMV/PPD), lighting (illuminance standards, "
+            "glare control), noise (exposure limits, hearing conservation), and vibration "
+            "(whole-body and hand-arm per ISO 2631/5349). Cross-departmental: Manufacturing "
+            "applies to workstation design, Safety enforces OSHA ergonomic guidelines, "
+            "Engineering integrates human factors into product design, and Quality uses "
+            "error-proofing (poka-yoke) derived from human error analysis."
+        ),
+        "direct_patterns": ["%ergonomic%", "%human factors%engineering%"],
+        "content_patterns": [
+            "%anthropometry%", "%biomechanic%", "%niosh%lifting%",
+            "%manual material handling%", "%cognitive%ergonomic%",
+            "%fatigue%", "%cumulative trauma%",
+            "%workstation%design%", "%human error%",
+            "%work physiology%", "%environmental ergonomic%",
+        ],
+    },
+    {
+        "label": "Facility Compliance & Environmental Management",
+        "summary": "Facility operations compliance: cleanroom management, NESHAP/EPA emissions, water quality, HVAC systems, refrigerant management, and NISPOM facility security",
+        "content": (
+            "Facility compliance and environmental management govern the physical infrastructure "
+            "and environmental obligations of aerospace manufacturing facilities. Cleanroom "
+            "management includes particle counting per ISO 14644, gowning protocols, pressure "
+            "differential monitoring, and contamination control plans. Environmental compliance "
+            "encompasses EPA NESHAP (National Emission Standards for Hazardous Air Pollutants) "
+            "reporting, Subpart GG emissions monitoring for stationary gas turbines, Title V "
+            "permit management, and RCRA hazardous waste generator requirements. Water quality "
+            "management covers industrial wastewater pretreatment, stormwater pollution prevention "
+            "(SWPPP), and cooling tower chemical treatment. HVAC systems require maintenance of "
+            "temperature/humidity specs for production areas, chiller plant optimization, and "
+            "refrigerant tracking under EPA Section 608. NISPOM (National Industrial Security "
+            "Program Operating Manual) governs facility security clearances and classified work "
+            "area requirements. Cross-departmental: Manufacturing depends on facility conditions "
+            "for process control, Quality audits facility compliance, Safety manages environmental "
+            "permits, Contracts ensures facility clearance meets contract requirements, and "
+            "Finance tracks facility capital expenditures and environmental remediation reserves."
+        ),
+        "direct_patterns": ["%facility compliance%", "%environmental management%"],
+        "content_patterns": [
+            "%cleanroom%particle%", "%neshap%", "%subpart gg%",
+            "%cooling tower%", "%refrigerant%", "%water quality%",
+            "%nispom%facility%", "%hvac%", "%title v permit%",
+            "%swppp%", "%hazardous waste%", "%chiller%",
+            "%approach temperature%", "%epa section 608%",
+            "%compressed air%", "%electrical capacity%",
+        ],
+        "role_filters": ["facilities_mgr"],
+    },
+    {
+        "label": "Aerospace Design Verification & Analysis",
+        "summary": "Engineering analysis and verification: stress analysis, thermal/CFD simulation, ASIP structural integrity, propulsion testing, EMI/EMC, and power architecture",
+        "content": (
+            "Aerospace design verification encompasses the analytical and test methods that "
+            "demonstrate structural integrity, thermal performance, electromagnetic compatibility, "
+            "and system functionality. Stress analysis uses FEA (finite element analysis) to "
+            "verify static strength (ultimate and limit loads per MIL-HDBK-5/MMPDS), fatigue "
+            "life (S-N curves, damage tolerance per JSSG-2006), and fracture mechanics (da/dN "
+            "crack growth). Thermal and CFD analysis models heat transfer, fluid flow, and "
+            "thermal management for electronics, engines, and airframe structures. ASIP (Aircraft "
+            "Structural Integrity Program per MIL-STD-1530) provides the framework for "
+            "structural qualification through analysis, testing, and fleet management. Propulsion "
+            "testing validates engine and motor performance against specification requirements. "
+            "EMI/EMC verification per MIL-STD-461 ensures electromagnetic compatibility through "
+            "conducted and radiated emissions/susceptibility testing. Power architecture design "
+            "addresses electrical power generation, distribution, and load management. "
+            "Cross-departmental: Engineering performs analysis, Manufacturing validates producibility, "
+            "Test executes verification testing, Quality reviews test reports, and Program "
+            "Management tracks verification status against certification milestones."
+        ),
+        "direct_patterns": ["%stress analysis%", "%design verification%"],
+        "content_patterns": [
+            "%stress analysis%", "%thermal%cfd%", "% asip %",
+            "%structural integrity%", "%fatigue%damage tolerance%",
+            "%propulsion test%", "%emi%emc%", "%mil.std.461%",
+            "%power architecture%", "%finite element%",
+        ],
+    },
+    {
+        "label": "Embedded Software Assurance",
+        "summary": "Safety-critical software development: DO-178C, MISRA-C, code review standards, ground control software, and software verification methods",
+        "content": (
+            "Embedded software assurance provides the verification and certification framework "
+            "for safety-critical and mission-critical software in aerospace systems. DO-178C "
+            "(Software Considerations in Airborne Systems and Equipment Certification) defines "
+            "software levels (A through E) and corresponding objectives for planning, development, "
+            "verification, configuration management, and quality assurance. MISRA-C provides "
+            "coding standards for C language in safety-critical systems (rules and directives for "
+            "avoiding undefined behavior, implementation-defined behavior, and common programming "
+            "errors). Code review standards define structural coverage criteria (statement, "
+            "decision, MC/DC coverage) tied to software level. Ground control software (GCS) for "
+            "unmanned systems requires special consideration for latency, command authority, and "
+            "human-machine interface design. Human factors in software interfaces addresses "
+            "display design, alerting philosophy, and mode awareness. Cross-departmental: "
+            "Software Engineering writes the code, Systems Engineering defines requirements, "
+            "Test Engineering performs structural coverage analysis, Quality audits process "
+            "compliance, and Contracts manages DID (Data Item Description) deliverables for "
+            "software documentation (SDP, SDD, STR, SVR)."
+        ),
+        "direct_patterns": ["%do-178%", "%misra-c%", "%embedded software%"],
+        "content_patterns": [
+            "%do-178%", "%misra.c%", "%structural coverage%",
+            "%mc/dc%", "%ground control software%", "%software level%",
+            "%safety.critical software%", "%code review%standard%",
+        ],
+    },
+    {
+        "label": "Requirements & Interface Management",
+        "summary": "Systems engineering requirements discipline: DOORS management, INCOSE processes, interface control documents (ICDs), requirements traceability, and verification planning",
+        "content": (
+            "Requirements and interface management form the backbone of systems engineering "
+            "practice. IBM DOORS (Dynamic Object-Oriented Requirements System) is the standard "
+            "tool for requirements management in aerospace, providing baselines, traceability "
+            "links, change history, and DXL scripting for automation. INCOSE (International "
+            "Council on Systems Engineering) defines the systems engineering processes: stakeholder "
+            "requirements definition, requirements analysis, architectural design, and verification/"
+            "validation planning. Interface Control Documents (ICDs) formally define the physical, "
+            "functional, and data interfaces between systems, subsystems, and external entities. "
+            "Requirements traceability matrices (RTMs) link stakeholder needs to system requirements "
+            "to design elements to verification methods (inspection, demonstration, test, analysis). "
+            "Interface conflict resolution addresses mismatches in physical fit, signal levels, "
+            "data formats, timing, and protocol between interfacing systems. Cross-departmental: "
+            "Systems Engineering owns the requirements baseline, Engineering implements to "
+            "requirements, Test verifies against requirements, Contracts flows requirements to "
+            "suppliers, Manufacturing traces work instructions to design requirements, and "
+            "Program Management tracks requirements volatility as a schedule risk indicator."
+        ),
+        "direct_patterns": ["%requirements management%", "%interface control%"],
+        "content_patterns": [
+            "% doors %requirement%", "%incose%", "%interface control document%",
+            "% icd %interface%", "%traceability matrix%", "%requirements traceability%",
+            "%verification%validation%planning%", "%interface conflict%",
+            "%bidirectional traceability%", "%requirement%completeness%",
+        ],
+    },
+    # ── Wave 4: Targeted peripheral aggregators (2026-03-11) ──
+    {
+        "label": "Facility Planning & Material Flow",
+        "summary": "Industrial engineering facility and logistics design: facility location, layout optimization, material handling systems, and warehousing/distribution",
+        "content": (
+            "Facility planning and material flow engineering optimize the physical arrangement "
+            "and movement of materials through manufacturing and distribution systems. Facility "
+            "location analysis uses quantitative methods (center-of-gravity, factor rating, "
+            "transportation LP) to select optimal sites considering transportation costs, labor "
+            "availability, market proximity, and regulatory environment. Facility layout design "
+            "applies systematic layout planning (SLP), relationship charting, and space requirement "
+            "analysis to arrange departments, workstations, and aisles for minimum material "
+            "handling cost. Material handling system design selects and integrates conveyors, AGVs, "
+            "AS/RS, and manual equipment based on material characteristics, flow volume, and "
+            "distance. Warehousing and distribution center design addresses storage allocation "
+            "(ABC analysis), order picking strategies (batch, zone, wave), and dock scheduling. "
+            "Cross-departmental: Manufacturing defines process flow requirements, Engineering "
+            "designs material handling equipment, Finance evaluates capital investments, and "
+            "Supply Chain determines distribution network strategy."
+        ),
+        "direct_patterns": ["%facility location%", "%facility layout%", "%material handling%"],
+        "content_patterns": [
+            "%facility location%", "%facility layout%", "%material handling%",
+            "%warehousing%", "%distribution%center%", "%systematic layout%",
+            "%as/rs%", "%conveyor%", "%order picking%", "%storage allocation%",
+        ],
+    },
+    {
+        "label": "DLT Pipeline Quality & Observability",
+        "summary": "Databricks Delta Live Tables: expectations, quarantine patterns, event log monitoring, Python vs SQL DLT, and data quality assertions",
+        "content": (
+            "Delta Live Tables (DLT) provides a declarative framework for building reliable "
+            "data pipelines with built-in quality management. Expectations define data quality "
+            "constraints (expect, expect_or_drop, expect_or_fail) that are evaluated on every "
+            "record flowing through the pipeline. Quarantine patterns route failed records to "
+            "separate tables for investigation without blocking the main pipeline. The event log "
+            "captures pipeline execution history including data quality metrics, flow progress, "
+            "and lineage. Python DLT and SQL DLT offer different syntax for defining "
+            "materialized views and streaming tables. Quality monitoring includes tracking "
+            "expectation pass/fail rates over time, alerting on quality degradation, and "
+            "building quality dashboards from event log queries. Advanced patterns include "
+            "parameterized pipelines, multi-hop medallion architecture (bronze/silver/gold), "
+            "and change data capture (CDC) with APPLY CHANGES. Cross-departmental: Engineering "
+            "builds pipelines, Quality monitors data integrity, Finance tracks processing "
+            "costs, and Business users consume gold-layer reporting tables."
+        ),
+        "direct_patterns": ["%delta live table%", "% dlt %pipeline%"],
+        "content_patterns": [
+            "%delta live table%", "% dlt %", "%expectation%expect_or%",
+            "%quarantine%pattern%", "%event log%", "%medallion%architecture%",
+            "%bronze%silver%gold%", "%apply changes%", "%change data capture%",
+            "%streaming table%", "%materialized view%dlt%",
+        ],
+    },
+    {
+        "label": "Executive Governance & Strategic Authority",
+        "summary": "C-suite decision governance: strategic management council, enterprise risk management, capital investment authority, CMMC assessment, succession planning",
+        "content": (
+            "Executive governance encompasses the decision-making frameworks and authority "
+            "structures at the C-suite level. Strategic Management Council (SMC) meetings "
+            "provide the forum for cross-functional strategic decisions including market "
+            "entry/exit, major capital investments, and organizational restructuring. Enterprise "
+            "Risk Management (ERM) provides a structured approach to identifying, assessing, and "
+            "mitigating risks across the organization, typically using COSO or ISO 31000 "
+            "frameworks. Capital investment authority defines approval thresholds and ROI "
+            "requirements for major expenditures. CMMC (Cybersecurity Maturity Model "
+            "Certification) assessment readiness involves executive sponsorship of security "
+            "program investments. Succession planning ensures leadership continuity through "
+            "talent pipeline development and key person risk mitigation. Customer engagement "
+            "at the executive level includes strategic account management, teaming arrangement "
+            "negotiations, and competitive positioning decisions. Cross-departmental: the CEO "
+            "chairs governance forums, CFO provides financial analysis, CTO drives technology "
+            "strategy, COO ensures operational execution, and VP Strategy synthesizes market "
+            "intelligence."
+        ),
+        "direct_patterns": ["%executive governance%", "%strategic authority%"],
+        "content_patterns": [
+            "%strategic management council%", "%enterprise risk management%",
+            "%capital investment%approval%", "%cmmc%assessment%",
+            "%succession planning%", "%board%preparation%",
+            "%teaming arrangement%", "%competitive position%",
+            "%organizational restructur%", "%leadership continuity%",
+        ],
+        "role_filters": ["ceo"],
+    },
+    {
+        "label": "CAS/FAR Government Cost Accounting",
+        "summary": "Government contract cost accounting: CAS Disclosure Statement, FAR 31.205 allowability, indirect rate structure, cost pool composition, DCAA audit readiness",
+        "content": (
+            "Government cost accounting compliance governs how defense and federal contractors "
+            "accumulate, allocate, and report costs. The CAS (Cost Accounting Standards) "
+            "Disclosure Statement formally documents a contractor's cost accounting practices "
+            "for consistency and auditability. FAR Part 31 (specifically 31.205) defines "
+            "allowable and unallowable cost categories — executive compensation reasonableness, "
+            "IR&D/B&P limitations, entertainment and alcohol prohibitions, and restructuring "
+            "cost recovery rules. Indirect rate structure design includes overhead pools "
+            "(fringe, overhead, G&A, material handling), base selection (direct labor dollars, "
+            "total cost input, value-added), and rate reconciliation. Forward Pricing Rate "
+            "Proposals (FPRP) and Agreements (FPRA) establish provisional billing rates with "
+            "DCAA. Incurred Cost Submissions (ICS) provide annual actual-cost reconciliation. "
+            "Cost pool composition analysis ensures homogeneous allocation bases and compliance "
+            "with CAS 418 (allocation of direct/indirect costs). Cross-departmental: Finance "
+            "maintains the rate structure, Contracts ensures proposal compliance, Program "
+            "Management monitors cost-to-budget performance, and Executive Leadership approves "
+            "rate strategy decisions."
+        ),
+        "direct_patterns": ["%cas disclosure%", "%far 31%", "%indirect rate%structure%"],
+        "content_patterns": [
+            "%cas disclosure%", "%far 31.205%", "%indirect rate%",
+            "%cost pool%", "%forward pricing rate%", "%fprp%", "%fpra%",
+            "%incurred cost%submission%", "%overhead%g&a%",
+            "%dcaa%audit%", "%allowab%cost%", "%wrap rate%",
+            "%compensation%reasonableness%", "%cost accounting standard%",
+        ],
+        "role_filters": ["cfo"],
+    },
 ]
+
+
+async def _match_and_link(
+    db: AsyncSession,
+    concept_id: int,
+    defn: dict,
+) -> tuple[list[int], list[int], int]:
+    """Match neurons to a concept definition and create instantiation edges.
+
+    Pattern matching:
+    - direct_patterns: matched against label and summary (weight 0.5)
+    - content_patterns: matched against label, summary, AND content (weight 0.3)
+    - role_filters: list of role_key values — all neurons with that role are linked (weight 0.3)
+
+    Returns (direct_ids, content_ids, edges_created).
+    """
+    direct_clauses = []
+    content_clauses = []
+    role_clauses = []
+    params: dict = {"concept_id": concept_id}
+
+    for i, pat in enumerate(defn.get("direct_patterns", [])):
+        pname = f"dp_{i}"
+        params[pname] = pat
+        direct_clauses.append(f"lower(label) LIKE :{pname} OR lower(summary) LIKE :{pname}")
+
+    # content_patterns now also match against label (catches short-label neurons like "Queuing Theory")
+    for i, pat in enumerate(defn.get("content_patterns", [])):
+        pname = f"cp_{i}"
+        params[pname] = pat
+        content_clauses.append(
+            f"lower(content) LIKE :{pname} OR lower(label) LIKE :{pname} OR lower(summary) LIKE :{pname}"
+        )
+
+    for i, role in enumerate(defn.get("role_filters", [])):
+        pname = f"rf_{i}"
+        params[pname] = role
+        role_clauses.append(f"role_key = :{pname}")
+
+    direct_expr = " OR ".join(direct_clauses) if direct_clauses else "false"
+    content_expr = " OR ".join(content_clauses) if content_clauses else "false"
+    role_expr = " OR ".join(role_clauses) if role_clauses else "false"
+    all_expr = " OR ".join(filter(None, [
+        f"({direct_expr})" if direct_clauses else None,
+        f"({content_expr})" if content_clauses else None,
+        f"({role_expr})" if role_clauses else None,
+    ]))
+
+    if not all_expr:
+        return [], [], 0
+
+    result = await db.execute(text(f"""
+        SELECT id,
+            CASE WHEN {direct_expr} THEN 'direct' ELSE 'content' END AS match_type
+        FROM neurons
+        WHERE is_active = true
+          AND node_type != 'concept'
+          AND id != :concept_id
+          AND ({all_expr})
+    """), params)
+    matches = result.all()
+
+    direct_ids = [r[0] for r in matches if r[1] == "direct"]
+    content_ids = [r[0] for r in matches if r[1] == "content"]
+
+    concept_label = defn.get("label")
+    edges_created = 0
+    if direct_ids:
+        edges_created += await link_concept_to_neurons(db, concept_id, direct_ids, weight=0.5, concept_label=concept_label)
+    if content_ids:
+        edges_created += await link_concept_to_neurons(db, concept_id, content_ids, weight=0.3, concept_label=concept_label)
+
+    return direct_ids, content_ids, edges_created
+
+
+async def relink_existing_concepts(db: AsyncSession) -> dict:
+    """Re-run pattern matching for all existing concept neurons.
+
+    This catches neurons missed by the original seeding due to pattern gaps
+    (e.g., content_patterns not matching against label field).
+    New edges are created via upsert — existing edges keep their weight if higher.
+    """
+    results = []
+
+    for defn in CONCEPT_DEFINITIONS:
+        # Find existing concept neuron
+        existing = await db.execute(
+            select(Neuron).where(
+                Neuron.node_type == "concept",
+                Neuron.label == defn["label"],
+            )
+        )
+        concept = existing.scalar_one_or_none()
+        if not concept:
+            continue
+
+        direct_ids, content_ids, edges_created = await _match_and_link(db, concept.id, defn)
+        if edges_created > 0:
+            results.append({
+                "concept_neuron_id": concept.id,
+                "label": concept.label,
+                "direct_matches": len(direct_ids),
+                "content_matches": len(content_ids),
+                "new_edges": edges_created,
+            })
+
+    if results:
+        await db.commit()
+        from app.services.semantic_prefilter import invalidate_cache
+        invalidate_cache()
+
+    return {
+        "relinked": results,
+        "total_concepts_updated": len(results),
+        "total_new_edges": sum(r["new_edges"] for r in results),
+    }
 
 
 async def _seed_one_concept(
@@ -932,57 +1540,7 @@ async def _seed_one_concept(
         summary=defn["summary"],
     )
 
-    # Build SQL for finding matching neurons
-    direct_clauses = []
-    content_clauses = []
-    params: dict = {"concept_id": concept.id}
-
-    for i, pat in enumerate(defn.get("direct_patterns", [])):
-        pname = f"dp_{i}"
-        params[pname] = pat
-        direct_clauses.append(f"lower(label) LIKE :{pname} OR lower(summary) LIKE :{pname}")
-
-    for i, pat in enumerate(defn.get("content_patterns", [])):
-        pname = f"cp_{i}"
-        params[pname] = pat
-        content_clauses.append(f"lower(content) LIKE :{pname}")
-
-    direct_expr = " OR ".join(direct_clauses) if direct_clauses else "false"
-    content_expr = " OR ".join(content_clauses) if content_clauses else "false"
-    all_expr = " OR ".join(filter(None, [
-        f"({direct_expr})" if direct_clauses else None,
-        f"({content_expr})" if content_clauses else None,
-    ]))
-
-    if not all_expr:
-        await db.flush()
-        return {
-            "concept_neuron_id": concept.id,
-            "label": concept.label,
-            "direct_matches": 0,
-            "content_matches": 0,
-            "edges_created": 0,
-        }
-
-    result = await db.execute(text(f"""
-        SELECT id,
-            CASE WHEN {direct_expr} THEN 'direct' ELSE 'content' END AS match_type
-        FROM neurons
-        WHERE is_active = true
-          AND node_type != 'concept'
-          AND id != :concept_id
-          AND ({all_expr})
-    """), params)
-    matches = result.all()
-
-    direct_ids = [r[0] for r in matches if r[1] == "direct"]
-    content_ids = [r[0] for r in matches if r[1] == "content"]
-
-    edges_created = 0
-    if direct_ids:
-        edges_created += await link_concept_to_neurons(db, concept.id, direct_ids, weight=0.5)
-    if content_ids:
-        edges_created += await link_concept_to_neurons(db, concept.id, content_ids, weight=0.3)
+    direct_ids, content_ids, edges_created = await _match_and_link(db, concept.id, defn)
 
     return {
         "concept_neuron_id": concept.id,

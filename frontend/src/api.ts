@@ -781,3 +781,153 @@ export function applyIngestSource(body: {
     body: JSON.stringify(body),
   });
 }
+
+// ── Management Reviews ──
+
+export interface ManagementReviewOut {
+  id: number;
+  review_type: string;
+  reviewer: string;
+  review_date: string;
+  findings: string;
+  decisions: string;
+  action_items: { description: string; due_date?: string; completed?: boolean }[];
+  status: string;
+  compliance_snapshot_id: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ReviewCadenceItem {
+  review_type: string;
+  cadence_days: number;
+  last_review_date: string | null;
+  next_due_date: string | null;
+  is_overdue: boolean;
+  days_until_due: number | null;
+}
+
+export function fetchReviews(reviewType?: string): Promise<ManagementReviewOut[]> {
+  const params = reviewType ? `?review_type=${encodeURIComponent(reviewType)}` : '';
+  return json<ManagementReviewOut[]>(`/admin/reviews${params}`);
+}
+
+export function createReview(body: {
+  review_type: string;
+  reviewer: string;
+  review_date: string;
+  findings: string;
+  decisions: string;
+  action_items?: { description: string; due_date?: string; completed?: boolean }[];
+  status?: string;
+}): Promise<ManagementReviewOut> {
+  return json<ManagementReviewOut>('/admin/reviews', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateReview(id: number, body: Record<string, unknown>): Promise<ManagementReviewOut> {
+  return json<ManagementReviewOut>(`/admin/reviews/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export function fetchReviewCadence(): Promise<ReviewCadenceItem[]> {
+  return json<ReviewCadenceItem[]>('/admin/reviews/cadence');
+}
+
+// ── Compliance Snapshots ──
+
+export interface ComplianceSnapshotSummary {
+  id: number;
+  snapshot_date: string;
+  pii_clean: boolean;
+  coverage_cv: number;
+  fairness_pass: boolean;
+  missing_citations_count: number;
+  stale_neurons_count: number;
+  total_neurons: number;
+  total_evals: number;
+  trigger: string;
+  created_at: string | null;
+}
+
+export interface ComplianceSnapshotDetail extends ComplianceSnapshotSummary {
+  snapshot_data: ComplianceAuditResponse | null;
+  diff_summary: Record<string, { prev: unknown; current: unknown; delta?: number }> | null;
+}
+
+export function fetchSnapshots(limit = 50): Promise<ComplianceSnapshotSummary[]> {
+  return json<ComplianceSnapshotSummary[]>(`/admin/compliance-snapshots?limit=${limit}`);
+}
+
+export function createSnapshot(trigger = 'manual'): Promise<ComplianceSnapshotSummary> {
+  return json<ComplianceSnapshotSummary>(`/admin/compliance-snapshots?trigger=${trigger}`, { method: 'POST' });
+}
+
+export function fetchSnapshotDetail(id: number): Promise<ComplianceSnapshotDetail> {
+  return json<ComplianceSnapshotDetail>(`/admin/compliance-snapshots/${id}`);
+}
+
+// ── Evidence Mapping ──
+
+export interface EvidenceMappingOut {
+  id: number;
+  framework: string;
+  requirement_id: string;
+  requirement_name: string;
+  status: string;
+  evidence_type: string;
+  evidence_location: string;
+  verification_query: string | null;
+  last_verified: string | null;
+  last_verified_by: string | null;
+  notes: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export function fetchEvidenceMap(framework?: string): Promise<EvidenceMappingOut[]> {
+  const params = framework ? `?framework=${encodeURIComponent(framework)}` : '';
+  return json<EvidenceMappingOut[]>(`/admin/evidence-map${params}`);
+}
+
+export function updateEvidence(id: number, body: Record<string, unknown>): Promise<EvidenceMappingOut> {
+  return json<EvidenceMappingOut>(`/admin/evidence-map/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export function verifyAllEvidence(): Promise<{ passed: number; failed: number; total: number }> {
+  return json<{ passed: number; failed: number; total: number }>('/admin/evidence-map/verify-all', { method: 'POST' });
+}
+
+export function seedEvidenceMap(): Promise<{ status: string; count: number }> {
+  return json<{ status: string; count: number }>('/admin/evidence-map/seed', { method: 'POST' });
+}
+
+// ── Evidence Content Viewer ──
+
+export interface EvidenceContentResponse {
+  path: string;
+  language: string;
+  content: string;
+  size: number;
+}
+
+export function fetchEvidenceContent(path: string): Promise<EvidenceContentResponse> {
+  return json<EvidenceContentResponse>(`/admin/evidence-content?path=${encodeURIComponent(path)}`);
+}
+
+// ── Compliance Report ──
+
+export function fetchComplianceReport(framework?: string): Promise<unknown> {
+  const params = framework ? `?framework=${encodeURIComponent(framework)}` : '';
+  return json<unknown>(`/admin/compliance-report${params}`);
+}

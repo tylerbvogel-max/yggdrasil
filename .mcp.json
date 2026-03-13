@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "yggdrasil": {
+      "type": "stdio",
+      "command": "/home/tylerbvogel/Projects/yggdrasil/backend/venv/bin/python",
+      "args": ["-m", "app.mcp_server"],
+      "cwd": "/home/tylerbvogel/Projects/yggdrasil/backend"
+    }
+  }
+}

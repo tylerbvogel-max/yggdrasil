@@ -10,8 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, func, text
 
 from app.database import engine, async_session
-from app.models import Base, Neuron, SystemState, BatchJob
-from app.routers import query, neurons, admin, autopilot, performance
+from app.models import Base, Neuron, SystemState, BatchJob, SourceDocument, NeuronSourceLink, ManagementReview, ComplianceSnapshot, EvidenceMapping
+from app.routers import query, neurons, admin, autopilot, performance, provenance, compliance, ingest
 from app.seed.loader import load_seed
 from app.seed.regulatory_seed import seed_regulatory
 
@@ -191,6 +191,132 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Query model_version migration skipped: {e}")
 
+    # Migrate: create source_documents table if missing
+    async with engine.begin() as conn:
+        try:
+            if not await _table_exists(conn, "source_documents"):
+                await conn.execute(text("""
+                    CREATE TABLE source_documents (
+                        id SERIAL PRIMARY KEY,
+                        canonical_id VARCHAR(100) UNIQUE NOT NULL,
+                        family VARCHAR(50) NOT NULL,
+                        version VARCHAR(50),
+                        status VARCHAR(20) NOT NULL DEFAULT 'active',
+                        authority_level VARCHAR(30) NOT NULL,
+                        issuing_body VARCHAR(200),
+                        effective_date DATE,
+                        url VARCHAR(500),
+                        notes TEXT,
+                        superseded_by_id INTEGER REFERENCES source_documents(id),
+                        created_at TIMESTAMP DEFAULT now()
+                    )
+                """))
+                await conn.execute(text(
+                    "CREATE INDEX ix_source_documents_family ON source_documents(family)"
+                ))
+                print("Migrated: created source_documents table")
+        except Exception as e:
+            print(f"Source documents migration skipped: {e}")
+
+    # Migrate: create neuron_source_links table if missing
+    async with engine.begin() as conn:
+        try:
+            if not await _table_exists(conn, "neuron_source_links"):
+                await conn.execute(text("""
+                    CREATE TABLE neuron_source_links (
+                        id SERIAL PRIMARY KEY,
+                        neuron_id INTEGER NOT NULL REFERENCES neurons(id),
+                        source_document_id INTEGER NOT NULL REFERENCES source_documents(id),
+                        derivation_type VARCHAR(30) NOT NULL DEFAULT 'references',
+                        section_ref VARCHAR(200),
+                        review_status VARCHAR(20) NOT NULL DEFAULT 'current',
+                        flagged_at TIMESTAMP,
+                        reviewed_at TIMESTAMP,
+                        reviewed_by VARCHAR(100),
+                        link_origin VARCHAR(20) NOT NULL DEFAULT 'auto_detected',
+                        created_at TIMESTAMP DEFAULT now()
+                    )
+                """))
+                await conn.execute(text(
+                    "CREATE INDEX ix_neuron_source_links_neuron_id ON neuron_source_links(neuron_id)"
+                ))
+                await conn.execute(text(
+                    "CREATE INDEX ix_neuron_source_links_source_document_id ON neuron_source_links(source_document_id)"
+                ))
+                print("Migrated: created neuron_source_links table")
+        except Exception as e:
+            print(f"Neuron source links migration skipped: {e}")
+
+    # Migrate: create observation_queue table if missing (Corvus integration)
+    async with engine.begin() as conn:
+        try:
+            if not await _table_exists(conn, "observation_queue"):
+                await conn.execute(text("""
+                    CREATE TABLE observation_queue (
+                        id SERIAL PRIMARY KEY,
+                        source VARCHAR(50) NOT NULL DEFAULT 'corvus',
+                        user_id VARCHAR(100) NOT NULL DEFAULT 'anonymous',
+                        observation_type VARCHAR(30) NOT NULL,
+                        text TEXT NOT NULL,
+                        entities_json TEXT DEFAULT '[]',
+                        app_context VARCHAR(100),
+                        project_path VARCHAR(500),
+                        proposed_department VARCHAR(100),
+                        proposed_role_key VARCHAR(100),
+                        proposed_layer INTEGER DEFAULT 3,
+                        similar_neuron_id INTEGER REFERENCES neurons(id),
+                        similarity_score FLOAT,
+                        status VARCHAR(20) NOT NULL DEFAULT 'queued',
+                        created_neuron_id INTEGER REFERENCES neurons(id),
+                        created_at TIMESTAMP DEFAULT now()
+                    )
+                """))
+                print("Migrated: created observation_queue table")
+        except Exception as e:
+            print(f"Observation queue migration skipped: {e}")
+
+    # Migrate: add context column to neuron_edges if missing
+    async with engine.begin() as conn:
+        try:
+            if await _table_exists(conn, "neuron_edges"):
+                if not await _column_exists(conn, "neuron_edges", "context"):
+                    await conn.execute(text(
+                        "ALTER TABLE neuron_edges ADD COLUMN context VARCHAR(300)"
+                    ))
+                    print("Migrated: added neuron_edges.context")
+        except Exception as e:
+            print(f"Edge context migration skipped: {e}")
+
+    # Migrate: add authority_level column to neurons if missing
+    async with engine.begin() as conn:
+        try:
+            if not await _column_exists(conn, "neurons", "authority_level"):
+                await conn.execute(text(
+                    "ALTER TABLE neurons ADD COLUMN authority_level VARCHAR(30)"
+                ))
+                print("Migrated: added neurons.authority_level")
+        except Exception as e:
+            print(f"Neuron authority_level migration skipped: {e}")
+
+    # Migrate: create project_profiles table if missing
+    async with engine.begin() as conn:
+        try:
+            if not await _table_exists(conn, "project_profiles"):
+                await conn.execute(text("""
+                    CREATE TABLE project_profiles (
+                        id SERIAL PRIMARY KEY,
+                        project_path VARCHAR(500) UNIQUE NOT NULL,
+                        project_name VARCHAR(200),
+                        neuron_relevance TEXT DEFAULT '{}',
+                        query_count INTEGER DEFAULT 0,
+                        last_query_at TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT now()
+                    )
+                """))
+                print("Migrated: created project_profiles table")
+        except Exception as e:
+            print(f"Project profiles migration skipped: {e}")
+
     # Auto-seed on first run
     async with async_session() as db:
         count = (await db.execute(select(func.count(Neuron.id)))).scalar() or 0
@@ -223,6 +349,24 @@ async def lifespan(app: FastAPI):
         if interrupted:
             await db.commit()
             print(f"Marked {len(interrupted)} batch job(s) as interrupted")
+
+    # Auto-seed evidence mappings if table is empty
+    async with async_session() as db:
+        try:
+            ev_count = (await db.execute(select(func.count(EvidenceMapping.id)))).scalar() or 0
+            if ev_count == 0:
+                from app.routers.compliance import _seed_evidence_data
+                result = await _seed_evidence_data(db)
+                print(f"Auto-seeded evidence mappings: {result}")
+        except Exception as e:
+            print(f"Evidence map seed skipped: {e}")
+
+    # Auto-snapshot compliance if none exists or last is >7 days old
+    try:
+        from app.routers.compliance import maybe_auto_snapshot
+        await maybe_auto_snapshot()
+    except Exception as e:
+        print(f"Auto-snapshot skipped: {e}")
 
     yield
 
@@ -258,6 +402,9 @@ app.include_router(neurons.router)
 app.include_router(admin.router)
 app.include_router(autopilot.router)
 app.include_router(performance.router)
+app.include_router(provenance.router)
+app.include_router(compliance.router)
+app.include_router(ingest.router)
 
 
 @app.get("/health")

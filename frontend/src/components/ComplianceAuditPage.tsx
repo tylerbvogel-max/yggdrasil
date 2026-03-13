@@ -1,7 +1,30 @@
+import { useState, useEffect } from 'react';
 import { useComplianceAudit } from '../hooks/useComplianceAudit';
+import { createSnapshot, fetchSnapshots, type ComplianceSnapshotSummary } from '../api';
 
 export default function ComplianceAuditPage() {
   const { data, error, loading } = useComplianceAudit();
+  const [snapshots, setSnapshots] = useState<ComplianceSnapshotSummary[]>([]);
+  const [snapping, setSnapping] = useState(false);
+  const [snapError, setSnapError] = useState('');
+
+  useEffect(() => {
+    fetchSnapshots(10).then(setSnapshots).catch(() => {});
+  }, []);
+
+  const handleSnapshot = async () => {
+    setSnapping(true);
+    setSnapError('');
+    try {
+      await createSnapshot('manual');
+      const updated = await fetchSnapshots(10);
+      setSnapshots(updated);
+    } catch (e: unknown) {
+      setSnapError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSnapping(false);
+    }
+  };
 
   if (error) return <div className="error-msg">{error}</div>;
   if (loading || !data) return <div className="loading">Running compliance scan...</div>;
@@ -39,6 +62,46 @@ export default function ComplianceAuditPage() {
           <div className="card-label">Neurons Scanned</div>
         </div>
       </div>
+
+      {/* Snapshot controls */}
+      <section className="security-section" style={{ marginBottom: 24 }}>
+        <h3>Compliance Snapshots</h3>
+        <p className="security-section-desc">
+          Snapshots capture the full compliance audit state for trend tracking. Auto-snapshots run weekly on startup.
+        </p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+          <button onClick={handleSnapshot} disabled={snapping}
+            style={{ background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', fontSize: '0.8rem', cursor: 'pointer' }}>
+            {snapping ? 'Taking Snapshot...' : 'Take Snapshot'}
+          </button>
+          {snapError && <span style={{ color: '#ef4444', fontSize: '0.8rem' }}>{snapError}</span>}
+        </div>
+        {snapshots.length > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {snapshots.map(s => (
+              <div key={s.id} style={{
+                background: 'var(--bg-input)', borderRadius: 6, padding: '8px 12px',
+                fontSize: '0.75rem', minWidth: 140,
+              }}>
+                <div style={{ fontWeight: 600, color: '#60a5fa', marginBottom: 4 }}>
+                  {s.snapshot_date?.split('T')[0]}
+                </div>
+                <div>Neurons: {s.total_neurons}</div>
+                <div style={{ color: s.pii_clean ? '#22c55e' : '#ef4444' }}>
+                  PII: {s.pii_clean ? 'Clean' : 'Findings'}
+                </div>
+                <div>CV: {s.coverage_cv.toFixed(3)}</div>
+                <div style={{ color: s.fairness_pass ? '#22c55e' : '#ef4444' }}>
+                  Fairness: {s.fairness_pass ? 'Pass' : 'Fail'}
+                </div>
+                <div style={{ color: '#94a3b8', fontSize: '0.65rem', marginTop: 2 }}>
+                  {s.trigger}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* PII Scan */}
       <section className="security-section">

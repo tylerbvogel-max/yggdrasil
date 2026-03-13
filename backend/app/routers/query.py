@@ -13,16 +13,63 @@ from app.schemas import (
     RefineRequest, RefineResponse, NeuronUpdateSuggestion, NewNeuronSuggestion,
     ApplyRefineRequest, ApplyRefineResponse, RefinementOut,
 )
-from app.services.executor import execute_query
+from app.services.executor import execute_query, prepare_context
 from app.services.claude_cli import claude_chat, estimate_cost
 from app.services.neuron_service import get_system_state, score_candidates
 from app.services.scoring_engine import update_impact_ema
 from app.services.input_guard import check_input, check_output_risk, check_output_grounding
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 
 router = APIRouter(tags=["query"])
 
 VALID_MODES = {"haiku_neuron", "haiku_raw", "sonnet_neuron", "sonnet_raw", "opus_neuron", "opus_raw"}
+
+
+# ── Lightweight context endpoint for Corvus integration ──
+
+class ContextRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=5000)
+    project_path: str | None = None
+    token_budget: int = Field(4000, ge=500, le=16000)
+    top_k: int = Field(8, ge=1, le=50)
+
+
+class ContextResponse(BaseModel):
+    system_prompt: str
+    intent: str
+    departments: list[str]
+    role_keys: list[str]
+    keywords: list[str]
+    neurons_activated: int
+    neuron_scores: list[dict] = []
+    classify_cost_usd: float = 0
+
+
+@router.post("/context", response_model=ContextResponse)
+async def get_context(req: ContextRequest, db: AsyncSession = Depends(get_db)):
+    """Lightweight context assembly endpoint — runs prepare_context() without LLM execution.
+
+    Designed for external consumers (e.g., Corvus) that need Yggdrasil's domain context
+    injected into their own LLM calls. Returns the assembled system prompt and metadata.
+    """
+    ctx = await prepare_context(
+        db,
+        req.message,
+        token_budget=req.token_budget,
+        top_k=req.top_k,
+        project_path=req.project_path,
+    )
+    return ContextResponse(
+        system_prompt=ctx.system_prompt,
+        intent=ctx.intent,
+        departments=ctx.departments,
+        role_keys=ctx.role_keys,
+        keywords=ctx.keywords,
+        neurons_activated=ctx.neurons_activated,
+        neuron_scores=ctx.neuron_scores,
+        classify_cost_usd=ctx.classify_cost_usd,
+    )
 
 
 def _parse_slots(query: Query) -> list[SlotResult]:

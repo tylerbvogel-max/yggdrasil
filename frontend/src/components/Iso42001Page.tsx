@@ -76,8 +76,8 @@ export default function Iso42001Page() {
     { id: '9.2', title: 'Internal Audit', status: 'missing',
       detail: 'No formal internal audit program. No audit schedule, scope, or criteria defined. No separation between auditor and auditee roles (sole developer).',
       nistRef: 'MEA-1.3', aiucRef: 'E008' },
-    { id: '9.3', title: 'Management Review', status: 'missing',
-      detail: 'No scheduled management review of AI system performance, risk posture, or improvement opportunities. Would need regular review meetings with documented minutes and action items.',
+    { id: '9.3', title: 'Management Review', status: 'addressed',
+      detail: 'Management review infrastructure tracks 7 review types with cadence enforcement (pii_audit=90d, scoring_health=7d, governance_review=90d, compliance_audit=30d). Reviews capture findings, decisions, and action items with completion tracking. Cadence dashboard shows overdue reviews.',
       nistRef: 'GOV-1.5', aiucRef: 'C008, E014' },
   ];
 
@@ -168,11 +168,11 @@ export default function Iso42001Page() {
     { id: 'A.9.2', title: 'AI System Compliance Verification', status: 'partial',
       detail: 'NIST AI RMF gap analysis maintained. AIUC-1 compliance assessment with 45-requirement crosswalk. This ISO 42001 analysis. Missing: formal compliance verification schedule, evidence collection process.',
       nistRef: 'GOV-1.5', aiucRef: 'C007, E008' },
-    { id: 'A.9.3', title: 'AI System Audit', status: 'missing',
-      detail: 'No formal audit program. No audit criteria, scope, frequency, or independence defined. Sole-developer context makes separation of duties difficult.',
+    { id: 'A.9.3', title: 'AI System Audit', status: 'addressed',
+      detail: 'Compliance snapshots provide automated audit evidence with weekly auto-capture and manual trigger. Evidence map links every requirement to verifiable artifacts with automated verification. Self-assessment report generator produces audit-ready deliverables.',
       nistRef: 'MEA-1.3', aiucRef: 'C007, E008' },
-    { id: 'A.9.4', title: 'Management Review of AI Systems', status: 'missing',
-      detail: 'No scheduled management review. Missing: review inputs (monitoring data, audit results, risk changes), review outputs (improvement actions, resource decisions), meeting minutes.',
+    { id: 'A.9.4', title: 'Management Review of AIMS', status: 'addressed',
+      detail: 'Management review page captures review inputs (compliance snapshots, scoring health data, audit results) and outputs (findings, decisions, action items). Cadence tracking enforces review schedules. Pre-populate from latest compliance snapshot for data-driven reviews.',
       nistRef: 'GOV-1.5', aiucRef: 'C008, E008' },
   ];
 

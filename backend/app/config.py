@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     spread_instantiate_decay: float = 0.6
     spread_instantiate_min_weight: float = 0.10
     concept_activation_boost: float = 1.3
+    # Per-project neuron subgraph caching
+    project_cache_enabled: bool = True
+    project_cache_boost_max: float = 1.3
+    project_cache_min_queries: int = 3
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

@@ -174,6 +174,60 @@ npm run build`}</CodeBlock>
       </section>
 
       <section className="about-section">
+        <h3>MCP Integration (Optional)</h3>
+        <p>
+          Yggdrasil can be used as an MCP server, allowing Claude Code to query the neuron graph directly
+          for context enrichment — no manual copy-paste of prompts needed.
+        </p>
+
+        <StepCard number={9} title="Verify MCP configuration">
+          <p>
+            The repository includes a <code>.mcp.json</code> file that tells Claude Code how to spawn the
+            Yggdrasil MCP server:
+          </p>
+          <CodeBlock>{`# .mcp.json (already in repo root)
+{
+  "mcpServers": {
+    "yggdrasil": {
+      "type": "stdio",
+      "command": "/home/tylerbvogel/Projects/yggdrasil/backend/venv/bin/python",
+      "args": ["-m", "app.mcp_server"],
+      "cwd": "/home/tylerbvogel/Projects/yggdrasil/backend"
+    }
+  }
+}`}</CodeBlock>
+          <p style={{ marginTop: 8 }}>
+            When you open Claude Code in the <code>yggdrasil/</code> directory, it will automatically
+            detect this file and make the Yggdrasil tools available.
+          </p>
+        </StepCard>
+
+        <StepCard number={10} title="Test MCP tools in Claude Code">
+          <p>
+            Open Claude Code in the project directory and verify the tools appear:
+          </p>
+          <CodeBlock>{`cd ~/Projects/yggdrasil
+claude
+# Then ask: "Use the yggdrasil graph_stats tool to show me the neuron graph statistics"`}</CodeBlock>
+          <p style={{ marginTop: 8 }}>
+            You should see 7 tools available: <code>query_graph</code>, <code>impact_analysis</code>,{' '}
+            <code>neuron_detail</code>, <code>browse_departments</code>, <code>graph_stats</code>,{' '}
+            <code>cost_report</code>, and <code>discover_clusters</code>.
+          </p>
+        </StepCard>
+
+        <StepCard number={11} title="Use Yggdrasil context in queries">
+          <p>
+            The primary workflow: ask Claude Code a domain question, and it calls <code>query_graph</code>
+            to get neuron-enriched context before answering:
+          </p>
+          <CodeBlock>{`# In Claude Code (with MCP connected):
+"What are the ITAR compliance requirements for exporting composite materials?"
+# Claude Code automatically calls query_graph → gets enriched context → answers with neuron knowledge`}</CodeBlock>
+        </StepCard>
+      </section>
+
+      <section className="about-section">
         <h3>Verify Installation</h3>
         <CodeBlock>{`# Health check
 curl http://localhost:8002/health
@@ -205,8 +259,12 @@ cd backend && pytest tests/ -v`}</CodeBlock>
 │   │   │   ├── classifier.py    # Haiku intent classification
 │   │   │   ├── scoring_engine.py # 5-signal neuron scoring
 │   │   │   ├── prompt_assembler.py # Top-K token-budget packing
-│   │   │   ├── executor.py      # Multi-slot execution
-│   │   │   └── neuron_service.py # Neuron helpers + tree walking
+│   │   │   ├── executor.py      # Multi-slot execution + prepare_context()
+│   │   │   ├── neuron_service.py # Neuron helpers + tree walking
+│   │   │   ├── structural_resolver.py # Zero-cost deterministic fast path
+│   │   │   ├── project_cache.py  # Per-project neuron relevance caching
+│   │   │   └── clustering.py     # Label propagation cluster discovery
+│   │   ├── mcp_server.py        # MCP stdio server (7 tools for Claude Code)
 │   │   └── seed/
 │   │       ├── loader.py        # YAML → neuron graph seeder
 │   │       └── yggdrasil_org.yaml # Domain hierarchy (9 depts)
@@ -221,6 +279,7 @@ cd backend && pytest tests/ -v`}</CodeBlock>
 │   ├── package.json
 │   └── vite.config.ts
 ├── docs/                        # Governance, risk map, system card
+├── .mcp.json                     # MCP server config for Claude Code
 ├── .env.example
 └── CLAUDE.md`}</CodeBlock>
       </section>
@@ -413,6 +472,46 @@ aerospace components under ITAR regulations?`}</CodeBlock>
             Review proposed changes before applying. The <strong>Refinements</strong> tab shows the full
             audit trail of all autopilot-driven changes.
           </p>
+        </StepCard>
+      </section>
+
+      <section className="about-section">
+        <h3>Walkthrough: Using Yggdrasil via MCP</h3>
+
+        <StepCard number={1} title="Ensure PostgreSQL is running">
+          <p>
+            The MCP server connects directly to PostgreSQL (same connection pool as the FastAPI backend).
+            The backend does <strong>not</strong> need to be running &mdash; the MCP server operates independently.
+          </p>
+        </StepCard>
+
+        <StepCard number={2} title="Open Claude Code in the project directory">
+          <CodeBlock>{`cd ~/Projects/yggdrasil
+claude`}</CodeBlock>
+          <p style={{ marginTop: 8 }}>
+            Claude Code automatically discovers <code>.mcp.json</code> and spawns the Yggdrasil MCP server
+            as a child process using stdio transport.
+          </p>
+        </StepCard>
+
+        <StepCard number={3} title="Ask domain questions naturally">
+          <p>
+            Just ask questions as usual. Claude Code will call <code>query_graph</code> to get neuron-enriched
+            context when it determines domain knowledge would be helpful:
+          </p>
+          <CodeBlock>{`"What FAR clauses apply to indirect cost rate agreements?"
+"How does our quality management system handle non-conforming materials?"
+"What are the CMMC Level 2 requirements for access control?"`}</CodeBlock>
+        </StepCard>
+
+        <StepCard number={4} title="Explore the graph interactively">
+          <p>
+            Use the exploration tools to understand the knowledge structure:
+          </p>
+          <CodeBlock>{`"Use browse_departments to show me all departments"
+"Use impact_analysis to find neurons related to ITAR"
+"Use neuron_detail to inspect neuron #42"
+"Use discover_clusters to find cross-department patterns"`}</CodeBlock>
         </StepCard>
       </section>
 

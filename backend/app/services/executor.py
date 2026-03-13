@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +24,160 @@ from app.services.neuron_service import (
 from app.services.prompt_assembler import assemble_prompt
 from app.services.propagation import propagate_activation
 from app.services.neuron_service import NeuronCandidate
+from app.services.scoring_engine import NeuronScoreBreakdown
+
+
+@dataclass
+class PreparedContext:
+    """Result of the classify → score → spread → inhibit → assemble pipeline."""
+    system_prompt: str
+    intent: str
+    departments: list[str]
+    role_keys: list[str]
+    keywords: list[str]
+    neuron_scores: list[dict] = field(default_factory=list)
+    neurons_activated: int = 0
+    neuron_map: dict[int, Neuron] = field(default_factory=dict)
+    all_scored: list[NeuronScoreBreakdown] = field(default_factory=list)
+    classify_cost_usd: float = 0.0
+    classify_input_tokens: int = 0
+    classify_output_tokens: int = 0
+
+
+async def prepare_context(
+    db: AsyncSession,
+    user_message: str,
+    token_budget: int | None = None,
+    top_k: int | None = None,
+    candidate_pool: int | None = None,
+    project_path: str | None = None,
+) -> PreparedContext:
+    """Run classify → score → spread → inhibit → assemble without LLM execution.
+
+    This is the core neuron graph pipeline extracted for reuse by MCP and the REST API.
+    """
+    # Check structural resolver first (zero-cost fast path)
+    from app.services.structural_resolver import try_structural_resolve
+    structural = await try_structural_resolve(db, user_message)
+    if structural is not None:
+        return structural
+
+    effective_top_k = top_k or settings.top_k_neurons
+    effective_pool = candidate_pool or settings.semantic_prefilter_top_n
+    effective_budget = token_budget or settings.token_budget
+
+    # Embed query + classify in parallel
+    query_embedding = None
+    async def _embed_query():
+        import concurrent.futures
+        loop = asyncio.get_running_loop()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            from app.services.embedding_service import embed_text
+            return await loop.run_in_executor(pool, embed_text, user_message)
+
+    embed_task = asyncio.create_task(_embed_query())
+    classify_task = asyncio.create_task(classify_query(user_message))
+
+    classify_result = await classify_task
+    try:
+        query_embedding = await embed_task
+    except Exception as e:
+        print(f"Query embedding failed, falling back to keywords: {e}")
+
+    classification = classify_result["classification"]
+    intent = classification.get("intent", "general_query")
+    departments = classification.get("departments", [])
+    role_keys = classification.get("role_keys", [])
+    keywords = classification.get("keywords", [])
+
+    state = await get_system_state(db)
+
+    # Candidate selection: semantic prefilter (primary) or org-chart filter (fallback)
+    semantic_candidates: list[tuple[int, float]] | None = None
+    if settings.semantic_prefilter_enabled and query_embedding is not None:
+        from app.services.semantic_prefilter import semantic_prefilter
+        semantic_candidates = await semantic_prefilter(db, query_embedding, top_n_override=effective_pool)
+
+    if semantic_candidates:
+        sem_ids = [nid for nid, _ in semantic_candidates]
+        sem_sim_map = {nid: sim for nid, sim in semantic_candidates}
+        candidates = await _load_candidates_by_ids(db, sem_ids, keywords)
+        scored = await score_candidates(
+            db, candidates, state.total_queries, keywords,
+            departments, role_keys,
+            query_embedding=query_embedding,
+            precomputed_similarities=sem_sim_map,
+        )
+    else:
+        candidates = await get_neurons_by_filter(db, departments, role_keys, keywords)
+        if not candidates:
+            candidates = await get_neurons_by_filter(db)
+        scored = await score_candidates(db, candidates, state.total_queries, keywords, departments, role_keys, query_embedding=query_embedding)
+
+    scored = await spread_activation(db, scored, effective_top_k)
+
+    # Inhibitory regulation
+    if settings.inhibition_enabled:
+        from app.services.inhibitory_service import apply_inhibition
+        all_scored, survivor_count = await apply_inhibition(db, scored, effective_top_k)
+        effective_top_k = survivor_count
+    else:
+        all_scored = await apply_diversity_floor(db, scored, effective_top_k)
+
+    # Apply project cache boost if available
+    if project_path and getattr(settings, 'project_cache_enabled', False):
+        from app.services.project_cache import get_project_boost
+        candidate_ids = [s.neuron_id for s in all_scored[:effective_top_k]]
+        boosts = await get_project_boost(db, project_path, candidate_ids)
+        if boosts:
+            for s in all_scored[:effective_top_k]:
+                boost = boosts.get(s.neuron_id, 1.0)
+                s.combined *= boost
+            all_scored[:effective_top_k] = sorted(
+                all_scored[:effective_top_k], key=lambda s: s.combined, reverse=True
+            )
+
+    # Load full Neuron objects for top-K
+    neuron_map: dict[int, Neuron] = {}
+    top_k_ids = [s.neuron_id for s in all_scored[:effective_top_k]]
+    if top_k_ids:
+        result = await db.execute(select(Neuron).where(Neuron.id.in_(top_k_ids)))
+        for neuron in result.scalars().all():
+            neuron_map[neuron.id] = neuron
+
+    # Assemble system prompt
+    system_prompt = assemble_prompt(intent, all_scored[:effective_top_k], neuron_map, budget_tokens=effective_budget)
+
+    # Build neuron score dicts
+    neuron_scores = [
+        {"neuron_id": s.neuron_id, "combined": s.combined, "burst": s.burst,
+         "impact": s.impact, "precision": s.precision, "novelty": s.novelty,
+         "recency": s.recency, "relevance": s.relevance, "spread_boost": s.spread_boost,
+         "label": neuron_map[s.neuron_id].label if s.neuron_id in neuron_map else None,
+         "department": neuron_map[s.neuron_id].department if s.neuron_id in neuron_map else None,
+         "layer": neuron_map[s.neuron_id].layer if s.neuron_id in neuron_map else 0}
+        for s in all_scored[:effective_top_k]
+    ]
+
+    # Record project firings if applicable
+    if project_path and getattr(settings, 'project_cache_enabled', False):
+        from app.services.project_cache import record_project_firings
+        await record_project_firings(db, project_path, all_scored[:effective_top_k])
+
+    return PreparedContext(
+        system_prompt=system_prompt,
+        intent=intent,
+        departments=departments,
+        role_keys=role_keys,
+        keywords=keywords,
+        neuron_scores=neuron_scores,
+        neurons_activated=min(len(all_scored), effective_top_k),
+        neuron_map=neuron_map,
+        all_scored=all_scored[:effective_top_k],
+        classify_cost_usd=classify_result.get("cost_usd", 0),
+        classify_input_tokens=classify_result["input_tokens"],
+        classify_output_tokens=classify_result["output_tokens"],
+    )
 
 
 # Each slot is a dict: {mode, model, neurons, response, input_tokens, output_tokens, cost_usd}
@@ -82,85 +237,35 @@ async def execute_query(
         default=settings.semantic_prefilter_top_n,
     )
 
-    # Stage 1: Classify + score (shared across all neuron slots)
+    # Stage 1: Use prepare_context() for neuron scoring
     classify_result = {"classification": {}, "input_tokens": 0, "output_tokens": 0}
     intent = "general_query"
     departments: list[str] = []
     role_keys: list[str] = []
     keywords: list[str] = []
-    all_scored = []  # Full scored list up to max_top_k
+    all_scored: list[NeuronScoreBreakdown] = []
     neuron_map: dict[int, Neuron] = {}
 
     if needs_neurons:
-        # Embed query + classify in parallel (embedding is CPU-bound, classify is IO-bound)
-        query_embedding = None
-        async def _embed_query():
-            import concurrent.futures
-            loop = asyncio.get_running_loop()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                from app.services.embedding_service import embed_text
-                return await loop.run_in_executor(pool, embed_text, user_message)
-
-        embed_task = asyncio.create_task(_embed_query())
-        classify_task = asyncio.create_task(classify_query(user_message))
-
-        # Await both — embedding failure is non-fatal
-        classify_result = await classify_task
-        try:
-            query_embedding = await embed_task
-        except Exception as e:
-            print(f"Query embedding failed, falling back to keywords: {e}")
-
-        classification = classify_result["classification"]
-        intent = classification.get("intent", "general_query")
-        departments = classification.get("departments", [])
-        role_keys = classification.get("role_keys", [])
-        keywords = classification.get("keywords", [])
-
-        state = await get_system_state(db)
-
-        # Candidate selection: semantic prefilter (primary) or org-chart filter (fallback)
-        semantic_candidates: list[tuple[int, float]] | None = None
-        if settings.semantic_prefilter_enabled and query_embedding is not None:
-            from app.services.semantic_prefilter import semantic_prefilter
-            semantic_candidates = await semantic_prefilter(db, query_embedding, top_n_override=max_candidate_pool)
-
-        if semantic_candidates:
-            # Load lightweight NeuronCandidate objects for the semantically-selected IDs
-            sem_ids = [nid for nid, _ in semantic_candidates]
-            sem_sim_map = {nid: sim for nid, sim in semantic_candidates}
-            candidates = await _load_candidates_by_ids(db, sem_ids, keywords)
-            # Score with pre-computed similarities (skip redundant embedding lookup)
-            scored = await score_candidates(
-                db, candidates, state.total_queries, keywords,
-                departments, role_keys,
-                query_embedding=query_embedding,
-                precomputed_similarities=sem_sim_map,
-            )
-        else:
-            # Fallback: org-chart filtering (cold start or feature disabled)
-            candidates = await get_neurons_by_filter(db, departments, role_keys, keywords)
-            if not candidates:
-                candidates = await get_neurons_by_filter(db)
-            scored = await score_candidates(db, candidates, state.total_queries, keywords, departments, role_keys, query_embedding=query_embedding)
-
-        scored = await spread_activation(db, scored, max_top_k)
-
-        # Inhibitory regulation (replaces diversity floor when enabled)
-        if settings.inhibition_enabled:
-            from app.services.inhibitory_service import apply_inhibition
-            all_scored, survivor_count = await apply_inhibition(db, scored, max_top_k)
-            # Inhibition determines the effective top-K — only survivors get assembled
-            max_top_k = survivor_count
-        else:
-            all_scored = await apply_diversity_floor(db, scored, max_top_k)
-
-        # Only load full Neuron objects for top-K (needed for prompt assembly + metadata)
-        top_k_ids = [s.neuron_id for s in all_scored[:max_top_k]]
-        if top_k_ids:
-            result = await db.execute(select(Neuron).where(Neuron.id.in_(top_k_ids)))
-            for neuron in result.scalars().all():
-                neuron_map[neuron.id] = neuron
+        ctx = await prepare_context(
+            db, user_message,
+            token_budget=max(s["token_budget"] for s in slot_specs if s["mode"] in NEURON_MODES),
+            top_k=max_top_k,
+            candidate_pool=max_candidate_pool,
+        )
+        intent = ctx.intent
+        departments = ctx.departments
+        role_keys = ctx.role_keys
+        keywords = ctx.keywords
+        all_scored = ctx.all_scored
+        neuron_map = ctx.neuron_map
+        max_top_k = ctx.neurons_activated
+        classify_result = {
+            "classification": {},
+            "input_tokens": ctx.classify_input_tokens,
+            "output_tokens": ctx.classify_output_tokens,
+            "cost_usd": ctx.classify_cost_usd,
+        }
 
     # Stage 2: Assemble prompts per unique (budget, top_k) pair, then execute all slots
     # Cache assembled prompts to avoid redundant assembly

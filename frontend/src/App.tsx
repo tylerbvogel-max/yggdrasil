@@ -25,7 +25,9 @@ import LayerHeatmap from './components/LayerHeatmap'
 import MethodologicalRisks from './components/MethodologicalRisks'
 import NeuronUniverse from './components/NeuronUniverse'
 import ArchitecturePlanPage from './components/ArchitecturePlanPage'
-type Tab = 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'arch-plan' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks';
+import ManagementReviewPage from './components/ManagementReviewPage'
+import EvidenceMapPage from './components/EvidenceMapPage'
+type Tab = 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'arch-plan' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks' | 'mgmt-reviews' | 'evidence-map';
 
 interface NavItem {
   key: Tab;
@@ -66,9 +68,18 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { key: 'performance', label: 'Performance' },
       { key: 'quality', label: 'Quality' },
       { key: 'fairness', label: 'Fairness' },
-      { key: 'compliance-audit', label: 'Compliance' },
       { key: 'evaluation', label: 'Evaluation' },
       { key: 'perf-explain', label: 'Methodology' },
+    ],
+  },
+  {
+    label: 'Compliance',
+    items: [
+      { key: 'compliance-audit', label: 'Audit Scan' },
+      { key: 'mgmt-reviews', label: 'Reviews' },
+      { key: 'evidence-map', label: 'Evidence Map' },
+      { key: 'compliance', label: 'Unified View' },
+      { key: 'governance', label: 'Governance' },
     ],
   },
   {
@@ -78,8 +89,6 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { key: 'about', label: 'Overview' },
       { key: 'arch-plan', label: 'Architecture Plan' },
       { key: 'pipeline', label: 'Pipeline' },
-      { key: 'compliance', label: 'Compliance' },
-      { key: 'governance', label: 'Governance' },
       { key: 'method-risks', label: 'Risks' },
       { key: 'nextsteps', label: 'Next Steps' },
       { key: 'monetization', label: 'Monetization', className: 'nav-monetization' },
@@ -92,7 +101,7 @@ export default function App() {
   const [explorerNeuronId, setExplorerNeuronId] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    () => new Set(NAV_GROUPS.map(g => g.label))
+    () => new Set()
   );
 
   function navigateToNeuron(id: number) {
@@ -182,6 +191,8 @@ export default function App() {
         {tab === 'monetization' && <MonetizationPage />}
         {tab === 'compliance' && <CompliancePage />}
         {tab === 'compliance-audit' && <ComplianceAuditPage />}
+        {tab === 'mgmt-reviews' && <ManagementReviewPage />}
+        {tab === 'evidence-map' && <EvidenceMapPage onNavigate={k => setTab(k as Tab)} />}
         {tab === 'quality' && <QualityPage />}
         {tab === 'fairness' && <FairnessPage />}
         {tab === 'governance' && <GovernancePage />}

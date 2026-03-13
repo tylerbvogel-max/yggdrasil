@@ -17,5 +17,8 @@ backend/*.json
 # Env
 .env
 
+# Backups
+*.sql.gz
+
 # OS
 .DS_Store

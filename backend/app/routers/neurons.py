@@ -140,6 +140,18 @@ async def list_refinements(db: AsyncSession = Depends(get_db)):
     return out
 
 
+@router.get("/clusters")
+async def neuron_clusters(
+    min_weight: float = 0.3,
+    min_size: int = 3,
+    db: AsyncSession = Depends(get_db),
+):
+    """Discover cross-department neuron clusters via label propagation on co-firing edges."""
+    from app.services.clustering import find_clusters
+    clusters = await find_clusters(db, min_weight=min_weight, min_size=min_size)
+    return {"cluster_count": len(clusters), "clusters": clusters}
+
+
 @router.get("/edges/department-chord")
 async def department_chord(layer: int = 1, min_weight: float = 0.15, db: AsyncSession = Depends(get_db)):
     """Aggregate co-firing edges grouped at a specific neuron layer.

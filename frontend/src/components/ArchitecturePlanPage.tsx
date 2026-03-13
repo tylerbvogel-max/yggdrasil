@@ -396,6 +396,11 @@ export default function ArchitecturePlanPage() {
             <tr><td><code>prompt_assembler</code></td><td style={{ color: '#22c55e' }}>Stays &mdash; unchanged</td></tr>
             <tr><td>Dept/role on Neuron</td><td style={{ color: '#22c55e' }}>Stays as metadata &mdash; display, classifier boost, regulator regions</td></tr>
             <tr><td>Embeddings</td><td style={{ color: '#22c55e' }}>Stays, becomes primary &mdash; backbone of candidate selection</td></tr>
+            <tr><td><code>prepare_context()</code></td><td style={{ color: '#22c55e' }}>New &mdash; extracted from <code>execute_query()</code> for reuse by MCP server and REST API</td></tr>
+            <tr><td><code>mcp_server.py</code></td><td style={{ color: '#22c55e' }}>New &mdash; MCP stdio server exposing 7 tools (query_graph, impact_analysis, neuron_detail, browse_departments, graph_stats, cost_report, discover_clusters)</td></tr>
+            <tr><td><code>structural_resolver.py</code></td><td style={{ color: '#22c55e' }}>New &mdash; deterministic fast path for structural queries (zero API cost)</td></tr>
+            <tr><td><code>project_cache.py</code></td><td style={{ color: '#22c55e' }}>New &mdash; per-project neuron relevance tracking with boost multiplier (1.0&ndash;1.3&times;)</td></tr>
+            <tr><td><code>clustering.py</code></td><td style={{ color: '#22c55e' }}>New &mdash; label propagation on co-firing edges for emergent cross-department cluster discovery</td></tr>
           </tbody>
         </table>
       </section>
@@ -480,6 +485,14 @@ INHIBITION_ENABLED=true           # false → revert to static diversity floor`}
           <li><strong>Per-slot runtime timing</strong> &mdash; <code>duration_ms</code> per slot + live elapsed timer in Query Lab.</li>
           <li><strong>Activation graph</strong> &mdash; Force-directed co-firing network replacing radial spoke diagram. Hover-only labels, department-colored nodes.</li>
           <li><strong>System prompt override</strong> &mdash; Raw mode uses <code>--system-prompt</code> CLI flag to prevent built-in prompt injection.</li>
+        </ul>
+        <p>GitNexus-inspired enhancements implemented on 2026-03-13:</p>
+        <ul className="about-features">
+          <li><strong>MCP server mode</strong> &mdash; 7-tool stdio MCP server for Claude Code integration. <code>query_graph</code> runs the full pipeline without LLM execution. Shares PostgreSQL connection pool with FastAPI.</li>
+          <li><strong>Structural fast path</strong> &mdash; Regex-based resolver for deterministic queries (list departments, roles in X, neurons about Y, graph stats, neuron connections). Zero API cost, bypasses Haiku classification entirely.</li>
+          <li><strong>Per-project neuron caching</strong> &mdash; <code>ProjectProfile</code> model tracks neuron relevance per project path. After 3+ queries, frequently useful neurons get a 1.0&ndash;1.3&times; scoring boost.</li>
+          <li><strong>Auto-clustering</strong> &mdash; Label propagation on co-firing edges discovers cross-department neuron clusters. API endpoint + MCP tool + autopilot gap source for emergent cluster coverage.</li>
+          <li><strong>prepare_context() extraction</strong> &mdash; Core pipeline (classify &rarr; score &rarr; spread &rarr; inhibit &rarr; assemble) extracted into a standalone async function, enabling both MCP and REST API to share the same pipeline code.</li>
         </ul>
       </section>
     </div>

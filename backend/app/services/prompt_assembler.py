@@ -11,6 +11,14 @@ from app.services.scoring_engine import NeuronScoreBreakdown
 # Rough token estimation: ~4 chars per token
 CHARS_PER_TOKEN = 4
 
+AUTHORITY_TAG_MAP = {
+    "binding_standard": "BINDING",
+    "regulatory": "REGULATORY",
+    "industry_practice": "INDUSTRY",
+    "organizational": "ORG",
+    "informational": "INFO",
+}
+
 INTENT_VOICE_MAP = {
     "compliance": "You are a compliance and regulatory expert. Respond with precision, cite specific regulations (FAR, DFARS, CAS), and flag any risk areas.",
     "engineering": "You are a senior aerospace engineer. Provide technically rigorous analysis, reference applicable standards (MIL-STD, DO-178C, AS9100), and include specific methods.",
@@ -60,6 +68,17 @@ def assemble_prompt(
     # Header: intent-based voice framing
     header = _get_voice(intent)
     parts = [header, "", "## Reference Knowledge", ""]
+
+    # Add authority legend if any neurons have authority tags
+    has_authority = any(
+        hasattr(neuron_map.get(s.neuron_id), "authority_level")
+        and getattr(neuron_map.get(s.neuron_id), "authority_level", None)
+        for s in scored_neurons
+    )
+    if has_authority:
+        legend = "Authority: [BINDING]=binding standard, [REGULATORY]=regulatory requirement, [INDUSTRY]=industry practice"
+        parts.append(legend)
+        parts.append("")
 
     used_tokens = _estimate_tokens("\n".join(parts))
 
@@ -131,15 +150,21 @@ def _pack_neuron(
     budget: int,
 ) -> int:
     """Try to pack a neuron into parts. Returns updated used_tokens."""
+    authority_tag = ""
+    if hasattr(neuron, "authority_level") and neuron.authority_level:
+        tag = AUTHORITY_TAG_MAP.get(neuron.authority_level)
+        if tag:
+            authority_tag = f" [{tag}]"
+
     if neuron.content:
-        full_entry = f"**{neuron.label}** (L{neuron.layer}, score: {score.combined:.2f})\n{neuron.content}"
+        full_entry = f"**{neuron.label}**{authority_tag} (L{neuron.layer}, score: {score.combined:.2f})\n{neuron.content}"
         full_tokens = _estimate_tokens(full_entry)
         if used_tokens + full_tokens <= budget:
             parts.append(full_entry)
             return used_tokens + full_tokens
 
     if neuron.summary:
-        summary_entry = f"- {neuron.summary} (score: {score.combined:.2f})"
+        summary_entry = f"- {neuron.summary}{authority_tag} (score: {score.combined:.2f})"
         summary_tokens = _estimate_tokens(summary_entry)
         if used_tokens + summary_tokens <= budget:
             parts.append(summary_entry)

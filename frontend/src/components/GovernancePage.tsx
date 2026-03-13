@@ -86,9 +86,6 @@ export default function GovernancePage() {
           {kpiCard('Run Cost / 1M', data.kpis.run_cost_per_1m !== null ? `$${data.kpis.run_cost_per_1m.toFixed(2)}` : 'N/A',
             '\u2264 $4.00 (80% vs Opus)', data.kpis.run_cost_per_1m !== null ? data.kpis.run_cost_per_1m <= 4.00 : null,
             'Production cost per 1M tokens using only Haiku/Sonnet models. This is what it costs to run the system day-to-day, excluding Opus benchmark queries used during training and evaluation.')}
-          {kpiCard('Training Cost / 1M', data.kpis.cost_per_1m_tokens !== null ? `$${data.kpis.cost_per_1m_tokens.toFixed(2)}` : 'N/A',
-            'Informational', null,
-            'Total cost per 1M tokens across ALL model tiers, including Opus queries used for A/B benchmarking. This represents the full investment cost of building and evaluating the knowledge graph.')}
           {kpiCard('Parity Index', data.kpis.parity_index !== null ? `${(data.kpis.parity_index * 100).toFixed(1)}%` : 'N/A',
             '\u2265 85% of Opus quality', data.kpis.parity_index !== null ? data.kpis.parity_index >= 0.85 : null,
             'Quality parity with Opus: avg neuron-assisted eval score divided by avg Opus eval score. 100% = identical quality. Measures how close the cheaper Haiku+neurons approach gets to Opus-level answers.')}
@@ -159,12 +156,6 @@ export default function GovernancePage() {
               <td style={{ color: data.kpis.run_cost_per_1m !== null && data.kpis.run_cost_per_1m <= 4.00 ? '#22c55e' : '#fb923c' }}>
                 {data.kpis.run_cost_per_1m !== null && data.kpis.run_cost_per_1m <= 4.00 ? 'Met' : 'Below target'}
               </td>
-            </tr>
-            <tr>
-              <td>Training cost (all tiers incl. opus benchmarks)</td>
-              <td>Informational</td>
-              <td>{data.kpis.cost_per_1m_tokens !== null ? `$${data.kpis.cost_per_1m_tokens.toFixed(2)}` : 'N/A'}</td>
-              <td style={{ color: '#c8d0dc' }}>Tracking</td>
             </tr>
             <tr>
               <td>Quality parity (neuron eval / opus eval)</td>

@@ -1479,17 +1479,11 @@ def _is_false_positive(text: str, match_str: str, pii_type: str) -> bool:
     return False
 
 
-@router.get("/compliance-audit")
-async def compliance_audit(db: AsyncSession = Depends(get_db)):
-    """Comprehensive compliance audit covering MET-1 through MET-5, A007.
+async def run_compliance_audit(db: AsyncSession) -> dict:
+    """Reusable compliance audit logic. Returns the full audit dict.
 
-    Returns:
-    - pii_scan: PII detected in neuron content/summary fields
-    - bias_assessment: department coverage stats, eval score disaggregation
-    - scoring_baselines: per-signal distribution baselines with percentiles
-    - provenance_audit: source_type coverage, missing citations, stale neurons
+    Used by both the /compliance-audit endpoint and snapshot creation.
     """
-
     result = await db.execute(select(Neuron).where(Neuron.is_active == True))
     neurons = result.scalars().all()
     total_neurons = len(neurons)
@@ -1917,6 +1911,12 @@ async def compliance_audit(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/compliance-audit")
+async def compliance_audit(db: AsyncSession = Depends(get_db)):
+    """Comprehensive compliance audit covering MET-1 through MET-5, A007."""
+    return await run_compliance_audit(db)
+
+
 # ── Governance Dashboard: live metrics for AI objectives, change log, system health ──
 
 @router.get("/governance-dashboard")
@@ -2295,7 +2295,7 @@ async def link_concept_neuron(
     if not concept or concept.node_type != "concept":
         raise HTTPException(status_code=404, detail=f"Concept neuron #{concept_id} not found")
 
-    count = await link_concept_to_neurons(db, concept_id, target_ids, weight)
+    count = await link_concept_to_neurons(db, concept_id, target_ids, weight, concept_label=concept.label)
     await db.commit()
 
     return {
@@ -2317,6 +2317,17 @@ async def seed_all_concepts_endpoint(db: AsyncSession = Depends(get_db)):
     """Seed all concept neurons from the built-in registry (idempotent — skips existing)."""
     from app.services.concept_service import seed_all_concepts
     return await seed_all_concepts(db)
+
+
+@router.post("/concept-neurons/relink")
+async def relink_concepts_endpoint(db: AsyncSession = Depends(get_db)):
+    """Re-run pattern matching for all existing concept neurons.
+
+    Catches neurons missed by original seeding (e.g., label-only matches).
+    Uses upsert — existing edges keep their weight if higher.
+    """
+    from app.services.concept_service import relink_existing_concepts
+    return await relink_existing_concepts(db)
 
 
 @router.post("/bootstrap-firings")
@@ -2345,3 +2356,23 @@ async def purge_bootstrap_endpoint(db: AsyncSession = Depends(get_db)):
     """
     from app.services.bootstrap_service import purge_bootstrap
     return await purge_bootstrap(db)
+
+
+@router.post("/intra-department-bridge")
+async def intra_department_bridge_endpoint(
+    similarity_threshold: float = 0.45,
+    dry_run: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """Bridge role clusters within the same department using embedding similarity.
+
+    Creates cross-role edges where neurons are semantically similar but lack
+    connections due to role boundary isolation. Fixes intra-department
+    fragmentation (e.g., Finance/cost_estimator isolated from Finance/financial_analyst).
+
+    Args:
+        similarity_threshold: Cosine similarity cutoff (0-1). Lower = more edges. Default 0.45.
+        dry_run: Preview without writing.
+    """
+    from app.services.bootstrap_service import intra_department_bridge
+    return await intra_department_bridge(db, similarity_threshold=similarity_threshold, dry_run=dry_run)

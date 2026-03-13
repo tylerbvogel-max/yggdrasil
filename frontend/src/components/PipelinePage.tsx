@@ -1,10 +1,434 @@
+function PipelineArchitectureSVG() {
+  // Colors from design system
+  const c = {
+    bg: '#0a0e17',
+    card: '#131926',
+    border: '#1e2d4a',
+    text: '#ffffff',
+    dim: '#8896a8',
+    accent: '#38bdf8',
+    green: '#22c55e',
+    purple: '#a78bfa',
+    orange: '#fb923c',
+    red: '#ef4444',
+    pink: '#f472b6',
+    yellow: '#facc15',
+    teal: '#2dd4bf',
+  };
+
+  const W = 760;
+  const H = 820;
+
+  // Node dimensions
+  const nw = 180;  // node width
+  const nh = 44;   // node height
+  const r = 8;     // border radius
+
+  // Helper: rounded rect node
+  const Node = ({ x, y, label, color, sub, w, h, badge }: {
+    x: number; y: number; label: string; color: string;
+    sub?: string; w?: number; h?: number; badge?: string;
+  }) => {
+    const bw = w || nw;
+    const bh = h || nh;
+    return (
+      <g>
+        <rect x={x} y={y} width={bw} height={bh} rx={r} ry={r}
+          fill={c.card} stroke={color} strokeWidth={1.5} />
+        <text x={x + bw / 2} y={y + (sub ? bh / 2 - 5 : bh / 2 + 1)}
+          textAnchor="middle" dominantBaseline="middle"
+          fill={c.text} fontSize={11} fontWeight={600} fontFamily="Inter, sans-serif">
+          {label}
+        </text>
+        {sub && (
+          <text x={x + bw / 2} y={y + bh / 2 + 9}
+            textAnchor="middle" dominantBaseline="middle"
+            fill={c.dim} fontSize={9} fontFamily="Inter, sans-serif">
+            {sub}
+          </text>
+        )}
+        {badge && (
+          <g>
+            <rect x={x + bw - 36} y={y - 8} width={36} height={16} rx={8}
+              fill={color} opacity={0.15} stroke={color} strokeWidth={0.5} />
+            <text x={x + bw - 18} y={y} textAnchor="middle" dominantBaseline="middle"
+              fill={color} fontSize={8} fontWeight={700} fontFamily="Inter, sans-serif">
+              {badge}
+            </text>
+          </g>
+        )}
+      </g>
+    );
+  };
+
+  // Helper: arrow line
+  const Arrow = ({ x1, y1, x2, y2, color, dashed }: {
+    x1: number; y1: number; x2: number; y2: number;
+    color?: string; dashed?: boolean;
+  }) => (
+    <line x1={x1} y1={y1} x2={x2} y2={y2}
+      stroke={color || c.border} strokeWidth={1.5}
+      strokeDasharray={dashed ? '4 3' : undefined}
+      markerEnd="url(#arrowhead)" />
+  );
+
+  // Helper: curved path with arrow
+  const CurvedArrow = ({ d, color, dashed }: {
+    d: string; color?: string; dashed?: boolean;
+  }) => (
+    <path d={d} fill="none"
+      stroke={color || c.border} strokeWidth={1.5}
+      strokeDasharray={dashed ? '4 3' : undefined}
+      markerEnd="url(#arrowhead)" />
+  );
+
+  // Layout coordinates
+  const cx = W / 2;         // center X
+  const queryY = 30;
+  const resolverY = 100;
+  const classifyY = 200;
+  const scoreY = 290;
+  const spreadY = 360;
+  const inhibitY = 430;
+  const boostY = 500;
+  const assembleY = 570;
+  const mcpExitY = 645;
+  const executeY = 645;
+  const resultsY = 720;
+
+  // Column positions
+  const leftX = cx - 100;   // left branch
+  const rightX = cx + 100;  // right branch
+  const farRightX = cx + 230; // MCP exit / fast path exit
+
+  return (
+    <div style={{ marginBottom: 32 }}>
+      <h3 className="info-section-title" style={{ marginBottom: 4 }}>Architecture Overview</h3>
+      <p className="info-section-desc" style={{ marginBottom: 16 }}>
+        Three access paths through the neuron graph: structural fast path (green),
+        MCP context assembly (purple), and full REST execution (blue).
+      </p>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{
+        maxWidth: W, display: 'block', margin: '0 auto',
+        background: c.bg, borderRadius: 12, border: `1px solid ${c.border}`,
+      }}>
+        <defs>
+          <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill={c.border} />
+          </marker>
+          <marker id="arrowGreen" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill={c.green} />
+          </marker>
+          <marker id="arrowPurple" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill={c.purple} />
+          </marker>
+        </defs>
+
+        {/* ── Legend ── */}
+        <g transform="translate(16, 16)">
+          <line x1={0} y1={6} x2={24} y2={6} stroke={c.green} strokeWidth={2} />
+          <text x={30} y={10} fill={c.dim} fontSize={9} fontFamily="Inter, sans-serif">
+            Fast path (zero cost)
+          </text>
+          <line x1={140} y1={6} x2={164} y2={6} stroke={c.purple} strokeWidth={2} />
+          <text x={170} y={10} fill={c.dim} fontSize={9} fontFamily="Inter, sans-serif">
+            MCP path (context only)
+          </text>
+          <line x1={310} y1={6} x2={334} y2={6} stroke={c.accent} strokeWidth={2} />
+          <text x={340} y={10} fill={c.dim} fontSize={9} fontFamily="Inter, sans-serif">
+            REST path (full execution)
+          </text>
+        </g>
+
+        {/* ── Query Input ── */}
+        <Node x={cx - nw / 2} y={queryY} label="Query" sub="REST API / MCP / UI" color={c.accent} />
+
+        {/* Arrow: Query → Resolver */}
+        <Arrow x1={cx} y1={queryY + nh} x2={cx} y2={resolverY} />
+
+        {/* ── Structural Resolver ── */}
+        <Node x={cx - nw / 2} y={resolverY} label="Structural Resolver" sub="regex patterns • ~0ms" color={c.green} badge="$0" />
+
+        {/* Fast-path exit arrow (curved right) */}
+        <CurvedArrow
+          d={`M ${cx + nw / 2} ${resolverY + nh / 2} C ${farRightX - 20} ${resolverY + nh / 2}, ${farRightX} ${resolverY + nh / 2 + 20}, ${farRightX} ${resolverY + 70}`}
+          color={c.green} />
+        {/* Fast-path exit node */}
+        <Node x={farRightX - 60} y={resolverY + 72} label="Instant Response" sub="departments, stats, topics" color={c.green} w={120} badge="$0" />
+
+        {/* Arrow: Resolver → Parallel stage (non-structural) */}
+        <Arrow x1={cx} y1={resolverY + nh} x2={cx} y2={classifyY - 18} />
+        <text x={cx + 8} y={resolverY + nh + 20} fill={c.dim} fontSize={8} fontFamily="Inter, sans-serif">
+          non-structural
+        </text>
+
+        {/* ── Parallel: Classify + Embed ── */}
+        {/* Bracket label */}
+        <text x={cx} y={classifyY - 6} textAnchor="middle"
+          fill={c.accent} fontSize={9} fontWeight={600} fontFamily="Inter, sans-serif"
+          letterSpacing={0.5}>
+          PARALLEL
+        </text>
+
+        {/* Fork lines */}
+        <line x1={cx} y1={classifyY - 2} x2={leftX + nw / 2} y2={classifyY} stroke={c.border} strokeWidth={1} />
+        <line x1={cx} y1={classifyY - 2} x2={rightX + nw / 2} y2={classifyY} stroke={c.border} strokeWidth={1} />
+
+        <Node x={leftX} y={classifyY} label="Classify (Haiku)" sub="intent • depts • roles • keywords" color={c.accent} badge="~200ms" />
+        <Node x={rightX} y={classifyY} label="Embed + Prefilter" sub="384-dim cosine • top-N" color={c.teal} badge="~11ms" />
+
+        {/* Merge lines */}
+        <line x1={leftX + nw / 2} y1={classifyY + nh} x2={cx} y2={scoreY} stroke={c.border} strokeWidth={1} />
+        <line x1={rightX + nw / 2} y1={classifyY + nh} x2={cx} y2={scoreY} stroke={c.border} strokeWidth={1} />
+
+        {/* ── Score ── */}
+        <Node x={cx - nw / 2} y={scoreY} label="6-Signal Scoring" sub="Relevance gates 5 modulators" color={c.accent} />
+        <Arrow x1={cx} y1={scoreY + nh} x2={cx} y2={spreadY} />
+
+        {/* ── Spread ── */}
+        <Node x={cx - nw / 2} y={spreadY} label="Spread Activation" sub="stellate + pyramidal edges • 3 hops" color={c.accent} />
+        <Arrow x1={cx} y1={spreadY + nh} x2={cx} y2={inhibitY} />
+
+        {/* ── Inhibit ── */}
+        <Node x={cx - nw / 2} y={inhibitY} label="Inhibitory Regulation" sub="density • redundancy • cross-ref" color={c.accent} />
+        <Arrow x1={cx} y1={inhibitY + nh} x2={cx} y2={boostY} />
+
+        {/* ── Project Cache Boost ── */}
+        <Node x={cx - nw / 2} y={boostY} label="Project Cache Boost" sub="1.0–1.3× for known projects" color={c.orange} badge="optional" />
+        <Arrow x1={cx} y1={boostY + nh} x2={cx} y2={assembleY} />
+
+        {/* ── Assemble ── */}
+        <Node x={cx - nw / 2} y={assembleY} label="Prompt Assembly" sub="token-budgeted • dept-grouped" color={c.accent} />
+
+        {/* ── MCP Exit (curved right from assemble) ── */}
+        <CurvedArrow
+          d={`M ${cx + nw / 2} ${assembleY + nh / 2} C ${farRightX - 40} ${assembleY + nh / 2}, ${farRightX - 20} ${assembleY + nh / 2 + 30}, ${farRightX - 20} ${mcpExitY}`}
+          color={c.purple} />
+        <Node x={farRightX - 80} y={mcpExitY} label="MCP Response" sub="system_prompt + scores JSON" color={c.purple} w={120} badge="no LLM $" />
+
+        {/* ── REST continues to execution ── */}
+        <Arrow x1={cx} y1={assembleY + nh} x2={cx} y2={executeY} color={c.accent} />
+        <Node x={cx - nw / 2} y={executeY} label="LLM Execution" sub="Haiku / Sonnet / Opus" color={c.accent} />
+        <Arrow x1={cx} y1={executeY + nh} x2={cx} y2={resultsY} />
+
+        {/* ── Results ── */}
+        <Node x={cx - nw / 2} y={resultsY} label="Results + Recording" sub="fire neurons • update edges • costs" color={c.accent} />
+
+        {/* ── Cost annotations ── */}
+        <g>
+          {/* Brace-like annotation for the scoring block */}
+          <line x1={cx - nw / 2 - 20} y1={scoreY} x2={cx - nw / 2 - 20} y2={assembleY + nh}
+            stroke={c.border} strokeWidth={1} strokeDasharray="3 2" />
+          <text x={cx - nw / 2 - 24} y={(scoreY + assembleY + nh) / 2}
+            textAnchor="end" dominantBaseline="middle"
+            fill={c.dim} fontSize={8} fontFamily="Inter, sans-serif"
+            transform={`rotate(-90, ${cx - nw / 2 - 24}, ${(scoreY + assembleY + nh) / 2})`}>
+            prepare_context()
+          </text>
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+function MCPToolMap() {
+  const tools: {
+    name: string; desc: string; cost: string; color: string;
+    layer: 'pipeline' | 'read' | 'aggregate';
+  }[] = [
+    { name: 'query_graph', desc: 'Full pipeline → enriched context', cost: '~$0.00005', color: '#a78bfa', layer: 'pipeline' },
+    { name: 'impact_analysis', desc: 'Semantic search by topic', cost: '$0', color: '#2dd4bf', layer: 'read' },
+    { name: 'neuron_detail', desc: 'Single neuron + top edges', cost: '$0', color: '#60a5fa', layer: 'read' },
+    { name: 'browse_departments', desc: 'Dept/role hierarchy', cost: '$0', color: '#60a5fa', layer: 'read' },
+    { name: 'graph_stats', desc: 'Counts by layer, dept, edges', cost: '$0', color: '#22c55e', layer: 'aggregate' },
+    { name: 'cost_report', desc: 'Spend, tokens, avg cost', cost: '$0', color: '#22c55e', layer: 'aggregate' },
+    { name: 'discover_clusters', desc: 'Cross-dept co-firing clusters', cost: '$0', color: '#fb923c', layer: 'aggregate' },
+  ];
+
+  const layerLabels: Record<string, string> = {
+    pipeline: 'Runs neuron pipeline',
+    read: 'Direct DB read',
+    aggregate: 'DB aggregation',
+  };
+  const layerColors: Record<string, string> = {
+    pipeline: '#a78bfa',
+    read: '#60a5fa',
+    aggregate: '#22c55e',
+  };
+
+  return (
+    <div style={{ marginBottom: 32 }}>
+      <h3 className="info-section-title">MCP Tool Map</h3>
+      <p className="info-section-desc" style={{ marginBottom: 12 }}>
+        Seven tools available when Claude Code connects via MCP. Only <code style={{ color: '#a78bfa' }}>query_graph</code> touches
+        the Haiku API — the other six are pure database operations at zero cost.
+      </p>
+
+      {/* Layer legend */}
+      <div style={{ display: 'flex', gap: 16, marginBottom: 12, fontSize: '0.75rem' }}>
+        {Object.entries(layerLabels).map(([key, label]) => (
+          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{
+              width: 8, height: 8, borderRadius: '50%',
+              background: layerColors[key], flexShrink: 0,
+            }} />
+            <span style={{ color: '#c8d0dc' }}>{label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+        gap: 8,
+      }}>
+        {tools.map(t => (
+          <div key={t.name} style={{
+            background: '#131926', border: `1px solid #1e2d4a`,
+            borderRadius: 10, padding: '12px 14px',
+            borderLeft: `3px solid ${t.color}`,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <code style={{ color: t.color, fontSize: '0.8rem', fontWeight: 600 }}>{t.name}</code>
+              <span style={{
+                fontSize: '0.65rem', fontWeight: 700,
+                padding: '1px 6px', borderRadius: 8,
+                background: t.cost === '$0' ? '#22c55e18' : '#a78bfa18',
+                color: t.cost === '$0' ? '#22c55e' : '#a78bfa',
+                border: `1px solid ${t.cost === '$0' ? '#22c55e33' : '#a78bfa33'}`,
+              }}>
+                {t.cost}
+              </span>
+            </div>
+            <div style={{ color: '#c8d0dc', fontSize: '0.78rem', lineHeight: 1.4 }}>
+              {t.desc}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AccessPathComparison() {
+  const paths: {
+    name: string; color: string; entry: string; exit: string;
+    stages: string; cost: string; latency: string; useCase: string;
+  }[] = [
+    {
+      name: 'Structural Fast Path',
+      color: '#22c55e',
+      entry: 'Any (REST, MCP, UI)',
+      exit: 'After resolver',
+      stages: 'Resolver only',
+      cost: '$0',
+      latency: '~0ms',
+      useCase: '"List departments", "graph stats", "neurons about X"',
+    },
+    {
+      name: 'MCP Context',
+      color: '#a78bfa',
+      entry: 'Claude Code MCP',
+      exit: 'After assembly',
+      stages: 'Classify → Score → Spread → Inhibit → Assemble',
+      cost: '~$0.00005',
+      latency: '~200ms',
+      useCase: 'Domain questions where Claude Code is the executor',
+    },
+    {
+      name: 'Full REST Execution',
+      color: '#38bdf8',
+      entry: 'Query Lab UI / API',
+      exit: 'After LLM response',
+      stages: 'Classify → Score → Spread → Inhibit → Assemble → Execute',
+      cost: '$0.0001–0.05',
+      latency: '1–8s',
+      useCase: 'Direct answers, A/B evaluation, autopilot',
+    },
+  ];
+
+  return (
+    <div style={{ marginBottom: 32 }}>
+      <h3 className="info-section-title">Access Paths</h3>
+      <p className="info-section-desc" style={{ marginBottom: 12 }}>
+        Three ways into the neuron graph — each exits the pipeline at a different depth.
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {paths.map(p => (
+          <div key={p.name} style={{
+            background: '#131926', borderRadius: 10, padding: '14px 18px',
+            borderLeft: `3px solid ${p.color}`,
+            border: `1px solid #1e2d4a`,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <strong style={{ color: p.color, fontSize: '0.9rem' }}>{p.name}</strong>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <span style={{
+                  fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: 8,
+                  background: '#1a2136', color: p.color, border: `1px solid ${p.color}44`,
+                }}>
+                  {p.cost}
+                </span>
+                <span style={{
+                  fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: 8,
+                  background: '#1a2136', color: '#c8d0dc', border: '1px solid #1e2d4a',
+                }}>
+                  {p.latency}
+                </span>
+              </div>
+            </div>
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr 1fr',
+              gap: '4px 16px', fontSize: '0.78rem', color: '#c8d0dc', lineHeight: 1.5,
+            }}>
+              <div><span style={{ color: '#8896a8' }}>Entry:</span> {p.entry}</div>
+              <div><span style={{ color: '#8896a8' }}>Exit:</span> {p.exit}</div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <span style={{ color: '#8896a8' }}>Stages:</span> {p.stages}
+              </div>
+              <div style={{ gridColumn: '1 / -1', fontStyle: 'italic', color: '#8896a8' }}>
+                {p.useCase}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function PipelinePage() {
   return (
     <div className="info-page">
       <h2 className="info-title">Neuron Pipeline</h2>
       <p className="info-subtitle">How queries flow through classification, scoring, and prompt assembly</p>
 
+      <PipelineArchitectureSVG />
+      <MCPToolMap />
+      <AccessPathComparison />
+
+      <h3 className="info-section-title" style={{ marginTop: 8 }}>Detailed Stage Walkthrough</h3>
+      <p className="info-section-desc" style={{ marginBottom: 16 }}>
+        Expand each stage below for implementation details.
+      </p>
+
       <div className="flow-diagram">
+        <div className="flow-step" style={{ borderLeft: '3px solid #22c55e' }}>
+          <span className="flow-number" style={{ background: '#22c55e' }}>0</span>
+          <div className="flow-step-content">
+            <div className="flow-step-label">Structural Resolver (Fast Path)</div>
+            <div className="flow-step-desc">
+              Before any API calls, a regex + keyword pattern matcher checks if the query is structural
+              ("list departments", "roles in Engineering", "neurons about ITAR", "graph stats").
+              If matched, the answer is built directly from the database at <strong>zero API cost</strong> and
+              zero latency. Only non-structural queries proceed to the full pipeline below.
+              <br /><em style={{ color: 'var(--text-dim)' }}>~0ms, deterministic — no Haiku call</em>
+            </div>
+          </div>
+        </div>
+
+        <div className="flow-arrow" />
+
         <div className="flow-step">
           <span className="flow-number">1</span>
           <div className="flow-step-content">
@@ -151,6 +575,19 @@ export default function PipelinePage() {
             <div className="flow-step-desc">
               Responses return with token usage and cost breakdowns.
               If multiple modes ran, blind evaluation can compare quality.
+            </div>
+          </div>
+        </div>
+
+        <div className="flow-step" style={{ borderLeft: '3px solid #a78bfa', marginTop: 16 }}>
+          <span className="flow-number" style={{ background: '#a78bfa' }}>MCP</span>
+          <div className="flow-step-content">
+            <div className="flow-step-label">MCP Server Mode (Alternative Entry Point)</div>
+            <div className="flow-step-desc">
+              When accessed via MCP (Model Context Protocol), the pipeline stops after Stage 2f (Prompt Assembly).
+              The assembled system prompt and neuron metadata are returned as JSON &mdash; no LLM execution.
+              Claude Code uses the returned context directly, making its own execution decisions.
+              This eliminates execution cost while preserving full neuron graph intelligence.
             </div>
           </div>
         </div>
