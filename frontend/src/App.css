@@ -2043,7 +2043,10 @@ details summary:hover { color: var(--text); }
 }
 
 .home-shortcut-icon {
-  font-size: 1rem;
+  width: 18px;
+  height: 18px;
+  color: #c57b3a;
+  flex-shrink: 0;
 }
 
 /* Chat messages */

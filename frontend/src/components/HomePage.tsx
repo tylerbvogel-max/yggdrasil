@@ -54,19 +54,34 @@ export default function HomePage({ onNavigate }: { onNavigate: (tab: string) => 
           <p className="home-subtitle">Biomimetic knowledge graph for organizational intelligence</p>
           <div className="home-shortcuts">
             <button className="home-shortcut" onClick={() => onNavigate('query')}>
-              <span className="home-shortcut-icon">&#9889;</span>
+              <svg className="home-shortcut-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+              </svg>
               <span>Query Lab</span>
             </button>
             <button className="home-shortcut" onClick={() => onNavigate('explorer')}>
-              <span className="home-shortcut-icon">&#128065;</span>
+              <svg className="home-shortcut-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <circle cx="12" cy="12" r="9" />
+                <line x1="12" y1="3" x2="12" y2="6" />
+                <line x1="12" y1="18" x2="12" y2="21" />
+                <line x1="3" y1="12" x2="6" y2="12" />
+                <line x1="18" y1="12" x2="21" y2="12" />
+              </svg>
               <span>Explorer</span>
             </button>
             <button className="home-shortcut" onClick={() => onNavigate('corvus-observations')}>
-              <span className="home-shortcut-icon">&#128269;</span>
+              <svg className="home-shortcut-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="7" />
+                <line x1="16.5" y1="16.5" x2="21" y2="21" />
+              </svg>
               <span>Observations</span>
             </button>
             <button className="home-shortcut" onClick={() => onNavigate('dashboard')}>
-              <span className="home-shortcut-icon">&#128200;</span>
+              <svg className="home-shortcut-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="4 18 8 10 12 14 16 6 20 12" />
+                <line x1="4" y1="20" x2="20" y2="20" />
+              </svg>
               <span>Dashboard</span>
             </button>
           </div>
