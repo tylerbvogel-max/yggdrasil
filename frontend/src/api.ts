@@ -1023,6 +1023,109 @@ export function fetchComplianceReport(framework?: string): Promise<unknown> {
   return json<unknown>(`/admin/compliance-report${params}`);
 }
 
+// ── Security Compliance Frameworks (FedRAMP, SOC 2, CMMC) ──
+
+export interface FrameworkSummary {
+  framework: string;
+  total_controls?: number;
+  total_criteria?: number;
+  total_practices?: number;
+  status_counts: Record<string, number>;
+  families?: { id: string; name: string; total: number; [key: string]: unknown }[];
+  categories?: Record<string, Record<string, number>>;
+}
+
+export interface FrameworkControl {
+  id: string;
+  family?: string;
+  family_name?: string;
+  category?: string;
+  title: string;
+  status: string;
+  detail: string;
+  points_of_focus?: string[];
+}
+
+export function fetchFrameworksSummary(): Promise<{ frameworks: FrameworkSummary[] }> {
+  return json<{ frameworks: FrameworkSummary[] }>('/admin/frameworks');
+}
+
+export function fetchFedRAMPControls(family?: string, status?: string): Promise<{ summary: FrameworkSummary; controls: FrameworkControl[] }> {
+  const params = new URLSearchParams();
+  if (family) params.set('family', family);
+  if (status) params.set('status', status);
+  const qs = params.toString();
+  return json(`/admin/frameworks/fedramp${qs ? '?' + qs : ''}`);
+}
+
+export function fetchSOC2Criteria(category?: string, status?: string): Promise<{ summary: FrameworkSummary; criteria: FrameworkControl[] }> {
+  const params = new URLSearchParams();
+  if (category) params.set('category', category);
+  if (status) params.set('status', status);
+  const qs = params.toString();
+  return json(`/admin/frameworks/soc2${qs ? '?' + qs : ''}`);
+}
+
+export function fetchCMMCPractices(family?: string, status?: string): Promise<{ summary: FrameworkSummary; practices: FrameworkControl[] }> {
+  const params = new URLSearchParams();
+  if (family) params.set('family', family);
+  if (status) params.set('status', status);
+  const qs = params.toString();
+  return json(`/admin/frameworks/cmmc${qs ? '?' + qs : ''}`);
+}
+
+// ── Audit Log ──
+
+export interface AuditLogEntry {
+  id: number;
+  timestamp: string;
+  action: string;
+  endpoint: string;
+  status_code: number;
+  user_agent: string | null;
+  client_ip: string | null;
+  request_body_summary: string | null;
+  response_time_ms: number | null;
+  error_detail: string | null;
+}
+
+export interface AuditLogSummary {
+  total_records: number;
+  by_action: Record<string, number>;
+  error_count: number;
+  latest_entry: string | null;
+  top_endpoints: { endpoint: string; count: number }[];
+}
+
+export function fetchAuditLog(opts?: { action?: string; endpoint_filter?: string; since?: string; status_code_min?: number; limit?: number; offset?: number }): Promise<AuditLogEntry[]> {
+  const params = new URLSearchParams();
+  if (opts?.action) params.set('action', opts.action);
+  if (opts?.endpoint_filter) params.set('endpoint_filter', opts.endpoint_filter);
+  if (opts?.since) params.set('since', opts.since);
+  if (opts?.status_code_min) params.set('status_code_min', String(opts.status_code_min));
+  if (opts?.limit) params.set('limit', String(opts.limit));
+  if (opts?.offset) params.set('offset', String(opts.offset));
+  const qs = params.toString();
+  return json<AuditLogEntry[]>(`/admin/audit-log${qs ? '?' + qs : ''}`);
+}
+
+export function fetchAuditLogSummary(since?: string): Promise<AuditLogSummary> {
+  const qs = since ? `?since=${encodeURIComponent(since)}` : '';
+  return json<AuditLogSummary>(`/admin/audit-log/summary${qs}`);
+}
+
+// ── System Use Banner (AC-8) ──
+
+export interface SystemBannerResponse {
+  enabled: boolean;
+  banner_text: string;
+  session_timeout_minutes: number;
+}
+
+export function fetchSystemBanner(): Promise<SystemBannerResponse> {
+  return json<SystemBannerResponse>('/admin/system-banner');
+}
+
 // ── Observation Review Pipeline ──
 
 export function fetchObservations(status?: string, limit = 50): Promise<ObservationSummary[]> {
@@ -1066,4 +1169,170 @@ export function approveObservation(obsId: number): Promise<{ observation_id: num
 
 export function rejectObservation(obsId: number): Promise<{ observation_id: number; status: string }> {
   return json<{ observation_id: number; status: string }>(`/ingest/observations/${obsId}/reject`, { method: 'POST' });
+}
+
+// ── Compliance Suite (Unified Audit) ──
+
+export interface ComplianceSuiteDashboardResponse {
+  frameworks: Record<string, {
+    total: number;
+    passed: number;
+    failed: number;
+    partial: number;
+    attested: number;
+    untested: number;
+    compliance_pct: number;
+  }>;
+  latest_run: {
+    id: number;
+    started_at: string;
+    passed: number;
+    failed: number;
+    skipped: number;
+    duration_ms: number;
+  } | null;
+  total_providers: number;
+  total_controls: number;
+  expiring_attestations: { provider_id: string; attested_by: string; re_attestation_due: string }[];
+}
+
+export interface ComplianceSuiteControl {
+  framework: string;
+  control_id: string;
+  title: string;
+  family: string;
+  description: string;
+  external_ref: string;
+  provider_count: number;
+  provider_ids: string[];
+  evidence_types: string[];
+}
+
+export interface ComplianceSuiteRunSummary {
+  id: number;
+  started_at: string | null;
+  completed_at: string | null;
+  framework_filter: string | null;
+  total_providers: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  duration_ms: number;
+  triggered_by: string;
+}
+
+export interface ControlDetailResponse {
+  control: {
+    framework: string;
+    control_id: string;
+    title: string;
+    family: string;
+    description: string;
+    external_ref: string;
+  };
+  providers: {
+    id: string;
+    title: string;
+    evidence_type: string;
+    code_refs: string[];
+  }[];
+  history: {
+    provider_id: string;
+    passed: boolean;
+    detail: Record<string, unknown>;
+    duration_ms: number;
+    collected_at: string | null;
+    run_id: number;
+  }[];
+}
+
+export interface SuiteProgressEvent {
+  stage: string;
+  completed: number;
+  total: number;
+  count?: number;
+  run_id?: number;
+}
+
+export function fetchComplianceSuiteDashboard(): Promise<ComplianceSuiteDashboardResponse> {
+  return json<ComplianceSuiteDashboardResponse>('/admin/compliance/dashboard');
+}
+
+export function fetchComplianceSuiteControls(framework?: string): Promise<ComplianceSuiteControl[]> {
+  const params = framework ? `?framework=${encodeURIComponent(framework)}` : '';
+  return json<ComplianceSuiteControl[]>(`/admin/compliance/controls${params}`);
+}
+
+export function fetchComplianceSuiteRuns(limit = 50): Promise<ComplianceSuiteRunSummary[]> {
+  return json<ComplianceSuiteRunSummary[]>(`/admin/compliance/runs?limit=${limit}`);
+}
+
+export function fetchComplianceSuiteControlDetail(framework: string, controlId: string): Promise<ControlDetailResponse> {
+  return json<ControlDetailResponse>(`/admin/compliance/controls/${encodeURIComponent(framework)}/${encodeURIComponent(controlId)}`);
+}
+
+export function submitComplianceAttestation(providerId: string, attestedBy: string, notes = '', days = 90): Promise<{ status: string }> {
+  const params = new URLSearchParams({
+    provider_id: providerId,
+    attested_by: attestedBy,
+    notes,
+    re_attestation_days: String(days),
+  });
+  return json<{ status: string }>(`/admin/compliance/attest?${params}`, { method: 'POST' });
+}
+
+export function runComplianceSuite(
+  framework: string | undefined,
+  onProgress: (event: SuiteProgressEvent) => void,
+  providerIds?: string[],
+): Promise<void> {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const params = framework ? `?framework=${encodeURIComponent(framework)}` : '';
+      const hasBody = providerIds && providerIds.length > 0;
+      const res = await fetch(`/admin/compliance/run-suite${params}`, {
+        method: 'POST',
+        headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
+        body: hasBody ? JSON.stringify({ provider_ids: providerIds }) : undefined,
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop()!;
+
+        for (const part of parts) {
+          if (!part.trim()) continue;
+          let eventType = '';
+          let dataStr = '';
+          for (const line of part.split('\n')) {
+            if (line.startsWith('event: ')) eventType = line.slice(7);
+            else if (line.startsWith('data: ')) dataStr = line.slice(6);
+          }
+          if (!eventType || !dataStr) continue;
+          const parsed = JSON.parse(dataStr);
+          if (eventType === 'progress') {
+            onProgress(parsed as SuiteProgressEvent);
+          } else if (eventType === 'result') {
+            resolve();
+            return;
+          } else if (eventType === 'error') {
+            reject(new Error(parsed.message));
+            return;
+          }
+        }
+      }
+      resolve();
+    } catch (e) {
+      reject(e);
+    }
+  });
 }

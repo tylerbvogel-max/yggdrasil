@@ -122,6 +122,7 @@ class InputGuardResult:
 
 def check_input(message: str) -> InputGuardResult:
     """Run all input checks on a user message. Returns InputGuardResult."""
+    assert isinstance(message, str), f"message must be a string, got {type(message).__name__}"
     result = InputGuardResult()
 
     # Length checks
@@ -152,11 +153,13 @@ def check_input(message: str) -> InputGuardResult:
         if match:
             result.add_flag(description, severity, match.group(0)[:80])
 
+    assert result.verdict in ("pass", "warn", "block"), f"Invalid verdict: {result.verdict}"
     return result
 
 
 def check_output_risk(response_text: str) -> list[dict]:
     """Tag output with risk categories. Returns list of risk flags."""
+    assert isinstance(response_text, str), f"response_text must be a string, got {type(response_text).__name__}"
     flags: list[dict] = []
     for category, patterns in RISK_CATEGORIES.items():
         for pattern, description in patterns:
@@ -205,6 +208,8 @@ def check_output_grounding(response_text: str, assembled_prompt: str | None) -> 
     response_refs = set(ref_pattern.findall(response_text))
     context_refs = set(ref_pattern.findall(assembled_prompt))
     ungrounded_refs = response_refs - context_refs
+
+    assert 0.0 <= confidence <= 1.0, f"confidence out of range: {confidence}"
 
     return {
         "grounded": confidence > 0.3 and len(ungrounded_refs) == 0,

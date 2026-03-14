@@ -1,4 +1,111 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { fetchFrameworksSummary, fetchFedRAMPControls, fetchSOC2Criteria, fetchCMMCPractices, type FrameworkSummary, type FrameworkControl } from '../api';
+
+type Tab = 'unified' | 'fedramp' | 'soc2' | 'cmmc';
+
+function FrameworkDetailTable({ controls, statusColor, statusLabel }: {
+  controls: FrameworkControl[];
+  statusColor: (s: string) => string;
+  statusLabel: (s: string) => string;
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [filterFamily, setFilterFamily] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+
+  const families = [...new Set(controls.map(c => c.family || c.category || ''))].filter(Boolean);
+  const filtered = controls.filter(c =>
+    (!filterFamily || (c.family || c.category) === filterFamily) &&
+    (!filterStatus || c.status === filterStatus)
+  );
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <select value={filterFamily} onChange={e => setFilterFamily(e.target.value)} style={selectStyle}>
+          <option value="">All Families</option>
+          {families.map(f => <option key={f} value={f}>{f}</option>)}
+        </select>
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={selectStyle}>
+          <option value="">All Statuses</option>
+          <option value="addressed">Addressed</option>
+          <option value="partial">Partial</option>
+          <option value="gap">Gap</option>
+          <option value="inherited">Inherited</option>
+          <option value="not_applicable">N/A</option>
+        </select>
+        <span style={{ fontSize: '0.75rem', color: '#94a3b8', alignSelf: 'center' }}>
+          {filtered.length} of {controls.length} controls
+        </span>
+      </div>
+      <table className="about-table" style={{ fontSize: '0.8rem' }}>
+        <thead>
+          <tr>
+            <th style={{ width: 80 }}>ID</th>
+            <th>Control</th>
+            <th style={{ width: 80 }}>Status</th>
+            <th style={{ width: 80 }}>Family</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filtered.map(ctrl => (
+            <>{/* eslint-disable-next-line react/jsx-key */}
+              <tr key={ctrl.id} onClick={() => setExpanded(expanded === ctrl.id ? null : ctrl.id)}
+                style={{ cursor: 'pointer' }}>
+                <td><code>{ctrl.id}</code></td>
+                <td style={{ fontWeight: 500 }}>{ctrl.title}</td>
+                <td>
+                  <span style={{
+                    display: 'inline-block', fontSize: '0.65rem', padding: '1px 6px', borderRadius: 3,
+                    background: statusColor(ctrl.status) + '22', color: statusColor(ctrl.status),
+                    border: `1px solid ${statusColor(ctrl.status)}44`, fontWeight: 600,
+                  }}>
+                    {statusLabel(ctrl.status)}
+                  </span>
+                </td>
+                <td style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{ctrl.family || ctrl.category}</td>
+              </tr>
+              {expanded === ctrl.id && (
+                <tr key={ctrl.id + '-d'}>
+                  <td colSpan={4} style={{ padding: '8px 16px', background: 'var(--bg-input)', fontSize: '0.78rem', color: '#c8d0dc', lineHeight: 1.5 }}>
+                    {ctrl.detail}
+                  </td>
+                </tr>
+              )}
+            </>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+function FrameworkSummaryCards({ summary }: { summary: FrameworkSummary }) {
+  const sc = summary.status_counts;
+  return (
+    <div className="stat-cards" style={{ marginBottom: 16 }}>
+      <div className="stat-card">
+        <div className="card-value" style={{ color: '#22c55e' }}>{sc.addressed || 0}</div>
+        <div className="card-label">Addressed</div>
+      </div>
+      <div className="stat-card">
+        <div className="card-value" style={{ color: '#fb923c' }}>{sc.partial || 0}</div>
+        <div className="card-label">Partial</div>
+      </div>
+      <div className="stat-card">
+        <div className="card-value" style={{ color: '#ef4444' }}>{sc.gap || 0}</div>
+        <div className="card-label">Gaps</div>
+      </div>
+      <div className="stat-card">
+        <div className="card-value" style={{ color: '#64748b' }}>{(sc.inherited || 0) + (sc.not_applicable || 0)}</div>
+        <div className="card-label">Inherited/N/A</div>
+      </div>
+      <div className="stat-card">
+        <div className="card-value">{summary.total_controls || summary.total_criteria || summary.total_practices || 0}</div>
+        <div className="card-label">Total</div>
+      </div>
+    </div>
+  );
+}
 
 export default function CompliancePage() {
   type Status = 'addressed' | 'partial' | 'missing' | 'not-applicable';
@@ -9,7 +116,7 @@ export default function CompliancePage() {
     status: Status;
     detail: string;
     group: string;
-    frameworks: { nist?: string; iso?: string; aiuc?: string };
+    frameworks: { nist?: string; iso?: string; aiuc?: string; fedramp?: string; soc2?: string; cmmc?: string };
   }
 
   const items: ComplianceItem[] = [
@@ -298,6 +405,147 @@ export default function CompliancePage() {
       detail: 'Review page captures inputs (snapshots, health data) and outputs (findings, actions).',
       frameworks: { iso: 'A.9.4', aiuc: 'C008, E008' } },
 
+    // ── FedRAMP Moderate (NIST 800-53 Rev 5 baseline) ──
+    { id: 'FR-AC', title: 'Access Control', status: 'partial', group: 'FedRAMP',
+      detail: 'PostgreSQL role-based access. API has no authentication layer yet. Missing: RBAC enforcement, session management, account lockout, least privilege enforcement.',
+      frameworks: { fedramp: 'AC-1 thru AC-22', cmmc: '3.1.1–3.1.22', soc2: 'CC6.1–CC6.3' } },
+    { id: 'FR-AU', title: 'Audit & Accountability', status: 'partial', group: 'FedRAMP',
+      detail: 'Query provenance logged. Corvus captures timestamped. Missing: centralized audit log with tamper protection, audit log review, log retention policy, time sync.',
+      frameworks: { fedramp: 'AU-1 thru AU-16', cmmc: '3.3.1–3.3.9', soc2: 'CC7.2, CC7.3' } },
+    { id: 'FR-AT', title: 'Awareness & Training', status: 'missing', group: 'FedRAMP',
+      detail: 'No formal security awareness training program. Getting Started page covers operational use only.',
+      frameworks: { fedramp: 'AT-1 thru AT-4', cmmc: '3.2.1–3.2.3' } },
+    { id: 'FR-CM', title: 'Configuration Management', status: 'partial', group: 'FedRAMP',
+      detail: 'Git-tracked code. Database migrations idempotent. Missing: baseline configuration documentation, change control board, configuration monitoring, software usage restrictions.',
+      frameworks: { fedramp: 'CM-1 thru CM-11', cmmc: '3.4.1–3.4.9', soc2: 'CC8.1' } },
+    { id: 'FR-CP', title: 'Contingency Planning', status: 'missing', group: 'FedRAMP',
+      detail: 'No contingency plan, backup procedures, or disaster recovery documented. Neuron checkpoints exist but are not formalized as backup strategy.',
+      frameworks: { fedramp: 'CP-1 thru CP-13', soc2: 'A1.1–A1.3' } },
+    { id: 'FR-IA', title: 'Identification & Authentication', status: 'missing', group: 'FedRAMP',
+      detail: 'No user authentication. Single-user local deployment. Multi-tenant would require MFA, credential management, authenticator lifecycle.',
+      frameworks: { fedramp: 'IA-1 thru IA-11', cmmc: '3.5.1–3.5.11', soc2: 'CC6.1' } },
+    { id: 'FR-IR', title: 'Incident Response', status: 'partial', group: 'FedRAMP',
+      detail: 'P1-P4 severity levels defined in governance.md. Circuit breaker + alert workflow. Missing: incident response plan, incident handling procedures, incident reporting to authorities, incident response testing.',
+      frameworks: { fedramp: 'IR-1 thru IR-10', cmmc: '3.6.1–3.6.3', soc2: 'CC7.3, CC7.4, CC7.5' } },
+    { id: 'FR-MA', title: 'Maintenance', status: 'partial', group: 'FedRAMP',
+      detail: 'Dependency versions pinned. Missing: controlled maintenance windows, maintenance tools audit, remote maintenance controls.',
+      frameworks: { fedramp: 'MA-1 thru MA-6', cmmc: '3.7.1–3.7.6' } },
+    { id: 'FR-MP', title: 'Media Protection', status: 'partial', group: 'FedRAMP',
+      detail: 'Corvus screen data ephemeral (never persisted to disk). Missing: media access policy, media sanitization, media transport protection.',
+      frameworks: { fedramp: 'MP-1 thru MP-8', cmmc: '3.8.1–3.8.9' } },
+    { id: 'FR-PE', title: 'Physical & Environmental Protection', status: 'not-applicable', group: 'FedRAMP',
+      detail: 'Software-only product. Physical controls are the responsibility of the hosting environment (cloud provider or on-prem facility).',
+      frameworks: { fedramp: 'PE-1 thru PE-20', cmmc: '3.10.1–3.10.6' } },
+    { id: 'FR-PL', title: 'Planning', status: 'partial', group: 'FedRAMP',
+      detail: 'CLAUDE.md defines development standards. Governance docs cover operational rules. Missing: formal System Security Plan (SSP), rules of behavior document.',
+      frameworks: { fedramp: 'PL-1 thru PL-8' } },
+    { id: 'FR-PS', title: 'Personnel Security', status: 'not-applicable', group: 'FedRAMP',
+      detail: 'Single developer. Personnel screening, termination procedures, and transfer controls apply at organizational level, not software level.',
+      frameworks: { fedramp: 'PS-1 thru PS-8', cmmc: '3.9.1–3.9.2' } },
+    { id: 'FR-RA', title: 'Risk Assessment', status: 'addressed', group: 'FedRAMP',
+      detail: 'Risk register with 15 failure modes, likelihood x impact scoring, treatment decisions. Risk map documented. Quarterly reassessment cadence.',
+      frameworks: { fedramp: 'RA-1 thru RA-7', cmmc: '3.11.1–3.11.3', soc2: 'CC3.1–CC3.4' } },
+    { id: 'FR-SA', title: 'System & Services Acquisition', status: 'partial', group: 'FedRAMP',
+      detail: 'Anthropic SDK pinned. Third-party risk documented. Missing: supply chain risk management plan, acquisition process controls, developer security testing.',
+      frameworks: { fedramp: 'SA-1 thru SA-22' } },
+    { id: 'FR-SC', title: 'System & Communications Protection', status: 'partial', group: 'FedRAMP',
+      detail: 'Local deployment (localhost only). Input guard blocks injection. Missing: boundary protection for multi-tenant, encryption in transit (TLS), encryption at rest, session authenticity.',
+      frameworks: { fedramp: 'SC-1 thru SC-44', cmmc: '3.13.1–3.13.16', soc2: 'CC6.1, CC6.6, CC6.7' } },
+    { id: 'FR-SI', title: 'System & Information Integrity', status: 'partial', group: 'FedRAMP',
+      detail: 'Input validation (16 patterns). Output risk tagging. PII scanning. Missing: flaw remediation process, malicious code protection, security alerts monitoring, software/firmware integrity verification.',
+      frameworks: { fedramp: 'SI-1 thru SI-16', cmmc: '3.14.1–3.14.7', soc2: 'CC7.1, CC7.2' } },
+    { id: 'FR-CA', title: 'Security Assessment & Authorization', status: 'missing', group: 'FedRAMP',
+      detail: 'No formal security assessment. No ATO (Authority to Operate). No POA&M (Plan of Action & Milestones). Required for FedRAMP authorization.',
+      frameworks: { fedramp: 'CA-1 thru CA-9', cmmc: '3.12.1–3.12.4' } },
+    { id: 'FR-PM', title: 'Program Management', status: 'missing', group: 'FedRAMP',
+      detail: 'No Information Security Program Plan, no risk management strategy document, no enterprise architecture. Required at organizational level.',
+      frameworks: { fedramp: 'PM-1 thru PM-16' } },
+
+    // ── SOC 2 Type II (Trust Services Criteria) ──
+    { id: 'SOC-CC1', title: 'Control Environment (COSO)', status: 'partial', group: 'SOC 2',
+      detail: 'Governance docs define roles and responsibilities. Risk tolerance thresholds set. Missing: formal organizational structure, board oversight, code of conduct, HR policies.',
+      frameworks: { soc2: 'CC1.1–CC1.5' } },
+    { id: 'SOC-CC2', title: 'Communication & Information', status: 'partial', group: 'SOC 2',
+      detail: 'System card documents components, data flows. Query provenance logged. Missing: external communication policies, whistleblower channel.',
+      frameworks: { soc2: 'CC2.1–CC2.3' } },
+    { id: 'SOC-CC3', title: 'Risk Assessment', status: 'addressed', group: 'SOC 2',
+      detail: 'Risk register with 15 failure modes, scoring, treatment plans. Quarterly reassessment. Risk map documented.',
+      frameworks: { soc2: 'CC3.1–CC3.4', fedramp: 'RA-1 thru RA-7', nist: 'MAP 3.2, GOV 1.3' } },
+    { id: 'SOC-CC4', title: 'Monitoring Activities', status: 'addressed', group: 'SOC 2',
+      detail: 'Scoring Health Monitor with z-score drift detection. Circuit breaker on quality drops. Compliance snapshots with trend tracking.',
+      frameworks: { soc2: 'CC4.1–CC4.2', nist: 'GOV 1.5, MEA 2.4' } },
+    { id: 'SOC-CC5', title: 'Control Activities', status: 'partial', group: 'SOC 2',
+      detail: 'Input guard pre-classification. Output risk tagging. Change management process defined. Missing: automated control testing, segregation of duties enforcement.',
+      frameworks: { soc2: 'CC5.1–CC5.3' } },
+    { id: 'SOC-CC6', title: 'Logical & Physical Access', status: 'missing', group: 'SOC 2',
+      detail: 'No authentication/authorization layer. No access provisioning/deprovisioning. No credential management. Critical gap for multi-user deployment.',
+      frameworks: { soc2: 'CC6.1–CC6.8', fedramp: 'AC-1 thru AC-22', cmmc: '3.1.1–3.1.22' } },
+    { id: 'SOC-CC7', title: 'System Operations', status: 'partial', group: 'SOC 2',
+      detail: 'Health check endpoint. Alert acknowledge/dismiss workflow. Corvus monitoring. Missing: vulnerability management, change detection, incident response testing.',
+      frameworks: { soc2: 'CC7.1–CC7.5', fedramp: 'IR-1 thru IR-10' } },
+    { id: 'SOC-CC8', title: 'Change Management', status: 'partial', group: 'SOC 2',
+      detail: 'Git-tracked changes. NASA code review checklist. Database migrations idempotent. Missing: formal change approval workflow, regression testing automation.',
+      frameworks: { soc2: 'CC8.1', fedramp: 'CM-1 thru CM-11' } },
+    { id: 'SOC-CC9', title: 'Risk Mitigation', status: 'addressed', group: 'SOC 2',
+      detail: 'Risk register with treatment decisions. Third-party risk (Anthropic) documented with mitigation strategies. Vendor risk accepted with controls.',
+      frameworks: { soc2: 'CC9.1–CC9.2', nist: 'GOV 6.1, MAP 4.1' } },
+    { id: 'SOC-A1', title: 'Availability', status: 'partial', group: 'SOC 2',
+      detail: 'Health check endpoint returns system status. Missing: SLA definition, capacity planning, backup/recovery procedures, business continuity plan.',
+      frameworks: { soc2: 'A1.1–A1.3', fedramp: 'CP-1 thru CP-13' } },
+    { id: 'SOC-PI', title: 'Processing Integrity', status: 'addressed', group: 'SOC 2',
+      detail: 'Neuron scoring is deterministic and auditable. 5-signal scoring with baselines. Output grounding checks. Compliance audit with validation.',
+      frameworks: { soc2: 'PI1.1–PI1.5', nist: 'MEA 2.5' } },
+    { id: 'SOC-C1', title: 'Confidentiality', status: 'partial', group: 'SOC 2',
+      detail: 'Data stored locally only. Corvus screen data ephemeral. Missing: data classification policy, confidentiality commitments, encryption at rest.',
+      frameworks: { soc2: 'C1.1–C1.2', fedramp: 'SC-28' } },
+    { id: 'SOC-P1', title: 'Privacy', status: 'partial', group: 'SOC 2',
+      detail: 'PII scanning in compliance audit. No telemetry collected. Missing: privacy notice, consent management, data retention/disposal policy, privacy impact assessment.',
+      frameworks: { soc2: 'P1.1–P1.8', nist: 'MEA 2.10' } },
+
+    // ── CMMC Level 2 (NIST 800-171r2 — 110 CUI security requirements) ──
+    { id: 'CMMC-AC', title: 'Access Control (22 practices)', status: 'missing', group: 'CMMC',
+      detail: 'No authentication system. No session management. No remote access controls. No wireless access restrictions. Critical: must implement RBAC, MFA, least privilege, and account management before any CUI handling.',
+      frameworks: { cmmc: '3.1.1–3.1.22', fedramp: 'AC-1 thru AC-22', soc2: 'CC6.1–CC6.3' } },
+    { id: 'CMMC-AT', title: 'Awareness & Training (3 practices)', status: 'missing', group: 'CMMC',
+      detail: 'No security awareness training. No insider threat training. Getting Started page is operational, not security-focused.',
+      frameworks: { cmmc: '3.2.1–3.2.3', fedramp: 'AT-1 thru AT-4' } },
+    { id: 'CMMC-AU', title: 'Audit & Accountability (9 practices)', status: 'partial', group: 'CMMC',
+      detail: 'Query provenance logged with full audit trail. Corvus timestamps all captures. Missing: system-level audit events, audit log protection, audit review/analysis/reporting, timestamp correlation.',
+      frameworks: { cmmc: '3.3.1–3.3.9', fedramp: 'AU-1 thru AU-16', soc2: 'CC7.2' } },
+    { id: 'CMMC-CM', title: 'Configuration Management (9 practices)', status: 'partial', group: 'CMMC',
+      detail: 'Git for code CM. Database migrations tracked. requirements.txt pinned. Missing: baseline configurations documented, configuration change control, security impact analysis of changes, access restrictions for change.',
+      frameworks: { cmmc: '3.4.1–3.4.9', fedramp: 'CM-1 thru CM-11', soc2: 'CC8.1' } },
+    { id: 'CMMC-IA', title: 'Identification & Authentication (11 practices)', status: 'missing', group: 'CMMC',
+      detail: 'No user identification or authentication. No MFA. No password policies. No authenticator management. Must implement before handling CUI.',
+      frameworks: { cmmc: '3.5.1–3.5.11', fedramp: 'IA-1 thru IA-11', soc2: 'CC6.1' } },
+    { id: 'CMMC-IR', title: 'Incident Response (3 practices)', status: 'partial', group: 'CMMC',
+      detail: 'P1-P4 severity levels defined. Circuit breaker for automated response. Missing: operational incident response capability, incident handling procedures documented, incident reporting to designated authorities.',
+      frameworks: { cmmc: '3.6.1–3.6.3', fedramp: 'IR-1 thru IR-10', soc2: 'CC7.3–CC7.5' } },
+    { id: 'CMMC-MA', title: 'Maintenance (6 practices)', status: 'partial', group: 'CMMC',
+      detail: 'System maintenance via git-tracked updates. Missing: controlled maintenance procedures, maintenance personnel authorization, remote maintenance session controls, maintenance tool sanitization.',
+      frameworks: { cmmc: '3.7.1–3.7.6', fedramp: 'MA-1 thru MA-6' } },
+    { id: 'CMMC-MP', title: 'Media Protection (9 practices)', status: 'partial', group: 'CMMC',
+      detail: 'Screen captures ephemeral (in-memory only). No persistent media with CUI. Missing: media access policy, media marking, media storage, media transport, media sanitization.',
+      frameworks: { cmmc: '3.8.1–3.8.9', fedramp: 'MP-1 thru MP-8' } },
+    { id: 'CMMC-PS', title: 'Personnel Security (2 practices)', status: 'not-applicable', group: 'CMMC',
+      detail: 'Organizational control. Personnel screening and access revocation on termination are employer responsibilities, not software features.',
+      frameworks: { cmmc: '3.9.1–3.9.2', fedramp: 'PS-1 thru PS-8' } },
+    { id: 'CMMC-PE', title: 'Physical Protection (6 practices)', status: 'not-applicable', group: 'CMMC',
+      detail: 'Software-only. Physical facility controls are the hosting environment responsibility.',
+      frameworks: { cmmc: '3.10.1–3.10.6', fedramp: 'PE-1 thru PE-20' } },
+    { id: 'CMMC-RA', title: 'Risk Assessment (3 practices)', status: 'addressed', group: 'CMMC',
+      detail: 'Risk register with 15 failure modes, likelihood x impact matrix. Vulnerability scanning via compliance audit. Quarterly reassessment schedule.',
+      frameworks: { cmmc: '3.11.1–3.11.3', fedramp: 'RA-1 thru RA-7', soc2: 'CC3.1–CC3.4' } },
+    { id: 'CMMC-SA', title: 'Security Assessment (4 practices)', status: 'partial', group: 'CMMC',
+      detail: 'Compliance snapshots provide periodic self-assessment. Evidence map tracks requirement-to-artifact links. Missing: plan of action for deficiencies, continuous monitoring program.',
+      frameworks: { cmmc: '3.12.1–3.12.4', fedramp: 'CA-1 thru CA-9' } },
+    { id: 'CMMC-SC', title: 'System & Comms Protection (16 practices)', status: 'partial', group: 'CMMC',
+      detail: 'Input guard provides boundary protection at application layer. Data local-only. Missing: TLS enforcement, session authenticity, CUI encryption at rest, network segmentation, DNS/routing integrity.',
+      frameworks: { cmmc: '3.13.1–3.13.16', fedramp: 'SC-1 thru SC-44', soc2: 'CC6.6, CC6.7' } },
+    { id: 'CMMC-SI', title: 'System & Info Integrity (7 practices)', status: 'partial', group: 'CMMC',
+      detail: 'Input validation (16 regex patterns). Output risk tagging. PII detection. Scoring health monitoring. Missing: flaw remediation tracking, malware protection, security alert monitoring.',
+      frameworks: { cmmc: '3.14.1–3.14.7', fedramp: 'SI-1 thru SI-16', soc2: 'CC7.1' } },
+
     // Not Applicable
     { id: 'D003', title: 'Restrict Unsafe Tool Calls', status: 'not-applicable', group: 'N/A',
       detail: 'Retrieval system. No tool calls or autonomous actions.',
@@ -331,15 +579,16 @@ export default function CompliancePage() {
   const statusLabel = (s: Status) =>
     s === 'addressed' ? 'Addressed' : s === 'partial' ? 'Partial' : s === 'not-applicable' ? 'N/A' : 'Gap';
 
-  const fwColor: Record<string, string> = { nist: '#3b82f6', iso: '#8b5cf6', aiuc: '#f59e0b' };
-  const fwLabel: Record<string, string> = { nist: 'NIST', iso: 'ISO', aiuc: 'AIUC-1' };
+  const fwColor: Record<string, string> = { nist: '#3b82f6', iso: '#8b5cf6', aiuc: '#f59e0b', fedramp: '#10b981', soc2: '#ec4899', cmmc: '#f97316' };
+  const fwLabel: Record<string, string> = { nist: 'NIST', iso: 'ISO', aiuc: 'AIUC-1', fedramp: 'FedRAMP', soc2: 'SOC 2', cmmc: 'CMMC' };
 
   return (
     <div className="security-page">
       <h2>Unified Compliance View</h2>
       <p className="security-intro">
         Consolidated requirements from <strong>NIST AI RMF</strong>, <strong>ISO/IEC 42001</strong>,
-        and <strong>AIUC-1</strong> in a single filterable table. Click any row for details.
+        <strong>AIUC-1</strong>, <strong>FedRAMP Moderate</strong>, <strong>SOC 2 Type II</strong>,
+        and <strong>CMMC Level 2</strong> in a single filterable table. Click any row for details.
       </p>
 
       {/* Summary */}
@@ -452,6 +701,116 @@ export default function CompliancePage() {
           ))}
         </tbody>
       </table>
+
+      {/* ── Detailed Security Framework Catalogs ── */}
+      <FrameworkCatalogSection />
+    </div>
+  );
+}
+
+function FrameworkCatalogSection() {
+  const [activeTab, setActiveTab] = useState<Tab>('fedramp');
+  const [summaries, setSummaries] = useState<FrameworkSummary[]>([]);
+  const [fedrampData, setFedrampData] = useState<FrameworkControl[]>([]);
+  const [fedrampSummary, setFedrampSummary] = useState<FrameworkSummary | null>(null);
+  const [soc2Data, setSoc2Data] = useState<FrameworkControl[]>([]);
+  const [soc2Summary, setSoc2Summary] = useState<FrameworkSummary | null>(null);
+  const [cmmcData, setCmmcData] = useState<FrameworkControl[]>([]);
+  const [cmmcSummary, setCmmcSummary] = useState<FrameworkSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetchFrameworksSummary().then(r => setSummaries(r.frameworks)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    if (activeTab === 'fedramp' && fedrampData.length === 0) {
+      fetchFedRAMPControls().then(r => { setFedrampData(r.controls); setFedrampSummary(r.summary); }).finally(() => setLoading(false));
+    } else if (activeTab === 'soc2' && soc2Data.length === 0) {
+      fetchSOC2Criteria().then(r => { setSoc2Data(r.criteria); setSoc2Summary(r.summary); }).finally(() => setLoading(false));
+    } else if (activeTab === 'cmmc' && cmmcData.length === 0) {
+      fetchCMMCPractices().then(r => { setCmmcData(r.practices); setCmmcSummary(r.summary); }).finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, [activeTab]);
+
+  const detailStatusColor = (s: string) =>
+    s === 'addressed' ? '#22c55e' : s === 'partial' ? '#fb923c' : s === 'inherited' ? '#60a5fa' : s === 'not_applicable' ? '#64748b' : '#ef4444';
+  const detailStatusLabel = (s: string) =>
+    s === 'addressed' ? 'Addressed' : s === 'partial' ? 'Partial' : s === 'inherited' ? 'Inherited' : s === 'not_applicable' ? 'N/A' : 'Gap';
+
+  const tabStyle = (t: Tab): React.CSSProperties => ({
+    padding: '8px 16px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+    background: activeTab === t ? 'var(--bg-input)' : 'transparent',
+    color: activeTab === t ? 'var(--text)' : '#94a3b8',
+    border: '1px solid',
+    borderColor: activeTab === t ? 'var(--border)' : 'transparent',
+    borderBottom: activeTab === t ? '2px solid #60a5fa' : '1px solid var(--border)',
+    borderRadius: '6px 6px 0 0',
+    marginBottom: -1,
+  });
+
+  // Aggregate summary for the overview cards at the top
+  const totalCounts: Record<string, number> = {};
+  for (const s of summaries) {
+    for (const [status, count] of Object.entries(s.status_counts)) {
+      totalCounts[status] = (totalCounts[status] || 0) + (count as number);
+    }
+  }
+  const totalAll = Object.values(totalCounts).reduce((a, b) => a + b, 0);
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      <h3 style={{ color: '#60a5fa', marginBottom: 4 }}>Security Framework Catalogs</h3>
+      <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: 16 }}>
+        Detailed control-level assessment for <strong>FedRAMP Moderate</strong> ({summaries[0]?.total_controls || '...'} controls),{' '}
+        <strong>SOC 2 Type II</strong> ({summaries[1]?.total_criteria || '...'} criteria),{' '}
+        and <strong>CMMC Level 2</strong> ({summaries[2]?.total_practices || '...'} practices).
+        Total: {totalAll || '...'} requirements across all three frameworks.
+      </p>
+
+      {/* Aggregate status bar */}
+      {totalAll > 0 && (
+        <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: 16, gap: 1 }}>
+          {totalCounts.addressed > 0 && <div style={{ flex: totalCounts.addressed, background: '#22c55e' }} title={`Addressed: ${totalCounts.addressed}`} />}
+          {totalCounts.partial > 0 && <div style={{ flex: totalCounts.partial, background: '#fb923c' }} title={`Partial: ${totalCounts.partial}`} />}
+          {totalCounts.gap > 0 && <div style={{ flex: totalCounts.gap, background: '#ef4444' }} title={`Gap: ${totalCounts.gap}`} />}
+          {(totalCounts.inherited || 0) + (totalCounts.not_applicable || 0) > 0 && (
+            <div style={{ flex: (totalCounts.inherited || 0) + (totalCounts.not_applicable || 0), background: '#64748b' }}
+              title={`Inherited/N/A: ${(totalCounts.inherited || 0) + (totalCounts.not_applicable || 0)}`} />
+          )}
+        </div>
+      )}
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
+        <div style={tabStyle('fedramp')} onClick={() => setActiveTab('fedramp')}>FedRAMP Moderate</div>
+        <div style={tabStyle('soc2')} onClick={() => setActiveTab('soc2')}>SOC 2 Type II</div>
+        <div style={tabStyle('cmmc')} onClick={() => setActiveTab('cmmc')}>CMMC Level 2</div>
+      </div>
+
+      {loading && <p style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Loading framework data...</p>}
+
+      {activeTab === 'fedramp' && fedrampSummary && (
+        <>
+          <FrameworkSummaryCards summary={fedrampSummary} />
+          <FrameworkDetailTable controls={fedrampData} statusColor={detailStatusColor} statusLabel={detailStatusLabel} />
+        </>
+      )}
+      {activeTab === 'soc2' && soc2Summary && (
+        <>
+          <FrameworkSummaryCards summary={soc2Summary} />
+          <FrameworkDetailTable controls={soc2Data} statusColor={detailStatusColor} statusLabel={detailStatusLabel} />
+        </>
+      )}
+      {activeTab === 'cmmc' && cmmcSummary && (
+        <>
+          <FrameworkSummaryCards summary={cmmcSummary} />
+          <FrameworkDetailTable controls={cmmcData} statusColor={detailStatusColor} statusLabel={detailStatusLabel} />
+        </>
+      )}
     </div>
   );
 }

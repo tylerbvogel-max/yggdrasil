@@ -39,6 +39,9 @@ async def apply_inhibition(
     neurons that passed inhibition. The executor should use survivor_count as
     the effective top-K for prompt assembly and firing.
     """
+    assert top_k_count > 0, f"top_k_count must be positive, got {top_k_count}"
+    input_length = len(scored)
+
     if not settings.inhibition_enabled or not scored:
         return scored, min(top_k_count, len(scored))
 
@@ -203,7 +206,11 @@ async def apply_inhibition(
     suppressed_below = [s for s in top_k if s.neuron_id in (suppressed_ids | redundant_ids) and s.neuron_id not in surv_ids]
     suppressed_below.sort(key=lambda s: s.combined, reverse=True)
 
-    return survivors + suppressed_below + remaining, len(survivors)
+    survivor_count = len(survivors)
+    assert survivor_count <= top_k_count, f"survivor_count {survivor_count} exceeds top_k_count {top_k_count}"
+    result_list = survivors + suppressed_below + remaining
+    assert len(result_list) >= input_length, f"Inhibition lost neurons: {len(result_list)} < {input_length}"
+    return result_list, survivor_count
 
 
 async def seed_inhibitory_regulators(db: AsyncSession) -> int:

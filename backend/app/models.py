@@ -435,3 +435,23 @@ class EvidenceMapping(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class AuditLog(Base):
+    """Immutable audit trail for all state-changing API actions.
+
+    Addresses: NIST 800-53 AU-2/AU-3/AU-4/AU-8/AU-12, CMMC 3.3.1/3.3.5/3.3.6,
+    SOC 2 CC7.2/CC7.3, FedRAMP AU family.
+    """
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    action: Mapped[str] = mapped_column(String(10), nullable=False)  # POST, PUT, DELETE, PATCH
+    endpoint: Mapped[str] = mapped_column(String(500), nullable=False)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    client_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)  # IPv4 or IPv6
+    request_body_summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # Truncated, no secrets
+    response_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)

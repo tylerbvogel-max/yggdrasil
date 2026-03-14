@@ -4,6 +4,7 @@ import datetime
 import json
 import time
 import anthropic
+from dataclasses import dataclass, field
 from datetime import timedelta
 from sqlalchemy import select, text as sql_text, func
 from app.database import async_session
@@ -26,27 +27,8 @@ IMAGE_THRESHOLD = 5         # Fire when this many images are buffered
 CHECK_INTERVAL_SECONDS = 5  # How often the loop checks triggers
 PRIOR_CONTEXT_COUNT = 8     # Recent interpretations for immediate detail
 
-# Configurable via API
-time_cap_seconds: int = 300  # Default 5 min, 0 = manual only
-effort_level: str = "normal"  # low, normal, high
-user_context: str = ""  # What the user is currently working on
-session_brief: str = ""  # Rolling condensed context — updated after each interpretation
-
-# Active session tracking
-_active_session_id: int | None = None
-
-# Attention steering lists
-_watch_items: list[str] = []
-_ignore_items: list[str] = []
-
-# Chat messages from the user (inline clarifications)
-_chat_messages: list[dict] = []  # [{text, timestamp}]
+MAX_ATTENTION_ITEMS = 100
 MAX_CHAT_HISTORY = 20
-
-# Yggdrasil integration settings (managed by router)
-ygg_enabled: bool = False
-ygg_enrich_mode: str = "entities"  # "always", "entities", "never"
-ygg_project_path: str = ""
 
 EFFORT_PRESETS = {
     "low":    {"max_tokens": 120, "temperature": 0.3},
@@ -59,16 +41,6 @@ EFFORT_SYSTEM_SUFFIX = {
     "normal": "",
     "high":   "\n\nThink deeply. Explore multiple angles, suggest concrete next steps, and connect dots across what you've seen.",
 }
-
-# Tracks the current tokens being sent (exposed to /status endpoint)
-current_interpretation_tokens: int = 0
-
-# State
-_last_interpretation_time: float = 0.0
-_last_app_id: str | None = None
-
-# Interrupt intelligence
-_last_interrupt_decision: str = "active"  # "active", "deferred", "skipped"
 
 
 TEXT_SYSTEM_PROMPT = """You are Corvus, a thinking partner who works alongside a user by watching
@@ -124,33 +96,85 @@ If there's nothing worth saying, respond with: "Nothing to add right now."
 """
 
 
-def add_chat_message(text: str, timestamp: str):
+BRIEF_SYSTEM_PROMPT = """You maintain a running context brief for a thinking partner system. Condense the existing brief and the new thought into an updated brief (max 400 words). Preserve:
+- What the user is working on and key decisions in play
+- Open questions, risks, or ideas that were raised
+- Important people, threads, or connections spotted
+- Time-sensitive items
+
+Drop anything resolved or no longer relevant. Write in compact bullet style."""
+
+
+DIGEST_SYSTEM_PROMPT = """You are Corvus, generating an end-of-day digest. Synthesize all observations and conversations into a structured summary using this format:
+
+## What You Worked On
+- Key activities and focus areas
+
+## Key Decisions & Outcomes
+- Decisions made, conclusions reached
+
+## Open Threads
+- Unresolved questions, pending items, things to follow up on
+
+## Notable Observations
+- Patterns, risks, or insights worth remembering
+
+Be concise and actionable. Use bullet points. Skip sections if empty."""
+
+
+@dataclass
+class InterpreterState:
+    """Encapsulates all mutable interpreter state with an asyncio lock."""
+    time_cap_seconds: int = 300
+    effort_level: str = "normal"
+    user_context: str = ""
+    session_brief: str = ""
+    _active_session_id: int | None = None
+    _watch_items: list[str] = field(default_factory=list)
+    _ignore_items: list[str] = field(default_factory=list)
+    _chat_messages: list[dict] = field(default_factory=list)
+    ygg_enabled: bool = False
+    ygg_enrich_mode: str = "entities"
+    ygg_project_path: str = ""
+    current_interpretation_tokens: int = 0
+    _last_interpretation_time: float = 0.0
+    _last_app_id: str | None = None
+    _last_interrupt_decision: str = "active"
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+interpreter_state = InterpreterState()
+
+
+async def add_chat_message(text: str, timestamp: str):
     """Add a user chat message to the context."""
-    _chat_messages.append({"text": text, "timestamp": timestamp})
-    # Trim old messages
-    while len(_chat_messages) > MAX_CHAT_HISTORY:
-        _chat_messages.pop(0)
+    async with interpreter_state.lock:
+        interpreter_state._chat_messages.append({"text": text, "timestamp": timestamp})
+        # Trim old messages
+        while len(interpreter_state._chat_messages) > MAX_CHAT_HISTORY:
+            interpreter_state._chat_messages.pop(0)
 
 
 def get_chat_messages() -> list[dict]:
-    return _chat_messages[:]
+    return interpreter_state._chat_messages[:]
 
 
-def clear_chat_messages():
-    _chat_messages.clear()
+async def clear_chat_messages():
+    async with interpreter_state.lock:
+        interpreter_state._chat_messages.clear()
 
 
 def get_interrupt_status() -> str:
     """Return current interrupt decision for dashboard display."""
-    return _last_interrupt_decision
+    return interpreter_state._last_interrupt_decision
 
 
 async def _should_fetch_ygg_context(ocr_text: str) -> bool:
     """Decide whether to query Yggdrasil based on enrich_mode and content heuristics."""
-    if not ygg_enabled:
+    if not interpreter_state.ygg_enabled:
         return False
 
-    mode = ygg_enrich_mode
+    mode = interpreter_state.ygg_enrich_mode
     if mode == "never":
         return False
     if mode == "always":
@@ -186,8 +210,8 @@ async def _fetch_ygg_context(query_text: str) -> str | None:
         import httpx
         async with httpx.AsyncClient(timeout=5.0) as http_client:
             payload = {"message": query_text}
-            if ygg_project_path:
-                payload["project_path"] = ygg_project_path
+            if interpreter_state.ygg_project_path:
+                payload["project_path"] = interpreter_state.ygg_project_path
             resp = await http_client.post("http://127.0.0.1:8002/context", json=payload)
             resp.raise_for_status()
             result = resp.json()
@@ -212,52 +236,42 @@ async def _fetch_ygg_context(query_text: str) -> str | None:
 
 def _build_system_prompt(base_prompt: str, ygg_context: str | None = None) -> str:
     """Assemble system prompt with effort suffix, user context, Yggdrasil context, and attention steering."""
-    system = base_prompt + EFFORT_SYSTEM_SUFFIX.get(effort_level, "")
-    if user_context.strip():
-        system += f"\n\n=== WHAT THE USER IS WORKING ON ===\n{user_context.strip()}\nThink from this perspective. Your suggestions should be relevant to this focus."
+    system = base_prompt + EFFORT_SYSTEM_SUFFIX.get(interpreter_state.effort_level, "")
+    if interpreter_state.user_context.strip():
+        system += f"\n\n=== WHAT THE USER IS WORKING ON ===\n{interpreter_state.user_context.strip()}\nThink from this perspective. Your suggestions should be relevant to this focus."
 
     # Yggdrasil domain context injection
     if ygg_context:
         system += f"\n\n{ygg_context}\nUse this domain knowledge to inform your observations. Reference specific standards or concepts when relevant."
 
     # Attention steering
-    if _watch_items:
-        system += "\n\n=== PAY SPECIAL ATTENTION TO ===\n" + "\n".join(f"- {item}" for item in _watch_items)
+    if interpreter_state._watch_items:
+        system += "\n\n=== PAY SPECIAL ATTENTION TO ===\n" + "\n".join(f"- {item}" for item in interpreter_state._watch_items)
         system += "\nPrioritize observations related to these topics."
-    if _ignore_items:
-        system += "\n\n=== DEPRIORITIZE / IGNORE ===\n" + "\n".join(f"- {item}" for item in _ignore_items)
+    if interpreter_state._ignore_items:
+        system += "\n\n=== DEPRIORITIZE / IGNORE ===\n" + "\n".join(f"- {item}" for item in interpreter_state._ignore_items)
         system += "\nDon't comment on these unless something truly urgent."
 
     return system
 
 
-BRIEF_SYSTEM_PROMPT = """You maintain a running context brief for a thinking partner system. Condense the existing brief and the new thought into an updated brief (max 400 words). Preserve:
-- What the user is working on and key decisions in play
-- Open questions, risks, or ideas that were raised
-- Important people, threads, or connections spotted
-- Time-sensitive items
-
-Drop anything resolved or no longer relevant. Write in compact bullet style."""
-
-
 def _build_brief_prompt() -> str:
     """Build brief system prompt, including user context if set."""
     prompt = BRIEF_SYSTEM_PROMPT
-    if user_context.strip():
-        prompt += f"\n\nThe user is focused on: {user_context.strip()}\nWeight the brief toward this focus."
+    if interpreter_state.user_context.strip():
+        prompt += f"\n\nThe user is focused on: {interpreter_state.user_context.strip()}\nWeight the brief toward this focus."
     return prompt
 
 
 async def _save_session_brief():
     """Persist the current session brief to the database."""
-    global _active_session_id
-    if not _active_session_id:
+    if not interpreter_state._active_session_id:
         return
     try:
         async with async_session() as db:
-            session_obj = await db.get(CorvusSession, _active_session_id)
+            session_obj = await db.get(CorvusSession, interpreter_state._active_session_id)
             if session_obj:
-                session_obj.brief = session_brief
+                session_obj.brief = interpreter_state.session_brief
                 await db.commit()
     except Exception as e:
         print(f"[Corvus] Session save error: {e}")
@@ -265,16 +279,15 @@ async def _save_session_brief():
 
 async def _update_session_brief(new_summary: str):
     """Cheap Haiku call to condense session brief + new observation."""
-    global session_brief
     try:
-        if session_brief:
-            user_msg = f"=== CURRENT BRIEF ===\n{session_brief}\n\n=== NEW OBSERVATION ===\n{new_summary}"
+        if interpreter_state.session_brief:
+            user_msg = f"=== CURRENT BRIEF ===\n{interpreter_state.session_brief}\n\n=== NEW OBSERVATION ===\n{new_summary}"
         else:
             user_msg = f"=== FIRST OBSERVATION ===\n{new_summary}"
 
         # Include any recent user chat for the brief to absorb
-        if _chat_messages:
-            chat_text = "\n".join(f"- {m['text']}" for m in _chat_messages[-5:])
+        if interpreter_state._chat_messages:
+            chat_text = "\n".join(f"- {m['text']}" for m in interpreter_state._chat_messages[-5:])
             user_msg += f"\n\n=== USER CLARIFICATIONS ===\n{chat_text}"
 
         response = await client.messages.create(
@@ -284,8 +297,8 @@ async def _update_session_brief(new_summary: str):
             system=_build_brief_prompt(),
             messages=[{"role": "user", "content": user_msg}],
         )
-        session_brief = response.content[0].text
-        print(f"[Corvus] Brief updated ({len(session_brief)} chars)")
+        interpreter_state.session_brief = response.content[0].text
+        print(f"[Corvus] Brief updated ({len(interpreter_state.session_brief)} chars)")
 
         # Auto-save to DB
         await _save_session_brief()
@@ -297,8 +310,8 @@ async def _get_prior_context() -> str:
     """Build context from session brief + last few interpretations + entities."""
     parts = []
 
-    if session_brief:
-        parts.append(f"=== RUNNING CONTEXT ===\n{session_brief}")
+    if interpreter_state.session_brief:
+        parts.append(f"=== RUNNING CONTEXT ===\n{interpreter_state.session_brief}")
 
     async with async_session() as db:
         result = await db.execute(
@@ -315,9 +328,9 @@ async def _get_prior_context() -> str:
             parts.append("=== YOUR RECENT THOUGHTS ===\n" + "\n\n".join(recent))
 
         # Include user chat messages
-        if _chat_messages:
+        if interpreter_state._chat_messages:
             chat_lines = []
-            for m in _chat_messages:
+            for m in interpreter_state._chat_messages:
                 chat_lines.append(f"[{m['timestamp']}] {m['text']}")
             parts.append("=== USER SAID ===\n" + "\n".join(chat_lines))
 
@@ -365,17 +378,16 @@ async def _purge_interpreted_captures():
 async def _should_interpret_now(trigger_reason: str) -> str:
     """Interrupt intelligence: decide whether to interrupt, defer, or skip.
     Returns: 'interrupt', 'defer', or 'skip'."""
-    global _last_interrupt_decision
 
     # Alert-triggered interpretations always interrupt
     if "alert" in trigger_reason.lower() or "user" in trigger_reason.lower() or "manual" in trigger_reason.lower():
-        _last_interrupt_decision = "active"
+        interpreter_state._last_interrupt_decision = "active"
         return "interrupt"
 
     # Check if any alert rules just fired (capture.py sets this)
-    if capture_mod.last_alert_fired:
-        capture_mod.last_alert_fired = False
-        _last_interrupt_decision = "active"
+    if capture_mod.capture_state.last_alert_fired:
+        capture_mod.capture_state.last_alert_fired = False
+        interpreter_state._last_interrupt_decision = "active"
         return "interrupt"
 
     # Heuristic: if user has been in the same app for >10 min and novelty is low, defer
@@ -383,23 +395,22 @@ async def _should_interpret_now(trigger_reason: str) -> str:
     novelty = get_adaptive_multiplier()
 
     if time_in_app > 600 and novelty > 2.0:  # high multiplier = low novelty
-        _last_interrupt_decision = "deferred"
+        interpreter_state._last_interrupt_decision = "deferred"
         return "defer"
 
     # App switch always worth interpreting
     if "app switch" in trigger_reason.lower():
-        _last_interrupt_decision = "active"
+        interpreter_state._last_interrupt_decision = "active"
         return "interrupt"
 
-    _last_interrupt_decision = "active"
+    interpreter_state._last_interrupt_decision = "active"
     return "interrupt"
 
 
 async def _run_text_interpretation(trigger_reason: str) -> str | None:
     """Text-mode interpretation: send OCR diffs to Haiku."""
-    global current_interpretation_tokens, _last_interpretation_time
 
-    diffs = get_pending_diffs()
+    diffs = await get_pending_diffs()
     if not diffs:
         return None
 
@@ -438,9 +449,9 @@ async def _run_text_interpretation(trigger_reason: str) -> str | None:
         user_message += "\n"
     user_message += "=== NEW DIFFS ===\n\n" + "\n\n".join(context_parts)
 
-    current_interpretation_tokens = int(len(user_message) / 4)
+    interpreter_state.current_interpretation_tokens = int(len(user_message) / 4)
 
-    preset = EFFORT_PRESETS.get(effort_level, EFFORT_PRESETS["normal"])
+    preset = EFFORT_PRESETS.get(interpreter_state.effort_level, EFFORT_PRESETS["normal"])
 
     response = await client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -455,14 +466,13 @@ async def _run_text_interpretation(trigger_reason: str) -> str | None:
 
 async def _run_vision_interpretation(trigger_reason: str) -> str | None:
     """Vision-mode interpretation: send cropped images + OCR context to Haiku."""
-    global current_interpretation_tokens, _last_interpretation_time
 
-    images = get_pending_images()
+    images = await get_pending_images()
     if not images:
         return None
 
     # Estimate tokens: ~1600 per image
-    current_interpretation_tokens = len(images) * 1600
+    interpreter_state.current_interpretation_tokens = len(images) * 1600
 
     prior_context = await _get_prior_context()
 
@@ -505,7 +515,7 @@ async def _run_vision_interpretation(trigger_reason: str) -> str | None:
             "text": f"[{img['app_id'].upper()} @ {img['timestamp']}]",
         })
 
-    preset = EFFORT_PRESETS.get(effort_level, EFFORT_PRESETS["normal"])
+    preset = EFFORT_PRESETS.get(interpreter_state.effort_level, EFFORT_PRESETS["normal"])
 
     response = await client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -520,10 +530,9 @@ async def _run_vision_interpretation(trigger_reason: str) -> str | None:
 
 async def run_interpretation(trigger_reason: str) -> str | None:
     """Run interpretation in the current mode (vision or text)."""
-    global current_interpretation_tokens, _last_interpretation_time
 
     try:
-        mode = capture_mod.interpretation_mode
+        mode = capture_mod.capture_state.interpretation_mode
         if mode == "vision":
             summary = await _run_vision_interpretation(trigger_reason)
         else:
@@ -532,7 +541,7 @@ async def run_interpretation(trigger_reason: str) -> str | None:
         if not summary:
             return None
 
-        _last_interpretation_time = time.time()
+        interpreter_state._last_interpretation_time = time.time()
 
         # Store interpretation + purge captures
         async with async_session() as db:
@@ -548,7 +557,7 @@ async def run_interpretation(trigger_reason: str) -> str | None:
                 timestamp=datetime.datetime.now().isoformat(),
                 summary=summary,
                 capture_ids=json.dumps(capture_ids),
-                session_id=_active_session_id,
+                session_id=interpreter_state._active_session_id,
             )
             db.add(interp)
             await db.commit()
@@ -558,12 +567,12 @@ async def run_interpretation(trigger_reason: str) -> str | None:
         # Update session brief with new observation
         await _update_session_brief(summary)
 
-        current_interpretation_tokens = 0
+        interpreter_state.current_interpretation_tokens = 0
         return summary
 
     except Exception as e:
         print(f"[Corvus] Interpretation error: {e}")
-        current_interpretation_tokens = 0
+        interpreter_state.current_interpretation_tokens = 0
         return None
 
 
@@ -573,11 +582,10 @@ async def run_file_interpretation(
     media_type: str = "image/jpeg",
 ) -> str | None:
     """Interpret a user-attached file (image or text)."""
-    global _last_interpretation_time
 
     try:
         prior_context = await _get_prior_context()
-        preset = EFFORT_PRESETS.get(effort_level, EFFORT_PRESETS["normal"])
+        preset = EFFORT_PRESETS.get(interpreter_state.effort_level, EFFORT_PRESETS["normal"])
 
         if image_b64:
             # Vision: send image + text
@@ -613,7 +621,7 @@ async def run_file_interpretation(
             )
 
         summary = response.content[0].text
-        _last_interpretation_time = time.time()
+        interpreter_state._last_interpretation_time = time.time()
 
         # Store as interpretation
         async with async_session() as db:
@@ -621,7 +629,7 @@ async def run_file_interpretation(
                 timestamp=datetime.datetime.now().isoformat(),
                 summary=summary,
                 capture_ids="[]",
-                session_id=_active_session_id,
+                session_id=interpreter_state._active_session_id,
             )
             db.add(interp)
             await db.commit()
@@ -632,23 +640,6 @@ async def run_file_interpretation(
     except Exception as e:
         print(f"[Corvus] File interpretation error: {e}")
         return None
-
-
-DIGEST_SYSTEM_PROMPT = """You are Corvus, generating an end-of-day digest. Synthesize all observations and conversations into a structured summary using this format:
-
-## What You Worked On
-- Key activities and focus areas
-
-## Key Decisions & Outcomes
-- Decisions made, conclusions reached
-
-## Open Threads
-- Unresolved questions, pending items, things to follow up on
-
-## Notable Observations
-- Patterns, risks, or insights worth remembering
-
-Be concise and actionable. Use bullet points. Skip sections if empty."""
 
 
 async def generate_digest(hours: float = 8.0) -> str | None:
@@ -669,23 +660,23 @@ async def generate_digest(hours: float = 8.0) -> str | None:
 
         # Build the content for digest
         parts = []
-        if session_brief:
-            parts.append(f"=== SESSION BRIEF ===\n{session_brief}")
+        if interpreter_state.session_brief:
+            parts.append(f"=== SESSION BRIEF ===\n{interpreter_state.session_brief}")
 
         thoughts = []
         for r in interps:
             thoughts.append(f"[{r.timestamp}] {r.summary}")
         parts.append("=== ALL OBSERVATIONS ===\n" + "\n\n".join(thoughts))
 
-        if _chat_messages:
-            chat_text = "\n".join(f"[{m['timestamp']}] {m['text']}" for m in _chat_messages)
+        if interpreter_state._chat_messages:
+            chat_text = "\n".join(f"[{m['timestamp']}] {m['text']}" for m in interpreter_state._chat_messages)
             parts.append(f"=== USER MESSAGES ===\n{chat_text}")
 
         user_message = "\n\n".join(parts)
 
         system = DIGEST_SYSTEM_PROMPT
-        if user_context.strip():
-            system += f"\n\nUser was focused on: {user_context.strip()}"
+        if interpreter_state.user_context.strip():
+            system += f"\n\nUser was focused on: {interpreter_state.user_context.strip()}"
 
         response = await client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -697,7 +688,7 @@ async def generate_digest(hours: float = 8.0) -> str | None:
         digest_text = response.content[0].text
 
         # Submit digest as observation to Yggdrasil
-        if ygg_enabled and digest_text:
+        if interpreter_state.ygg_enabled and digest_text:
             try:
                 from .entities import get_recent_entities
                 recent_entities = await get_recent_entities(minutes=int(hours * 60), limit=20)
@@ -723,120 +714,117 @@ async def generate_digest(hours: float = 8.0) -> str | None:
 
 async def init_session():
     """Load the most recent active session or create a new one on startup."""
-    global _active_session_id, session_brief, _watch_items, _ignore_items
-
-    async with async_session() as db:
-        try:
-            # Try to resume the most recent session that has no ended_at
-            result = await db.execute(
-                select(CorvusSession).where(CorvusSession.ended_at.is_(None))
-                .order_by(CorvusSession.id.desc()).limit(1)
-            )
-            row = result.scalar_one_or_none()
-
-            if row:
-                _active_session_id = row.id
-                session_brief = row.brief or ""
-                print(f"[Corvus] Resumed session #{_active_session_id} (brief: {len(session_brief)} chars)")
-            else:
-                # Check for any session with a brief (even if ended)
+    async with interpreter_state.lock:
+        async with async_session() as db:
+            try:
+                # Try to resume the most recent session that has no ended_at
                 result = await db.execute(
-                    select(CorvusSession).where(
-                        CorvusSession.brief.isnot(None),
-                        CorvusSession.brief != "",
-                    ).order_by(CorvusSession.id.desc()).limit(1)
+                    select(CorvusSession).where(CorvusSession.ended_at.is_(None))
+                    .order_by(CorvusSession.id.desc()).limit(1)
                 )
-                prev = result.scalar_one_or_none()
-                if prev:
-                    # Create a new session but carry over the brief
-                    session_brief = prev.brief or ""
-                    new_sess = CorvusSession(brief=session_brief)
-                    db.add(new_sess)
-                    await db.flush()
-                    _active_session_id = new_sess.id
-                    await db.commit()
-                    print(f"[Corvus] New session #{_active_session_id} (carried brief from #{prev.id})")
+                row = result.scalar_one_or_none()
+
+                if row:
+                    interpreter_state._active_session_id = row.id
+                    interpreter_state.session_brief = row.brief or ""
+                    print(f"[Corvus] Resumed session #{interpreter_state._active_session_id} (brief: {len(interpreter_state.session_brief)} chars)")
                 else:
-                    # Fresh start
+                    # Check for any session with a brief (even if ended)
+                    result = await db.execute(
+                        select(CorvusSession).where(
+                            CorvusSession.brief.isnot(None),
+                            CorvusSession.brief != "",
+                        ).order_by(CorvusSession.id.desc()).limit(1)
+                    )
+                    prev = result.scalar_one_or_none()
+                    if prev:
+                        # Create a new session but carry over the brief
+                        interpreter_state.session_brief = prev.brief or ""
+                        new_sess = CorvusSession(brief=interpreter_state.session_brief)
+                        db.add(new_sess)
+                        await db.flush()
+                        interpreter_state._active_session_id = new_sess.id
+                        await db.commit()
+                        print(f"[Corvus] New session #{interpreter_state._active_session_id} (carried brief from #{prev.id})")
+                    else:
+                        # Fresh start
+                        new_sess = CorvusSession()
+                        db.add(new_sess)
+                        await db.flush()
+                        interpreter_state._active_session_id = new_sess.id
+                        await db.commit()
+                        print(f"[Corvus] New session #{interpreter_state._active_session_id} (fresh)")
+
+                # Load attention items
+                result = await db.execute(select(CorvusAttentionItem))
+                items = result.scalars().all()
+                interpreter_state._watch_items = [r.value for r in items if r.list_type == "watch"]
+                interpreter_state._ignore_items = [r.value for r in items if r.list_type == "ignore"]
+                if interpreter_state._watch_items or interpreter_state._ignore_items:
+                    print(f"[Corvus] Attention: {len(interpreter_state._watch_items)} watch, {len(interpreter_state._ignore_items)} ignore")
+
+            except Exception as e:
+                print(f"[Corvus] Session init error: {e}")
+                # Fallback: create new session
+                try:
                     new_sess = CorvusSession()
                     db.add(new_sess)
                     await db.flush()
-                    _active_session_id = new_sess.id
+                    interpreter_state._active_session_id = new_sess.id
                     await db.commit()
-                    print(f"[Corvus] New session #{_active_session_id} (fresh)")
-
-            # Load attention items
-            result = await db.execute(select(CorvusAttentionItem))
-            items = result.scalars().all()
-            _watch_items = [r.value for r in items if r.list_type == "watch"]
-            _ignore_items = [r.value for r in items if r.list_type == "ignore"]
-            if _watch_items or _ignore_items:
-                print(f"[Corvus] Attention: {len(_watch_items)} watch, {len(_ignore_items)} ignore")
-
-        except Exception as e:
-            print(f"[Corvus] Session init error: {e}")
-            # Fallback: create new session
-            try:
-                new_sess = CorvusSession()
-                db.add(new_sess)
-                await db.flush()
-                _active_session_id = new_sess.id
-                await db.commit()
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
 
 async def new_session(label: str | None = None) -> dict:
     """End current session and start a new one."""
-    global _active_session_id, session_brief
+    async with interpreter_state.lock:
+        async with async_session() as db:
+            # End current session
+            if interpreter_state._active_session_id:
+                session_obj = await db.get(CorvusSession, interpreter_state._active_session_id)
+                if session_obj:
+                    session_obj.ended_at = func.now()
 
-    async with async_session() as db:
-        # End current session
-        if _active_session_id:
-            session_obj = await db.get(CorvusSession, _active_session_id)
-            if session_obj:
-                session_obj.ended_at = func.now()
-
-        # Create new session
-        new_sess = CorvusSession(label=label)
-        db.add(new_sess)
-        await db.flush()
-        _active_session_id = new_sess.id
-        session_brief = ""
-        await db.commit()
-        return {"id": _active_session_id, "label": label}
+            # Create new session
+            new_sess = CorvusSession(label=label)
+            db.add(new_sess)
+            await db.flush()
+            interpreter_state._active_session_id = new_sess.id
+            interpreter_state.session_brief = ""
+            await db.commit()
+            return {"id": interpreter_state._active_session_id, "label": label}
 
 
 async def resume_session(session_id: int) -> dict | None:
     """Resume a previous session by loading its brief."""
-    global _active_session_id, session_brief
+    async with interpreter_state.lock:
+        async with async_session() as db:
+            # End current session
+            if interpreter_state._active_session_id:
+                current = await db.get(CorvusSession, interpreter_state._active_session_id)
+                if current:
+                    current.ended_at = func.now()
 
-    async with async_session() as db:
-        # End current session
-        if _active_session_id:
-            current = await db.get(CorvusSession, _active_session_id)
-            if current:
-                current.ended_at = func.now()
+            # Load target session
+            target = await db.get(CorvusSession, session_id)
+            if not target:
+                await db.commit()
+                return None
 
-        # Load target session
-        target = await db.get(CorvusSession, session_id)
-        if not target:
+            interpreter_state._active_session_id = target.id
+            interpreter_state.session_brief = target.brief or ""
+
+            # Re-open it (clear ended_at)
+            target.ended_at = None
             await db.commit()
-            return None
 
-        _active_session_id = target.id
-        session_brief = target.brief or ""
-
-        # Re-open it (clear ended_at)
-        target.ended_at = None
-        await db.commit()
-
-        return {
-            "id": target.id,
-            "label": target.label,
-            "brief": session_brief,
-            "started_at": str(target.started_at) if target.started_at else None,
-        }
+            return {
+                "id": target.id,
+                "label": target.label,
+                "brief": interpreter_state.session_brief,
+                "started_at": str(target.started_at) if target.started_at else None,
+            }
 
 
 async def list_sessions(limit: int = 20) -> list[dict]:
@@ -859,7 +847,7 @@ async def list_sessions(limit: int = 20) -> list[dict]:
                 "ended_at": str(r.ended_at) if r.ended_at else None,
                 "label": r.label,
                 "brief_length": r.brief_length,
-                "active": r.id == _active_session_id,
+                "active": r.id == interpreter_state._active_session_id,
             }
             for r in rows
         ]
@@ -867,9 +855,8 @@ async def list_sessions(limit: int = 20) -> list[dict]:
 
 async def set_attention(watch: list[str], ignore: list[str]):
     """Update attention steering lists."""
-    global _watch_items, _ignore_items
-    _watch_items = watch
-    _ignore_items = ignore
+    interpreter_state._watch_items = watch[:MAX_ATTENTION_ITEMS]
+    interpreter_state._ignore_items = ignore[:MAX_ATTENTION_ITEMS]
 
     async with async_session() as db:
         await db.execute(sql_text("DELETE FROM corvus_attention_items"))
@@ -882,20 +869,19 @@ async def set_attention(watch: list[str], ignore: list[str]):
 
 def get_attention() -> dict:
     """Return current attention lists."""
-    return {"watch": _watch_items[:], "ignore": _ignore_items[:]}
+    return {"watch": interpreter_state._watch_items[:], "ignore": interpreter_state._ignore_items[:]}
 
 
 async def interpretation_loop():
     """Event-driven interpretation loop. Checks triggers every few seconds."""
-    global _last_interpretation_time, _last_app_id
 
-    _last_interpretation_time = time.time()
+    interpreter_state._last_interpretation_time = time.time()
 
     while True:
         try:
             await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
-            mode = capture_mod.interpretation_mode
+            mode = capture_mod.capture_state.interpretation_mode
             if mode == "vision":
                 pending = get_pending_image_count()
             else:
@@ -909,13 +895,13 @@ async def interpretation_loop():
                 continue
 
             now = time.time()
-            time_since_last = now - _last_interpretation_time
+            time_since_last = now - interpreter_state._last_interpretation_time
             current_app = get_last_app_id()
 
             # Trigger: app switch (only if we have pending non-dup content)
-            if pending > 0 and _last_app_id is not None and current_app != _last_app_id:
-                old_app = _last_app_id
-                _last_app_id = current_app
+            if pending > 0 and interpreter_state._last_app_id is not None and current_app != interpreter_state._last_app_id:
+                old_app = interpreter_state._last_app_id
+                interpreter_state._last_app_id = current_app
                 trigger = f"App switch: {old_app} -> {current_app}"
 
                 # Interrupt intelligence check
@@ -928,7 +914,7 @@ async def interpretation_loop():
                     print(f"[Corvus] App switch: {result[:120]}")
                 continue
 
-            _last_app_id = current_app
+            interpreter_state._last_app_id = current_app
 
             # Trigger: threshold (only if we have pending non-dup content)
             if pending > 0:
@@ -947,8 +933,8 @@ async def interpretation_loop():
 
             # Trigger: time cap with adaptive cadence
             # Skip when time_cap_seconds == 0 (manual mode)
-            adaptive_cap = time_cap_seconds * get_adaptive_multiplier()
-            if time_cap_seconds > 0 and time_since_last >= adaptive_cap and (frames_received > 0 or audio_pending > 0):
+            adaptive_cap = interpreter_state.time_cap_seconds * get_adaptive_multiplier()
+            if interpreter_state.time_cap_seconds > 0 and time_since_last >= adaptive_cap and (frames_received > 0 or audio_pending > 0):
                 trigger = f"Time cap ({int(time_since_last)}s since last)"
 
                 decision = await _should_interpret_now(trigger)

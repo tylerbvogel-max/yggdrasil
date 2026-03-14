@@ -123,7 +123,7 @@ def _parse_slots(query: Query) -> list[SlotResult]:
     if query.results_json:
         try:
             return [SlotResult(**s) for s in json.loads(query.results_json)]
-        except (json.JSONDecodeError, Exception):
+        except (json.JSONDecodeError, TypeError, KeyError):
             pass
     # Legacy fallback
     slots = []
@@ -150,7 +150,7 @@ def _parse_modes(query: Query) -> list[str]:
     if query.results_json:
         try:
             return [s["mode"] for s in json.loads(query.results_json)]
-        except (json.JSONDecodeError, Exception):
+        except (json.JSONDecodeError, TypeError, KeyError):
             pass
     modes = []
     if query.run_neuron:
@@ -176,6 +176,7 @@ async def query_run_counts(texts: list[str], db: AsyncSession = Depends(get_db))
 
 @router.get("/queries", response_model=list[QuerySummary])
 async def list_queries(db: AsyncSession = Depends(get_db)):
+    """List the 50 most recent queries with summary metadata."""
     result = await db.execute(select(Query).order_by(Query.id.desc()).limit(50))
     queries = result.scalars().all()
     return [
@@ -194,6 +195,7 @@ async def list_queries(db: AsyncSession = Depends(get_db)):
 
 @router.get("/queries/{query_id}", response_model=QueryDetail)
 async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
+    """Retrieve full detail for a single query including neuron hits, slots, eval scores, and refinements."""
     query = await db.get(Query, query_id)
     if not query:
         raise HTTPException(status_code=404, detail="Query not found")
@@ -313,6 +315,10 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("/query", response_model=QueryResponse)
 async def post_query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
+    """Execute a query through the full neuron pipeline: classify, score, assemble, execute."""
+    # JPL Rule 5: message must be non-empty (defense-in-depth beyond Pydantic)
+    assert req.message and req.message.strip(), "Query message must be non-empty"
+
     # ── Input Guard: run before classification ──
     guard_result = check_input(req.message)
     if guard_result.verdict == "block":
@@ -373,7 +379,9 @@ async def post_query(req: QueryRequest, db: AsyncSession = Depends(get_db)):
 async def post_query_stream(req: QueryRequest, db: AsyncSession = Depends(get_db)):
     """SSE streaming version of POST /query — emits pipeline stage events in real time."""
 
-    queue: asyncio.Queue[dict | None] = asyncio.Queue()
+    queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=1000)
+    # JPL Rule 5: queue must be bounded to prevent unbounded memory growth
+    assert queue.maxsize > 0, "SSE queue must have a bounded maxsize"
 
     async def on_stage(stage: str, data: dict):
         await queue.put({"event": "stage", "data": {"stage": stage, **data}})
@@ -456,6 +464,7 @@ async def post_query_stream(req: QueryRequest, db: AsyncSession = Depends(get_db
 async def evaluate_query(
     query_id: int, req: EvalRequest, db: AsyncSession = Depends(get_db)
 ):
+    """Run blind LLM evaluation comparing multiple response slots for a query."""
     query = await db.get(Query, query_id)
     if not query:
         raise HTTPException(status_code=404, detail="Query not found")
@@ -463,6 +472,8 @@ async def evaluate_query(
     slots = _parse_slots(query)
     if len(slots) < 2:
         raise HTTPException(status_code=400, detail="Need at least two responses to compare")
+    # JPL Rule 5: postcondition — after passing the guard, we must have enough slots for comparison
+    assert len(slots) >= 2, f"evaluate_query requires >= 2 slots, got {len(slots)}"
 
     # Build answer labels
     def _slot_label(slot: SlotResult) -> str:
@@ -536,7 +547,7 @@ async def evaluate_query(
         parsed_scores = parsed.get("scores", [])
         verdict_text = parsed.get("verdict", raw_text)
         winner = parsed.get("winner")
-    except (json.JSONDecodeError, Exception):
+    except (json.JSONDecodeError, KeyError, TypeError, IndexError):
         pass  # Fall back to raw text
 
     # Delete old eval scores for this query
@@ -633,6 +644,7 @@ async def list_eval_scores(db: AsyncSession = Depends(get_db)):
 async def rate_query(
     query_id: int, req: RatingRequest, db: AsyncSession = Depends(get_db)
 ):
+    """Submit a user utility rating for a query and update neuron impact scores."""
     query = await db.get(Query, query_id)
     if not query:
         raise HTTPException(status_code=404, detail="Query not found")
@@ -662,6 +674,7 @@ async def rate_query(
 async def refine_query(
     query_id: int, req: RefineRequest, db: AsyncSession = Depends(get_db)
 ):
+    """Generate LLM-driven neuron update and creation suggestions based on eval results."""
     query = await db.get(Query, query_id)
     if not query:
         raise HTTPException(status_code=404, detail="Query not found")
@@ -684,6 +697,8 @@ async def refine_query(
         neuron = await db.get(Neuron, nid)
         if neuron:
             neurons.append(neuron)
+    # JPL Rule 5: neurons list must be non-empty before building the refinement prompt
+    assert len(neurons) > 0, "refine_query requires at least one loaded neuron to build prompt"
 
     # Find the neuron-enhanced response from slots
     slots = _parse_slots(query)
@@ -830,6 +845,7 @@ async def refine_query(
 async def apply_refinements(
     query_id: int, req: ApplyRefineRequest, db: AsyncSession = Depends(get_db)
 ):
+    """Apply selected neuron update and creation suggestions from a prior refine call."""
     query = await db.get(Query, query_id)
     if not query:
         raise HTTPException(status_code=404, detail="Query not found")

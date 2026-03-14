@@ -3,6 +3,7 @@ import * as d3 from 'd3'
 import { fetchTree } from '../api'
 import type { TreeNode } from '../types'
 import { DEPT_COLORS } from '../constants'
+import { escapeHtml } from '../utils'
 
 interface HierNode {
   name: string
@@ -237,9 +238,9 @@ export default function CirclePacking() {
               tooltipMerged
                 .style('display', 'block')
                 .html(
-                  `<strong>${d.data.name}</strong><br/>` +
-                  `L${d.data.layer} ${d.data.node_type}<br/>` +
-                  (d.data.department ? `${d.data.department}<br/>` : '') +
+                  `<strong>${escapeHtml(d.data.name)}</strong><br/>` +
+                  `L${d.data.layer} ${escapeHtml(d.data.node_type)}<br/>` +
+                  (d.data.department ? `${escapeHtml(d.data.department)}<br/>` : '') +
                   (desc > 0 ? `${desc} descendants<br/>` : '') +
                   `Invocations: ${d.data.invocations}<br/>` +
                   `Utility: ${d.data.avg_utility.toFixed(2)}`
@@ -282,9 +283,9 @@ export default function CirclePacking() {
               tooltipMerged
                 .style('display', 'block')
                 .html(
-                  `<strong>${d.data.name}</strong><br/>` +
-                  `L${d.data.layer} ${d.data.node_type}<br/>` +
-                  (d.data.department ? `${d.data.department}<br/>` : '') +
+                  `<strong>${escapeHtml(d.data.name)}</strong><br/>` +
+                  `L${d.data.layer} ${escapeHtml(d.data.node_type)}<br/>` +
+                  (d.data.department ? `${escapeHtml(d.data.department)}<br/>` : '') +
                   `${desc} descendants<br/>` +
                   `Invocations: ${d.data.invocations}`
                 )
@@ -320,8 +321,8 @@ export default function CirclePacking() {
           breadcrumb.html(
             ancestors.map((a, i) =>
               i === ancestors.length - 1
-                ? `<span style="color:#60a5fa">${a.data.name}</span>`
-                : `<span style="cursor:pointer;color:#c8d0dc" class="bc-link" data-id="${a.data.id}">${a.data.name}</span>`
+                ? `<span style="color:#60a5fa">${escapeHtml(a.data.name)}</span>`
+                : `<span style="cursor:pointer;color:#c8d0dc" class="bc-link" data-id="${a.data.id}">${escapeHtml(a.data.name)}</span>`
             ).join(' <span style="color:#334155">/</span> ')
           )
           breadcrumb.selectAll('.bc-link').on('click', function () {

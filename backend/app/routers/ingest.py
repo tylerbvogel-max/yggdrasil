@@ -337,6 +337,8 @@ async def evaluate_observation(
         raise HTTPException(status_code=404, detail="Observation not found")
     if obs.status not in ("queued", "evaluated"):
         raise HTTPException(status_code=400, detail=f"Observation is {obs.status}, must be queued or evaluated")
+    # JPL Rule 5: observation must have text content to evaluate
+    assert obs.text and len(obs.text.strip()) > 0, "Observation text must be non-empty for evaluation"
 
     # Gather context: similar neuron + parent chain
     similar_context = ""
@@ -405,6 +407,26 @@ async def evaluate_observation(
     except Exception:
         pass
 
+    # LLM PROMPT INTENT: Evaluate a Corvus screen-capture observation and propose a single action
+    #   (create, update, merge, or dismiss) to integrate the observation into the neuron knowledge
+    #   graph. The LLM acts as a graph architect deciding how new operational knowledge should be
+    #   incorporated relative to existing neurons.
+    # INPUT: User message contains the observation text, type, app context, proposed department/role,
+    #   extracted entities, the most similar existing neuron with its parent chain and siblings, and
+    #   nearby neurons in the same department. All formatted as labeled markdown sections.
+    # OUTPUT FORMAT: Raw JSON object (no markdown fences):
+    #   {"reasoning": str, "action": "create|update|merge|dismiss",
+    #    "updates": [{"neuron_id": int, "field": str, "old_value": str, "new_value": str, "reason": str}],
+    #    "new_neurons": [{"parent_id": int, "layer": int, "node_type": str, "label": str,
+    #     "content": str, "summary": str, "department": str, "role_key": str, "reason": str}],
+    #    "merge_target_id": int|null, "merge_content_delta": str|null}
+    #   Only the fields relevant to the chosen action should be populated.
+    # FAILURE MODES: If the LLM returns non-JSON, a regex fallback attempts to extract the outermost
+    #   JSON object. If that also fails, a 500 HTTP error is raised. If the LLM returns an invalid
+    #   action value, the assertion on line 478 will raise an AssertionError (caught as 500). If the
+    #   LLM proposes a nonexistent parent_id for new neurons, the neuron is created with a dangling
+    #   parent reference. Proposals are stored but NOT applied until explicit human approval via
+    #   the /apply endpoint — this is a safety gate per Corvus development rules.
     system_prompt = """You are a neuron graph architect reviewing a screen-capture observation for potential ingestion into a knowledge graph.
 
 The graph has 6 layers:
@@ -471,6 +493,11 @@ Only populate the relevant array/fields for your chosen action. Leave others emp
         else:
             raise HTTPException(status_code=500, detail="LLM response was not valid JSON")
 
+    # JPL Rule 5: eval_data must have a valid action before persisting
+    assert isinstance(eval_data, dict), "LLM eval response must parse to a dict"
+    assert eval_data.get("action") in ("create", "update", "merge", "dismiss"), \
+        f"eval action must be create/update/merge/dismiss, got {eval_data.get('action')!r}"
+
     # Store evaluation
     obs.eval_json = json.dumps(eval_data)
     obs.eval_model = req.model
@@ -525,7 +552,11 @@ async def apply_observation(
         raise HTTPException(status_code=400, detail="No evaluation data found")
 
     eval_data = json.loads(obs.eval_json)
+    # JPL Rule 5: eval_data must be a well-formed dict with a valid action
+    assert isinstance(eval_data, dict), "Stored eval_json must deserialize to a dict"
     action = eval_data.get("action", "dismiss")
+    assert action in ("create", "update", "merge", "dismiss"), \
+        f"eval action must be create/update/merge/dismiss, got {action!r}"
     updates_list = eval_data.get("updates", [])
     new_neurons_list = eval_data.get("new_neurons", [])
     merge_target_id = eval_data.get("merge_target_id")
@@ -650,6 +681,19 @@ async def _classify_observation(
 
         client = anthropic.AsyncAnthropic()
 
+        # LLM PROMPT INTENT: Classify a Corvus observation into an organizational department and
+        #   role_key to determine where in the neuron graph hierarchy the observation belongs.
+        #   This is a lightweight classification step (Haiku) run before semantic similarity search.
+        # INPUT: User message contains the observation type, optional app context, and the first
+        #   500 characters of the observation text.
+        # OUTPUT FORMAT: Raw JSON object: {"department": str, "role_key": str}. Department is one
+        #   of the enumerated valid departments. role_key is snake_case.
+        # FAILURE MODES: If the LLM returns non-JSON or the call fails entirely, the except block
+        #   returns (None, None), causing the observation to be classified as "unclassified" for
+        #   both department and role. This is safe — the observation still proceeds through
+        #   similarity search and queuing, just without department-filtered candidate narrowing.
+        #   If the LLM returns a department not in the valid set, the downstream neuron filter
+        #   query will simply return no matches for that department.
         system = (
             "You classify observations into organizational departments and roles. "
             "Respond with ONLY a JSON object: {\"department\": \"...\", \"role_key\": \"...\"}\n\n"

@@ -1,10 +1,154 @@
+import { useState, type ReactNode } from 'react';
+
+function CollapsibleSection({ title, children, defaultOpen = false, style }: {
+  title: string; children: ReactNode; defaultOpen?: boolean; style?: React.CSSProperties;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="about-section" style={style}>
+      <h3
+        onClick={() => setOpen(!open)}
+        style={{ marginTop: 0, cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 8 }}
+      >
+        <span style={{ fontSize: '0.7rem', color: '#64748b', transition: 'transform 0.15s', transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>&#9654;</span>
+        {title}
+      </h3>
+      {open && children}
+    </section>
+  );
+}
+
+type RoadmapStatus = 'done' | 'in-progress' | 'planned' | 'deferred';
+
+interface RoadmapItem {
+  id: string;
+  title: string;
+  status: RoadmapStatus;
+  effort: string;
+  detail: string;
+  controls: string;
+}
+
+const TIER_1: RoadmapItem[] = [
+  { id: 'T1-1', title: 'Error message sanitization', status: 'done', effort: '< 30 min',
+    detail: 'Global exception handler now returns generic "Internal server error" to clients while logging real error server-side. Prevents leaking implementation details.',
+    controls: 'SI-11, SOC 2 CC7.3' },
+  { id: 'T1-2', title: 'Audit log middleware', status: 'done', effort: '1-2 hours',
+    detail: 'AuditMiddleware logs all POST/PUT/DELETE/PATCH requests to audit_log table with timestamp, endpoint, action, status code, client IP, user agent, redacted body summary, and response time. Skips high-frequency endpoints (Corvus frames). Query and summary endpoints for audit review.',
+    controls: 'AU-2, AU-3, AU-4, AU-8, AU-12, CMMC 3.3.1/3.3.5/3.3.6, SOC 2 CC7.2/CC7.3' },
+  { id: 'T1-3', title: 'Session timeout headers', status: 'done', effort: '< 30 min',
+    detail: 'SecurityHeadersMiddleware sets X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, CSP, HSTS, Referrer-Policy, Permissions-Policy, Cache-Control, and X-Session-Timeout on all responses.',
+    controls: 'AC-12, SC-10, CMMC 3.1.11/3.13.9' },
+  { id: 'T1-4', title: 'System use notification banner', status: 'done', effort: '< 30 min',
+    detail: 'GET /admin/system-banner endpoint serves configurable banner text. SystemUseBanner component displays modal overlay on first visit (per-session acknowledgment via sessionStorage). Banner text configurable via SYSTEM_USE_BANNER env var.',
+    controls: 'AC-8, CMMC 3.1.9' },
+  { id: 'T1-5', title: 'Data retention configuration', status: 'planned', effort: '< 30 min',
+    detail: 'Add data_retention_days to config.py with a scheduled cleanup function for old query logs and audit records.',
+    controls: 'SI-12, SOC 2 P1.5/P1.6/C1.2, AU-11' },
+  { id: 'T1-6', title: 'TLS-ready configuration', status: 'planned', effort: '< 30 min',
+    detail: 'Add ssl_keyfile/ssl_certfile to config.py. Document uvicorn TLS launch. App becomes TLS-capable without enforcing it on localhost.',
+    controls: 'SC-8, CMMC 3.13.8, AC-17(2)' },
+];
+
+const TIER_2: RoadmapItem[] = [
+  { id: 'T2-1', title: 'API key rotation tracking', status: 'planned', effort: '1-2 hours',
+    detail: 'Endpoint to record API key rotation timestamp. Alert if Anthropic key >90 days old. Key management lifecycle tracking.',
+    controls: 'SC-12, CMMC 3.13.10, IA-5' },
+  { id: 'T2-2', title: 'Privacy notice endpoint + banner', status: 'planned', effort: '1-2 hours',
+    detail: 'Configurable privacy notice describing data collected, usage, retention, and deletion rights. Frontend consent banner.',
+    controls: 'PT-5, SOC 2 P1.1/P1.2, CMMC 3.1.9' },
+  { id: 'T2-3', title: 'Exception handling cleanup', status: 'planned', effort: '2-3 hours',
+    detail: 'Replace ~30 bare except Exception blocks with specific exception types + structured logging. Addresses silent failure risks.',
+    controls: 'SI-11, SI-2, SOC 2 CC7.3, NASA CR-01' },
+  { id: 'T2-4', title: 'Vulnerability scanning integration', status: 'planned', effort: '2-3 hours',
+    detail: 'Add pip-audit and npm audit as part of compliance audit endpoint. Track known CVEs in dependencies.',
+    controls: 'RA-5, CMMC 3.11.2, SI-2' },
+  { id: 'T2-5', title: 'Audit log integrity protection', status: 'planned', effort: '1-2 hours',
+    detail: 'Add HMAC chain to audit log entries (each record signs previous hash). Detects tampering without needing separate infrastructure.',
+    controls: 'AU-9, CMMC 3.3.8, SOC 2 CC7.2' },
+];
+
+const TIER_3: RoadmapItem[] = [
+  { id: 'T3-1', title: 'System Security Plan (SSP) stub', status: 'planned', effort: '2-3 hours',
+    detail: 'docs/system-security-plan.md — SSP template populated from existing system card, governance docs, and this compliance assessment. Foundational FedRAMP document.',
+    controls: 'PL-2, CA-6, CMMC 3.12.4' },
+  { id: 'T3-2', title: 'Incident Response Plan', status: 'planned', effort: '1-2 hours',
+    detail: 'docs/incident-response-plan.md — Formalize existing P1-P4 severity levels and playbooks from governance.md into standalone IRP with FedRAMP-required sections.',
+    controls: 'IR-8, CMMC 3.6.1, SOC 2 CC7.4' },
+  { id: 'T3-3', title: 'Data classification policy', status: 'planned', effort: '1 hour',
+    detail: 'docs/data-classification.md — Define sensitivity levels for all data types: queries, neuron content, Corvus captures, audit logs, API keys.',
+    controls: 'MP-3, SOC 2 C1.1, CMMC 3.8.4, RA-2' },
+  { id: 'T3-4', title: 'Contingency Plan stub', status: 'planned', effort: '2-3 hours',
+    detail: 'docs/contingency-plan.md — Backup procedures, RTO/RPO targets, recovery procedures for PostgreSQL and neuron graph data.',
+    controls: 'CP-2, SOC 2 A1.3, CMMC 3.12.1' },
+  { id: 'T3-5', title: 'POA&M (Plan of Action & Milestones)', status: 'planned', effort: '1-2 hours',
+    detail: 'docs/poam.md — Formal tracking of all compliance gaps with remediation timelines, responsible parties, and completion criteria.',
+    controls: 'CA-5, PM-4, CMMC 3.12.2' },
+  { id: 'T3-6', title: 'Rules of Behavior document', status: 'planned', effort: '1 hour',
+    detail: 'docs/rules-of-behavior.md — Expected user behavior, acceptable use, data handling responsibilities.',
+    controls: 'PL-4, SOC 2 CC1.1, CMMC 3.1.9' },
+];
+
+const statusStyle = (s: RoadmapStatus): React.CSSProperties => ({
+  display: 'inline-block', fontSize: '0.65rem', padding: '1px 6px', borderRadius: 3, fontWeight: 600,
+  background: s === 'done' ? '#22c55e22' : s === 'in-progress' ? '#3b82f622' : s === 'deferred' ? '#64748b22' : '#fb923c22',
+  color: s === 'done' ? '#22c55e' : s === 'in-progress' ? '#3b82f6' : s === 'deferred' ? '#64748b' : '#fb923c',
+  border: `1px solid ${s === 'done' ? '#22c55e44' : s === 'in-progress' ? '#3b82f644' : s === 'deferred' ? '#64748b44' : '#fb923c44'}`,
+});
+
+const statusText = (s: RoadmapStatus) =>
+  s === 'done' ? 'Done' : s === 'in-progress' ? 'In Progress' : s === 'deferred' ? 'Deferred' : 'Planned';
+
+function RoadmapTier({ title, subtitle, items, color }: { title: string; subtitle: string; items: RoadmapItem[]; color: string }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const done = items.filter(i => i.status === 'done').length;
+  return (
+    <section className="about-section" style={{ borderLeft: `3px solid ${color}`, paddingLeft: 16 }}>
+      <h4 style={{ color, marginTop: 0, marginBottom: 2 }}>{title}</h4>
+      <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: 0 }}>
+        {subtitle} &mdash; {done}/{items.length} complete
+      </p>
+      <table className="about-table" style={{ fontSize: '0.8rem' }}>
+        <thead>
+          <tr>
+            <th style={{ width: 50 }}>ID</th>
+            <th>Task</th>
+            <th style={{ width: 70 }}>Status</th>
+            <th style={{ width: 80 }}>Effort</th>
+            <th style={{ width: 180 }}>Controls Addressed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map(item => (
+            <>{/* eslint-disable-next-line react/jsx-key */}
+              <tr key={item.id} onClick={() => setExpanded(expanded === item.id ? null : item.id)} style={{ cursor: 'pointer' }}>
+                <td><code>{item.id}</code></td>
+                <td style={{ fontWeight: 500 }}>{item.title}</td>
+                <td><span style={statusStyle(item.status)}>{statusText(item.status)}</span></td>
+                <td style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{item.effort}</td>
+                <td style={{ fontSize: '0.65rem', color: '#94a3b8', fontFamily: 'var(--font-mono, monospace)' }}>{item.controls}</td>
+              </tr>
+              {expanded === item.id && (
+                <tr key={item.id + '-d'}>
+                  <td colSpan={5} style={{ padding: '8px 16px', background: 'var(--bg-input)', fontSize: '0.78rem', color: '#c8d0dc', lineHeight: 1.5 }}>
+                    {item.detail}
+                  </td>
+                </tr>
+              )}
+            </>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 export default function ArchitecturePlanPage() {
   return (
     <div className="about-page">
       <h2>Architecture Plan: Biomimetic Neuron Type System</h2>
 
-      <section className="about-section" style={{ background: '#1a1f2e', border: '1px solid #334155', borderRadius: 8, padding: 16, marginBottom: 24 }}>
-        <h3 style={{ marginTop: 0 }}>Session Recovery</h3>
+      <CollapsibleSection title="Session Recovery" style={{ background: '#1a1f2e', border: '1px solid #334155', borderRadius: 8, padding: 16, marginBottom: 24 }}>
         <p>
           This plan was developed in a Claude Code session on <strong>2026-03-10</strong>.
           The session transcript is stored at:
@@ -18,10 +162,9 @@ export default function ArchitecturePlanPage() {
           If the session has expired, start a new session and reference this page &mdash; the full plan is documented below.
           The relevant code changes from this session are in the git history.
         </p>
-      </section>
+      </CollapsibleSection>
 
-      <section className="about-section">
-        <h3>The Problem</h3>
+      <CollapsibleSection title="The Problem">
         <p>
           Yggdrasil currently treats all neurons as fungible &mdash; a neuron is a neuron.
           In biology, this is not the case. Neurons are differentiated into functional classes,
@@ -45,10 +188,9 @@ export default function ArchitecturePlanPage() {
             should learn differently from local specialists.
           </li>
         </ul>
-      </section>
+      </CollapsibleSection>
 
-      <section className="about-section">
-        <h3>The Core Architectural Shift</h3>
+      <CollapsibleSection title="The Core Architectural Shift">
         <p>
           <strong>From:</strong> Organization-structure-primary candidate selection (filter by department/role, then score)
         </p>
@@ -83,10 +225,9 @@ export default function ArchitecturePlanPage() {
           The new pipeline is actually <strong>faster</strong> because the semantic pre-filter (11ms) runs in parallel
           with classification (200ms), whereas the old pipeline ran them sequentially.
         </p>
-      </section>
+      </CollapsibleSection>
 
-      <section className="about-section">
-        <h3>Biological Neuron Types &rarr; System Analogues</h3>
+      <CollapsibleSection title="Biological Neuron Types → System Analogues">
         <p>
           A key design insight: these behaviors are implemented as <strong>separate objects</strong> (persistent
           database entities with their own learning rules), not as scoring parameters. Biology uses distinct cell
@@ -213,10 +354,9 @@ export default function ArchitecturePlanPage() {
             </tr>
           </tbody>
         </table>
-      </section>
+      </CollapsibleSection>
 
-      <section className="about-section">
-        <h3>Implementation Phases</h3>
+      <CollapsibleSection title="Implementation Phases">
 
         <h4 style={{ marginTop: 16, marginBottom: 8 }}>Phase 1: Schema (Additive, Non-Breaking)</h4>
         <p>All changes are additive. No existing data modified. Instant rollback by disabling feature flags.</p>
@@ -378,10 +518,9 @@ export default function ArchitecturePlanPage() {
           Edge classification is computed from existing co-firing data: if source and target neurons share a department,
           the edge is stellate; if they span departments, it&rsquo;s pyramidal. Existing edges are reclassified, not recreated.
         </p>
-      </section>
+      </CollapsibleSection>
 
-      <section className="about-section">
-        <h3>What Stays, What Changes, What Dies</h3>
+      <CollapsibleSection title="What Stays, What Changes, What Dies">
         <table className="about-table">
           <thead>
             <tr><th>Component</th><th>Fate</th></tr>
@@ -403,10 +542,9 @@ export default function ArchitecturePlanPage() {
             <tr><td><code>clustering.py</code></td><td style={{ color: '#22c55e' }}>New &mdash; label propagation on co-firing edges for emergent cross-department cluster discovery</td></tr>
           </tbody>
         </table>
-      </section>
+      </CollapsibleSection>
 
-      <section className="about-section">
-        <h3>Rollback Safety</h3>
+      <CollapsibleSection title="Rollback Safety">
         <p>Two feature flags in <code>config.py</code> / <code>.env</code>:</p>
         <pre className="about-tree">{`SEMANTIC_PREFILTER_ENABLED=true   # false → revert to org-chart filtering
 INHIBITION_ENABLED=true           # false → revert to static diversity floor`}</pre>
@@ -414,10 +552,9 @@ INHIBITION_ENABLED=true           # false → revert to static diversity floor`}
           Old functions (<code>get_neurons_by_filter</code>, <code>apply_diversity_floor</code>) remain in the codebase
           until the new system is validated. All schema changes are additive &mdash; no columns removed, no data modified.
         </p>
-      </section>
+      </CollapsibleSection>
 
-      <section className="about-section">
-        <h3>Risks</h3>
+      <CollapsibleSection title="Risks">
         <table className="about-table">
           <thead>
             <tr><th>Risk</th><th>Mitigation</th></tr>
@@ -441,10 +578,9 @@ INHIBITION_ENABLED=true           # false → revert to static diversity floor`}
             </tr>
           </tbody>
         </table>
-      </section>
+      </CollapsibleSection>
 
-      <section className="about-section">
-        <h3>Research Context</h3>
+      <CollapsibleSection title="Research Context">
         <p>
           This architecture emerged from observing that an untrained biomimetic neuron model defaults to basic RAG.
           Without differential experience, the only discriminative signal is keyword matching &mdash; functionally
@@ -462,10 +598,9 @@ INHIBITION_ENABLED=true           # false → revert to static diversity floor`}
           &rarr; experience-dependent plasticity) suggests the underlying architecture is biologically sound. Each stage
           solves a specific, observable problem rather than adding complexity for its own sake.
         </p>
-      </section>
+      </CollapsibleSection>
 
-      <section className="about-section">
-        <h3>Completed Work</h3>
+      <CollapsibleSection title="Completed Work">
         <p>Groundwork implemented on 2026-03-10:</p>
         <ul className="about-features">
           <li><strong>Semantic embeddings</strong> &mdash; All 2,054 neurons embedded with <code>all-MiniLM-L6-v2</code> (384-dim). Stored in <code>neurons.embedding</code> column.</li>
@@ -494,7 +629,61 @@ INHIBITION_ENABLED=true           # false → revert to static diversity floor`}
           <li><strong>Auto-clustering</strong> &mdash; Label propagation on co-firing edges discovers cross-department neuron clusters. API endpoint + MCP tool + autopilot gap source for emergent cluster coverage.</li>
           <li><strong>prepare_context() extraction</strong> &mdash; Core pipeline (classify &rarr; score &rarr; spread &rarr; inhibit &rarr; assemble) extracted into a standalone async function, enabling both MCP and REST API to share the same pipeline code.</li>
         </ul>
-      </section>
+      </CollapsibleSection>
+
+      {/* ── Security Compliance Roadmap ── */}
+      <CollapsibleSection title="Security Compliance Roadmap" defaultOpen style={{ background: '#1a1f2e', border: '1px solid #334155', borderRadius: 8, padding: 16, marginBottom: 24 }}>
+        <p style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+          Cross-sectional implementation plan addressing <strong>FedRAMP Moderate</strong> (259 controls),{' '}
+          <strong>SOC 2 Type II</strong> (51 criteria), and <strong>CMMC Level 2</strong> (110 practices).
+          Each item maps to specific controls across all three frameworks. Items are ordered by effort-to-impact ratio.
+        </p>
+        <div className="stat-cards" style={{ marginBottom: 16 }}>
+          <div className="stat-card">
+            <div className="card-value" style={{ color: '#22c55e' }}>
+              {[...TIER_1, ...TIER_2, ...TIER_3].filter(i => i.status === 'done').length}
+            </div>
+            <div className="card-label">Done</div>
+          </div>
+          <div className="stat-card">
+            <div className="card-value" style={{ color: '#3b82f6' }}>
+              {[...TIER_1, ...TIER_2, ...TIER_3].filter(i => i.status === 'in-progress').length}
+            </div>
+            <div className="card-label">In Progress</div>
+          </div>
+          <div className="stat-card">
+            <div className="card-value" style={{ color: '#fb923c' }}>
+              {[...TIER_1, ...TIER_2, ...TIER_3].filter(i => i.status === 'planned').length}
+            </div>
+            <div className="card-label">Planned</div>
+          </div>
+          <div className="stat-card">
+            <div className="card-value">
+              {TIER_1.length + TIER_2.length + TIER_3.length}
+            </div>
+            <div className="card-label">Total Items</div>
+          </div>
+        </div>
+
+        <RoadmapTier
+          title="Tier 1: Quick Wins"
+          subtitle="One-line to small code changes, each under 30 minutes"
+          items={TIER_1}
+          color="#22c55e"
+        />
+        <RoadmapTier
+          title="Tier 2: Small Features"
+          subtitle="1-3 hour implementation tasks, moderate impact"
+          items={TIER_2}
+          color="#3b82f6"
+        />
+        <RoadmapTier
+          title="Tier 3: Documentation"
+          subtitle="No code changes — formal policy and procedure documents"
+          items={TIER_3}
+          color="#8b5cf6"
+        />
+      </CollapsibleSection>
     </div>
   );
 }

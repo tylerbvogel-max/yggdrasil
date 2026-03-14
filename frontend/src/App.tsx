@@ -13,11 +13,9 @@ import MonetizationPage from './components/MonetizationPage'
 import SampleQueries from './components/SampleQueries'
 import DeptChordDiagram from './components/DeptChordDiagram'
 import GettingStartedPage from './components/GettingStartedPage'
-import CompliancePage from './components/CompliancePage'
 import ComplianceAuditPage from './components/ComplianceAuditPage'
 import QualityPage from './components/QualityPage'
 import FairnessPage from './components/FairnessPage'
-import GovernancePage from './components/GovernancePage'
 import PerformancePage from './components/PerformancePage'
 import PerformanceExplanationPage from './components/PerformanceExplanationPage'
 import EmergentQueuePage from './components/EmergentQueuePage'
@@ -26,13 +24,13 @@ import MethodologicalRisks from './components/MethodologicalRisks'
 import NeuronUniverse from './components/NeuronUniverse'
 import ArchitecturePlanPage from './components/ArchitecturePlanPage'
 import ManagementReviewPage from './components/ManagementReviewPage'
-import EvidenceMapPage from './components/EvidenceMapPage'
 import CorvusPage from './components/CorvusPage'
 import ObservationReviewPage from './components/ObservationReviewPage'
-import CodeReviewPage from './components/CodeReviewPage'
+import ComplianceDashboard from './components/ComplianceDashboard'
 import HomePage from './components/HomePage'
+import SystemUseBanner from './components/SystemUseBanner'
 
-type Tab = 'home' | 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'arch-plan' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks' | 'mgmt-reviews' | 'evidence-map' | 'corvus-feed' | 'corvus-observations' | 'code-review';
+type Tab = 'home' | 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'arch-plan' | 'getting-started' | 'monetization' | 'compliance-audit' | 'compliance-dashboard' | 'quality' | 'fairness' | 'performance' | 'perf-explain' | 'method-risks' | 'mgmt-reviews' | 'corvus-feed' | 'corvus-observations';
 
 type Theme = 'corvus-native' | 'yggdrasil-dark' | 'yggdrasil-light' | 'high-contrast' | 'colorblind';
 
@@ -97,12 +95,9 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: 'Compliance',
     items: [
+      { key: 'compliance-dashboard', label: 'Dashboard' },
       { key: 'compliance-audit', label: 'Audit Scan' },
-      { key: 'code-review', label: 'Code Review' },
       { key: 'mgmt-reviews', label: 'Reviews' },
-      { key: 'evidence-map', label: 'Evidence Map' },
-      { key: 'compliance', label: 'Unified View' },
-      { key: 'governance', label: 'Governance' },
     ],
   },
   {
@@ -167,6 +162,7 @@ export default function App() {
 
   return (
     <div className="app app-sidebar-layout">
+      <SystemUseBanner />
       <aside className={`sidebar${collapsed ? ' sidebar-collapsed' : ''}`}>
         <div className="sidebar-header">
           <img src="/corvus-logo-128.png" alt="Corvus" className="sidebar-logo" onClick={() => setTab('home')} style={{ cursor: 'pointer' }} />
@@ -278,14 +274,11 @@ export default function App() {
         {tab === 'about' && <AboutPage />}
         {tab === 'arch-plan' && <ArchitecturePlanPage />}
         {tab === 'monetization' && <MonetizationPage />}
-        {tab === 'compliance' && <CompliancePage />}
+        {tab === 'compliance-dashboard' && <ComplianceDashboard />}
         {tab === 'compliance-audit' && <ComplianceAuditPage />}
         {tab === 'mgmt-reviews' && <ManagementReviewPage />}
-        {tab === 'evidence-map' && <EvidenceMapPage onNavigate={k => setTab(k as Tab)} />}
         {tab === 'quality' && <QualityPage />}
         {tab === 'fairness' && <FairnessPage />}
-        {tab === 'code-review' && <CodeReviewPage />}
-        {tab === 'governance' && <GovernancePage />}
         {tab === 'performance' && <PerformancePage />}
         {tab === 'perf-explain' && <PerformanceExplanationPage />}
         {tab === 'method-risks' && <MethodologicalRisks />}

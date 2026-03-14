@@ -16,7 +16,7 @@ from app.models_corvus import (
     CorvusAlertRule, CorvusEntity, CorvusCustomApp, CorvusAttentionItem,
 )
 from app.corvus.capture import (
-    process_frame, latest_frame_bytes, crop_regions, interpretation_mode,
+    process_frame, capture_state,
     get_pending_token_count, get_pending_image_count,
     get_novelty_state, load_custom_apps,
 )
@@ -40,11 +40,13 @@ router = APIRouter(prefix="/corvus", tags=["corvus"])
 
 @router.get("/health")
 async def health_check():
+    """Return Corvus service health status."""
     return {"status": "ok", "service": "corvus", "version": "0.3.0"}
 
 
 @router.get("/status")
 async def get_status():
+    """Return Corvus operational status including capture counts and active session."""
     async with async_session() as db:
         result = await db.execute(sql_text(
             "SELECT COUNT(*) FROM corvus_captures WHERE is_duplicate = false"
@@ -61,13 +63,12 @@ async def get_status():
         total_chars = result.scalar() or 0
         total_tokens = int(total_chars / 4)
 
-    mode = capture_mod.interpretation_mode
+    mode = capture_mod.capture_state.interpretation_mode
     if mode == "vision":
         pending = get_pending_image_count() * 1600
     else:
         pending = get_pending_token_count()
-    from app.corvus.interpreter import current_interpretation_tokens
-    current_tokens = current_interpretation_tokens if current_interpretation_tokens > 0 else pending
+    current_tokens = interpreter_mod.interpreter_state.current_interpretation_tokens if interpreter_mod.interpreter_state.current_interpretation_tokens > 0 else pending
 
     return {
         "status": "running",
@@ -77,7 +78,7 @@ async def get_status():
         "current_tokens": current_tokens,
         "interpretation_mode": mode,
         "audio_transcripts": get_total_transcript_count(),
-        "active_session_id": interpreter_mod._active_session_id,
+        "active_session_id": interpreter_mod.interpreter_state._active_session_id,
         "interrupt_status": get_interrupt_status(),
     }
 
@@ -89,6 +90,7 @@ async def receive_capture(
     width: str = Form("0"),
     height: str = Form("0"),
 ):
+    """Receive a screen capture frame from the Chrome extension for OCR processing."""
     frame_bytes = await frame.read()
     result = await process_frame(
         frame_bytes=frame_bytes,
@@ -105,6 +107,7 @@ async def receive_audio_chunk(
     timestamp: str = Form(...),
     chat: str = Form(""),
 ):
+    """Receive an audio chunk for transcription, optionally as a chat message."""
     audio_bytes = await audio.read()
     mime_type = audio.content_type or "audio/webm"
     loop = asyncio.get_event_loop()
@@ -112,7 +115,7 @@ async def receive_audio_chunk(
     if text:
         if chat:
             ts = timestamp if timestamp else datetime.now().isoformat()
-            add_chat_message(text, ts)
+            await add_chat_message(text, ts)
             result = await run_interpretation(f"User voice message: {text[:80]}")
             return {"status": "chat", "text": text, "summary": result, "timestamp": ts}
         else:
@@ -123,6 +126,7 @@ async def receive_audio_chunk(
 
 @router.get("/recent")
 async def recent_captures():
+    """List the 50 most recent non-duplicate captures with app classification."""
     async with async_session() as db:
         result = await db.execute(
             select(CorvusCapture).where(
@@ -142,6 +146,7 @@ async def recent_captures():
 
 @router.get("/interpretations")
 async def recent_interpretations():
+    """List the 20 most recent interpretation summaries."""
     async with async_session() as db:
         result = await db.execute(
             select(CorvusInterpretation)
@@ -156,19 +161,20 @@ async def recent_interpretations():
 
 @router.get("/latest-frame")
 async def latest_frame():
-    from app.corvus.capture import latest_frame_bytes
-    if latest_frame_bytes:
-        return Response(content=latest_frame_bytes, media_type="image/jpeg")
+    """Return the most recent captured frame as a JPEG image."""
+    from app.corvus.capture import capture_state as cs
+    if cs.latest_frame_bytes:
+        return Response(content=cs.latest_frame_bytes, media_type="image/jpeg")
     return Response(status_code=204)
 
 
 @router.get("/queued-images")
 async def queued_images():
+    """Return thumbnails of images queued for the next interpretation cycle."""
     from PIL import Image
     from io import BytesIO
-    from app.corvus.capture import _pending_images
     results = []
-    for img in _pending_images:
+    for img in capture_mod.capture_state._pending_images:
         pil = Image.open(BytesIO(img["image_bytes"]))
         pil.thumbnail((200, 120), Image.LANCZOS)
         buf = BytesIO()
@@ -180,50 +186,58 @@ async def queued_images():
 
 @router.post("/settings/interpretation-cadence")
 async def set_interpretation_cadence(seconds: int = Form(...)):
+    """Set the interpretation cycle time cap in seconds."""
     seconds = max(0, min(3600, seconds))
-    interpreter_mod.time_cap_seconds = seconds
+    interpreter_mod.interpreter_state.time_cap_seconds = seconds
     return {"time_cap_seconds": seconds}
 
 
 @router.get("/settings/interpretation-cadence")
 async def get_interpretation_cadence():
-    return {"time_cap_seconds": interpreter_mod.time_cap_seconds}
+    """Return the current interpretation cycle time cap."""
+    return {"time_cap_seconds": interpreter_mod.interpreter_state.time_cap_seconds}
 
 
 @router.post("/settings/effort")
 async def set_effort(level: str = Form(...)):
+    """Set the interpretation effort level (low, normal, or high)."""
     if level not in ("low", "normal", "high"):
         level = "normal"
-    interpreter_mod.effort_level = level
+    interpreter_mod.interpreter_state.effort_level = level
     return {"effort_level": level}
 
 
 @router.get("/settings/effort")
 async def get_effort():
-    return {"effort_level": interpreter_mod.effort_level}
+    """Return the current interpretation effort level."""
+    return {"effort_level": interpreter_mod.interpreter_state.effort_level}
 
 
 @router.post("/settings/context")
 async def set_context(context: str = Form("")):
-    interpreter_mod.user_context = context
+    """Set the user-provided context string for interpretation guidance."""
+    interpreter_mod.interpreter_state.user_context = context
     return {"context": context}
 
 
 @router.get("/settings/context")
 async def get_context():
-    return {"context": interpreter_mod.user_context}
+    """Return the current user-provided context string."""
+    return {"context": interpreter_mod.interpreter_state.user_context}
 
 
 @router.post("/chat")
 async def post_chat(message: str = Form(...), timestamp: str = Form("")):
+    """Send a text chat message and trigger an interpretation cycle."""
     ts = timestamp if timestamp else datetime.now().isoformat()
-    add_chat_message(message, ts)
+    await add_chat_message(message, ts)
     result = await run_interpretation(f"User message: {message[:80]}")
     return {"status": "ok", "timestamp": ts, "summary": result}
 
 
 @router.get("/chat")
 async def get_chat():
+    """Return the current chat message history."""
     return get_chat_messages()
 
 
@@ -233,12 +247,13 @@ async def chat_with_file(
     message: str = Form(""),
     timestamp: str = Form(""),
 ):
+    """Send a chat message with an attached file (image or text) for interpretation."""
     ts = timestamp if timestamp else datetime.now().isoformat()
     file_bytes = await file.read()
     filename = file.filename or "file"
     content_type = file.content_type or ""
     user_text = message.strip() if message.strip() else f"Here's a file: {filename}"
-    add_chat_message(f"[Attached: {filename}] {user_text}", ts)
+    await add_chat_message(f"[Attached: {filename}] {user_text}", ts)
 
     is_image = content_type.startswith("image/") or filename.lower().endswith(
         (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
@@ -261,6 +276,7 @@ async def chat_with_file(
 
 @router.post("/pin/{interp_id}")
 async def toggle_pin(interp_id: int):
+    """Toggle the pinned status of an interpretation."""
     async with async_session() as db:
         interp = await db.get(CorvusInterpretation, interp_id)
         if not interp:
@@ -272,6 +288,7 @@ async def toggle_pin(interp_id: int):
 
 @router.get("/pinned")
 async def get_pinned():
+    """List all pinned interpretations."""
     async with async_session() as db:
         result = await db.execute(
             select(CorvusInterpretation).where(CorvusInterpretation.is_pinned == True)
@@ -283,6 +300,7 @@ async def get_pinned():
 
 @router.post("/digest")
 async def create_digest(hours: float = Form(8.0)):
+    """Generate a summary digest of interpretations from the specified time window."""
     result = await generate_digest(hours)
     if result:
         return {"digest": result}
@@ -291,6 +309,7 @@ async def create_digest(hours: float = Form(8.0)):
 
 @router.post("/interpret-now")
 async def interpret_now():
+    """Manually trigger an immediate interpretation cycle."""
     result = await run_interpretation("Manual trigger")
     if result:
         return {"summary": result}
@@ -299,47 +318,53 @@ async def interpret_now():
 
 @router.get("/session-brief")
 async def get_session_brief():
-    return {"brief": interpreter_mod.session_brief}
+    """Return the current session brief text."""
+    return {"brief": interpreter_mod.interpreter_state.session_brief}
 
 
 @router.post("/session-brief")
 async def set_session_brief(brief: str = Form("")):
-    interpreter_mod.session_brief = brief
+    """Set the session brief text used as persistent context."""
+    interpreter_mod.interpreter_state.session_brief = brief
     return {"brief": brief}
 
 
 @router.post("/clear-log")
 async def clear_log():
+    """Delete all captures, interpretations, and chat messages."""
     async with async_session() as db:
         await db.execute(sql_text("DELETE FROM corvus_captures"))
         await db.execute(sql_text("DELETE FROM corvus_interpretations"))
         await db.commit()
-    interpreter_mod.session_brief = ""
-    clear_chat_messages()
+    interpreter_mod.interpreter_state.session_brief = ""
+    await clear_chat_messages()
     return {"cleared": True}
 
 
 @router.post("/soft-reset")
 async def soft_reset():
+    """Clear captures and interpretations but keep the session brief."""
     async with async_session() as db:
         await db.execute(sql_text("DELETE FROM corvus_captures"))
         await db.execute(sql_text("DELETE FROM corvus_interpretations"))
         await db.commit()
-    clear_chat_messages()
+    await clear_chat_messages()
     return {"cleared": True, "brief_kept": True}
 
 
 @router.post("/settings/interpretation-mode")
 async def set_interpretation_mode(mode: str = Form(...)):
+    """Set the interpretation mode to vision or text."""
     if mode not in ("vision", "text"):
         mode = "vision"
-    capture_mod.interpretation_mode = mode
+    capture_mod.capture_state.interpretation_mode = mode
     return {"interpretation_mode": mode}
 
 
 @router.get("/settings/interpretation-mode")
 async def get_interpretation_mode():
-    return {"interpretation_mode": capture_mod.interpretation_mode}
+    """Return the current interpretation mode (vision or text)."""
+    return {"interpretation_mode": capture_mod.capture_state.interpretation_mode}
 
 
 @router.post("/settings/crop-region")
@@ -350,6 +375,7 @@ async def set_crop_region(
     right: float = Form(1.0),
     bottom: float = Form(1.0),
 ):
+    """Set a crop region for a specific app's screen captures."""
     region = {
         "left": max(0.0, min(1.0, left)),
         "top": max(0.0, min(1.0, top)),
@@ -357,25 +383,28 @@ async def set_crop_region(
         "bottom": max(0.0, min(1.0, bottom)),
     }
     if region["left"] <= 0.01 and region["top"] <= 0.01 and region["right"] >= 0.99 and region["bottom"] >= 0.99:
-        capture_mod.crop_regions.pop(app_id, None)
+        capture_mod.capture_state.crop_regions.pop(app_id, None)
     else:
-        capture_mod.crop_regions[app_id] = region
+        capture_mod.capture_state.crop_regions[app_id] = region
     return {"app_id": app_id, "region": region}
 
 
 @router.get("/settings/crop-regions")
 async def get_crop_regions():
-    return capture_mod.crop_regions
+    """Return all configured per-app crop regions."""
+    return capture_mod.capture_state.crop_regions
 
 
 @router.delete("/settings/crop-region/{app_id}")
 async def delete_crop_region(app_id: str):
-    capture_mod.crop_regions.pop(app_id, None)
+    """Remove the crop region for a specific app."""
+    capture_mod.capture_state.crop_regions.pop(app_id, None)
     return {"deleted": app_id}
 
 
 @router.get("/history")
 async def get_history(limit: int = 100, search: str = ""):
+    """Search and list interpretation history with optional text filtering."""
     async with async_session() as db:
         q = select(CorvusInterpretation).order_by(CorvusInterpretation.id.desc()).limit(limit)
         if search:
@@ -387,6 +416,7 @@ async def get_history(limit: int = 100, search: str = ""):
 
 @router.post("/alert-rules")
 async def create_alert_rule(pattern: str = Form(...), app_filter: str = Form("")):
+    """Create a new alert rule with a text pattern and optional app filter."""
     async with async_session() as db:
         rule = CorvusAlertRule(pattern=pattern, app_filter=app_filter or None)
         db.add(rule)
@@ -396,6 +426,7 @@ async def create_alert_rule(pattern: str = Form(...), app_filter: str = Form("")
 
 @router.get("/alert-rules")
 async def list_alert_rules():
+    """List all configured alert rules."""
     async with async_session() as db:
         result = await db.execute(select(CorvusAlertRule).order_by(CorvusAlertRule.id))
         rows = result.scalars().all()
@@ -407,6 +438,7 @@ async def list_alert_rules():
 
 @router.patch("/alert-rules/{rule_id}")
 async def update_alert_rule(rule_id: int, enabled: str = Form(...)):
+    """Enable or disable an existing alert rule."""
     async with async_session() as db:
         rule = await db.get(CorvusAlertRule, rule_id)
         if rule:
@@ -417,6 +449,7 @@ async def update_alert_rule(rule_id: int, enabled: str = Form(...)):
 
 @router.delete("/alert-rules/{rule_id}")
 async def delete_alert_rule(rule_id: int):
+    """Delete an alert rule by ID."""
     async with async_session() as db:
         rule = await db.get(CorvusAlertRule, rule_id)
         if rule:
@@ -427,22 +460,26 @@ async def delete_alert_rule(rule_id: int):
 
 @router.get("/settings/adaptive-cadence")
 async def get_adaptive_cadence():
+    """Return the current adaptive cadence novelty state."""
     return get_novelty_state()
 
 
 @router.post("/sessions/new")
 async def create_new_session(label: str = Form("")):
+    """Create a new Corvus observation session."""
     result = await new_session(label=label or None)
     return result
 
 
 @router.get("/sessions")
 async def get_sessions():
+    """List all Corvus sessions."""
     return await list_sessions()
 
 
 @router.post("/sessions/{session_id}/resume")
 async def resume_session_endpoint(session_id: int):
+    """Resume a previously created Corvus session."""
     result = await resume_session(session_id)
     if result:
         return result
@@ -451,6 +488,7 @@ async def resume_session_endpoint(session_id: int):
 
 @router.patch("/sessions/{session_id}/label")
 async def update_session_label(session_id: int, label: str = Form(...)):
+    """Update the label of an existing session."""
     async with async_session() as db:
         session = await db.get(CorvusSession, session_id)
         if session:
@@ -461,11 +499,13 @@ async def update_session_label(session_id: int, label: str = Form(...)):
 
 @router.get("/settings/attention")
 async def get_attention_settings():
+    """Return the current watch and ignore attention lists."""
     return get_attention()
 
 
 @router.post("/settings/attention")
 async def set_attention_settings(watch: str = Form("[]"), ignore: str = Form("[]")):
+    """Update the watch and ignore attention lists for interpretation focus."""
     try:
         watch_list = json.loads(watch)
         ignore_list = json.loads(ignore)
@@ -477,6 +517,7 @@ async def set_attention_settings(watch: str = Form("[]"), ignore: str = Form("[]
 
 @router.post("/apps/teach")
 async def teach_app(label: str = Form(...), ocr_snapshot: str = Form("")):
+    """Teach Corvus a new custom app by label and optional OCR sample for pattern extraction."""
     url_patterns = []
     text_patterns = []
     if ocr_snapshot:
@@ -512,6 +553,7 @@ async def teach_app(label: str = Form(...), ocr_snapshot: str = Form("")):
 
 @router.get("/apps")
 async def list_apps():
+    """List all known and custom app definitions."""
     async with async_session() as db:
         result = await db.execute(select(CorvusKnownApp).order_by(CorvusKnownApp.id))
         known = result.scalars().all()
@@ -525,6 +567,7 @@ async def list_apps():
 
 @router.delete("/apps/{app_id}")
 async def delete_custom_app(app_id: int):
+    """Delete a custom app definition by ID."""
     async with async_session() as db:
         app = await db.get(CorvusCustomApp, app_id)
         if app:
@@ -536,16 +579,19 @@ async def delete_custom_app(app_id: int):
 
 @router.get("/entities")
 async def get_entities(minutes: int = 30):
+    """Return entities detected in recent captures within the specified time window."""
     return await get_recent_entities(minutes=minutes)
 
 
 @router.get("/entities/cross-app")
 async def get_cross_app_entities(minutes: int = 30):
+    """Return entities that appear across multiple apps within the time window."""
     return await get_recent_cross_app_entities(minutes=minutes)
 
 
 @router.get("/timeline")
 async def get_timeline(date: str = ""):
+    """Return the app activity timeline and interpretations for a given date."""
     async with async_session() as db:
         if date:
             result = await db.execute(sql_text("""
@@ -597,6 +643,7 @@ async def get_timeline(date: str = ""):
 
 @router.get("/interrupt-status")
 async def interrupt_status():
+    """Return whether an interpretation interrupt is pending."""
     return {"status": get_interrupt_status()}
 
 
@@ -608,6 +655,7 @@ async def computer_use_action(
     viewport_width: int = Form(0),
     viewport_height: int = Form(0),
 ):
+    """Plan a computer-use action from a screenshot and command."""
     action_history = json.loads(history) if history else []
     if len(action_history) >= MAX_ACTIONS:
         return {"action": "fail", "reason": f"Safety limit: max {MAX_ACTIONS} actions reached"}
@@ -627,11 +675,12 @@ async def computer_use_action(
 
 @router.get("/settings/yggdrasil")
 async def get_yggdrasil_settings():
+    """Return the current Yggdrasil integration settings for Corvus."""
     return {
-        "enabled": interpreter_mod.ygg_enabled,
+        "enabled": interpreter_mod.interpreter_state.ygg_enabled,
         "url": "http://localhost:8002",
-        "project_path": interpreter_mod.ygg_project_path,
-        "enrich_mode": interpreter_mod.ygg_enrich_mode,
+        "project_path": interpreter_mod.interpreter_state.ygg_project_path,
+        "enrich_mode": interpreter_mod.interpreter_state.ygg_enrich_mode,
     }
 
 
@@ -642,22 +691,24 @@ async def set_yggdrasil_settings(
     project_path: str = Form(""),
     enrich_mode: str = Form(""),
 ):
+    """Update Yggdrasil integration settings for context enrichment."""
     if enabled:
-        interpreter_mod.ygg_enabled = enabled.lower() in ("true", "1", "yes")
+        interpreter_mod.interpreter_state.ygg_enabled = enabled.lower() in ("true", "1", "yes")
     if project_path:
-        interpreter_mod.ygg_project_path = project_path
+        interpreter_mod.interpreter_state.ygg_project_path = project_path
     if enrich_mode and enrich_mode in ("always", "entities", "never"):
-        interpreter_mod.ygg_enrich_mode = enrich_mode
+        interpreter_mod.interpreter_state.ygg_enrich_mode = enrich_mode
     return {
-        "enabled": interpreter_mod.ygg_enabled,
+        "enabled": interpreter_mod.interpreter_state.ygg_enabled,
         "url": "http://localhost:8002",
-        "project_path": interpreter_mod.ygg_project_path,
-        "enrich_mode": interpreter_mod.ygg_enrich_mode,
+        "project_path": interpreter_mod.interpreter_state.ygg_project_path,
+        "enrich_mode": interpreter_mod.interpreter_state.ygg_enrich_mode,
     }
 
 
 @router.post("/test-ygg-context")
 async def test_ygg_context(text: str = Form("reviewing FAR 52.219 subcontracting plan")):
+    """Test Yggdrasil context retrieval with a sample text query."""
     from app.corvus.interpreter import _fetch_ygg_context
     result = await _fetch_ygg_context(text)
     if result:

@@ -61,6 +61,10 @@ async def prepare_context(
 
     This is the core neuron graph pipeline extracted for reuse by MCP and the REST API.
     """
+    # Preconditions (JPL Power of Ten Rule 5)
+    assert isinstance(user_message, str) and len(user_message.strip()) > 0, \
+        "user_message must be a non-empty string"
+
     async def _emit(stage: str, data: dict | None = None):
         if on_stage:
             await on_stage(stage, data or {"status": "done"})
@@ -184,7 +188,7 @@ async def prepare_context(
         from app.services.project_cache import record_project_firings
         await record_project_firings(db, project_path, all_scored[:effective_top_k])
 
-    return PreparedContext(
+    result = PreparedContext(
         system_prompt=system_prompt,
         intent=intent,
         departments=departments,
@@ -198,6 +202,14 @@ async def prepare_context(
         classify_input_tokens=classify_result["input_tokens"],
         classify_output_tokens=classify_result["output_tokens"],
     )
+
+    # Postconditions (JPL Power of Ten Rule 5)
+    assert isinstance(result.system_prompt, str) and len(result.system_prompt) > 0, \
+        "PreparedContext.system_prompt must be a non-empty string"
+    assert result.neurons_activated >= 0, \
+        f"neurons_activated must be non-negative, got {result.neurons_activated}"
+
+    return result
 
 
 # Each slot is a dict: {mode, model, neurons, response, input_tokens, output_tokens, cost_usd}
@@ -214,8 +226,22 @@ MODEL_MAP = {
 
 NEURON_MODES = {"haiku_neuron", "sonnet_neuron", "opus_neuron"}
 
+# LLM PROMPT INTENT: Minimal baseline system prompt for raw (non-neuron) comparison slots.
+#   Provides only the organizational context without neuron-assembled knowledge, serving as
+#   a control condition to measure the value added by the neuron graph.
+# INPUT: User's natural-language query sent as user message. No neuron context is injected.
+# OUTPUT FORMAT: Free-form natural-language response (no structured format required).
+# FAILURE MODES: None specific to this prompt. LLM may produce generic or less domain-specific
+#   answers compared to neuron-enhanced slots, which is the expected baseline behavior.
 RAW_BASELINE_PROMPT = "I am an employee at an aerospace manufacturing and prototype design company."
 
+# LLM PROMPT INTENT: Efficiency prefix prepended to system prompts when using the Sonnet model,
+#   reducing verbosity and token waste since Sonnet tends toward longer, more elaborate responses.
+# INPUT: Prepended before either the neuron-assembled prompt or RAW_BASELINE_PROMPT.
+#   The user query is sent separately as the user message.
+# OUTPUT FORMAT: No change to expected format — this is a behavioral modifier, not a format constraint.
+# FAILURE MODES: If prepended to a non-Sonnet model by mistake, may cause unnecessarily terse
+#   responses but is otherwise harmless. The prefix is only applied when is_sonnet is True.
 SONNET_EFFICIENCY_PREFIX = "Be precise and concise. Prioritize accuracy over elaboration. Do not repeat the question or restate what is already known — lead with the answer.\n\n"
 
 
@@ -237,11 +263,17 @@ async def execute_query(
     Assembly happens per (budget, top_k) pair.
     """
 
+    # Preconditions (JPL Power of Ten Rule 5)
+    assert (modes and len(modes) > 0) or (slots_v2 and len(slots_v2) > 0), \
+        "Either modes or slots_v2 must be provided and non-empty"
+
     # Normalize to slot list
     if slots_v2:
         slot_specs = slots_v2
     else:
         slot_specs = [{"mode": m, "token_budget": token_budget or settings.token_budget, "top_k": settings.top_k_neurons, "label": None} for m in modes]
+
+    assert len(slot_specs) > 0, "slot_specs must be non-empty after normalization"
 
     all_modes = [s["mode"] for s in slot_specs]
     needs_neurons = any(m in NEURON_MODES for m in all_modes)
@@ -437,7 +469,8 @@ async def execute_query(
         # Only co-fire the actual top-K neurons above the score threshold (not all scored)
         cofire_neurons = [s for s in all_scored[:max_top_k] if s.combined >= settings.min_cofire_score]
         cofire_ids = [s.neuron_id for s in cofire_neurons]
-        await _batch_update_edges(db, cofire_ids, state.total_queries)
+        if len(cofire_ids) >= 2:
+            await _batch_update_edges(db, cofire_ids, state.total_queries)
 
         # Strengthen concept neuron edges when their instantiation targets co-fire
         from app.services.concept_service import cofire_concept_neurons
@@ -455,6 +488,12 @@ async def execute_query(
          "layer": neuron_map[s.neuron_id].layer if s.neuron_id in neuron_map else 0}
         for s in all_scored[:max_top_k]
     ]
+
+    # Postconditions (JPL Power of Ten Rule 5)
+    assert all(s is not None for s in slot_results), \
+        "All slot results must be populated after execution"
+    assert total_cost >= 0, \
+        f"total_cost must be non-negative, got {total_cost}"
 
     return {
         "query_id": query.id,
@@ -483,6 +522,10 @@ async def _load_candidates_by_ids(
     Used when the semantic prefilter has already selected the candidate set,
     so we just need to hydrate the scoring-relevant fields.
     """
+    # Preconditions (JPL Power of Ten Rule 5)
+    assert all(isinstance(nid, int) and nid > 0 for nid in neuron_ids), \
+        "All neuron_ids must be positive integers"
+
     if not neuron_ids:
         return []
 
@@ -512,7 +555,7 @@ async def _load_candidates_by_ids(
     result = await db.execute(text(sql), params)
     rows = result.all()
 
-    return [
+    candidates = [
         NeuronCandidate(
             id=r[0], label=r[1], summary=r[2], department=r[3], role_key=r[4],
             avg_utility=r[5] or 0.5, invocations=r[6] or 0,
@@ -521,11 +564,18 @@ async def _load_candidates_by_ids(
         for r in rows
     ]
 
+    # Postcondition (JPL Power of Ten Rule 5)
+    assert len(candidates) <= len(neuron_ids), \
+        f"Output length ({len(candidates)}) must not exceed input length ({len(neuron_ids)})"
+
+    return candidates
+
 
 async def _batch_update_edges(db: AsyncSession, neuron_ids: list[int], query_offset: int):
     """Batch update co-firing edges for a set of neurons."""
-    if len(neuron_ids) < 2:
-        return
+    # Precondition (JPL Power of Ten Rule 5)
+    assert len(neuron_ids) >= 2, \
+        f"_batch_update_edges requires >= 2 neuron_ids, got {len(neuron_ids)}"
 
     from sqlalchemy import text
 

@@ -3,6 +3,7 @@ import * as d3 from 'd3'
 import { fetchDeptChord } from '../api'
 import type { DeptChordEntry } from '../types'
 import { DEPT_COLORS } from '../constants'
+import { escapeHtml } from '../utils'
 
 const LAYER_NAMES = ['Department', 'Role', 'Task', 'System', 'Decision', 'Output'];
 
@@ -287,7 +288,7 @@ export default function DeptChordDiagram() {
           labels.style('opacity', l => connected.has(l.index) ? 1 : 0);
           const name = names[d.index];
           const dept = nameDept.get(name) ?? '';
-          tooltip.html(`<strong>${name}</strong>${dept ? `<br><span style="opacity:0.6">${dept}</span>` : ''}<br><span style="opacity:0.5">Click for details</span>`)
+          tooltip.html(`<strong>${escapeHtml(name)}</strong>${dept ? `<br><span style="opacity:0.6">${escapeHtml(dept)}</span>` : ''}<br><span style="opacity:0.5">Click for details</span>`)
             .style('opacity', 1)
             .style('left', `${event.offsetX + 12}px`)
             .style('top', `${event.offsetY - 10}px`);
@@ -311,7 +312,7 @@ export default function DeptChordDiagram() {
           const ti = d.target.index;
           const w = matrix[si][ti].toFixed(2);
           const ec = countMatrix[si][ti];
-          tooltip.html(`${names[si]} ↔ ${names[ti]}<br>${w} weight (${ec} edges)`)
+          tooltip.html(`${escapeHtml(names[si])} ↔ ${escapeHtml(names[ti])}<br>${w} weight (${ec} edges)`)
             .style('opacity', 1)
             .style('left', `${event.offsetX + 12}px`)
             .style('top', `${event.offsetY - 10}px`);

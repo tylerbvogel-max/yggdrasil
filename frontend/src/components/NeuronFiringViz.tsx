@@ -3,6 +3,7 @@ import * as d3 from 'd3';
 import { fetchSpreadTrail } from '../api';
 import type { NeuronScoreResponse, SpreadTrailResponse } from '../types';
 import { DEPT_COLORS } from '../constants';
+import { escapeHtml } from '../utils';
 
 /**
  * Organic radial tree visualization of neuron firing.
@@ -344,8 +345,8 @@ export default function NeuronFiringViz({ queryId, neuronScores, neuronsActivate
         const n = d.neuron;
         const ll = LAYER_LABELS[d.layer] ?? `L${d.layer}`;
         tooltip.html(
-          `<strong style="font-size:0.82rem">${n.label || '#' + n.neuron_id}</strong><br>` +
-          `<span style="color:${DEPT_COLORS[d.department] ?? '#c8d0dc'}">${d.department}</span> · ${ll}<br>` +
+          `<strong style="font-size:0.82rem">${escapeHtml(n.label) || '#' + n.neuron_id}</strong><br>` +
+          `<span style="color:${DEPT_COLORS[d.department] ?? '#c8d0dc'}">${escapeHtml(d.department)}</span> · ${escapeHtml(ll)}<br>` +
           `Combined: <strong>${n.combined.toFixed(3)}</strong>` +
           (n.spread_boost > 0 ? `<br><span style="color:#e8a735">Spread: +${n.spread_boost.toFixed(3)}</span>` : '') +
           `<br><span style="font-size:0.65rem;color:var(--text-dim)">` +

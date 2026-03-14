@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://yggdrasil:yggdrasil@localhost:5432/yggdrasil"
+    database_url: str  # Required — set via DATABASE_URL env var or .env file
     anthropic_api_key: str = ""
     haiku_model: str = "claude-haiku-4-5-20251001"
     token_budget: int = 4000
@@ -66,6 +66,17 @@ class Settings(BaseSettings):
     project_cache_enabled: bool = True
     project_cache_boost_max: float = 1.3
     project_cache_min_queries: int = 3
+    # Session and security headers (AC-12, SC-10, CMMC 3.1.11/3.13.9)
+    session_timeout_minutes: int = 30
+    # System use notification banner (AC-8, CMMC 3.1.9)
+    system_use_banner: str = (
+        "This is a U.S. Government-aligned information system. "
+        "By accessing and using this system, you acknowledge that usage may be monitored, "
+        "recorded, and subject to audit. Unauthorized use is prohibited and may result in "
+        "disciplinary action and/or civil and criminal penalties. "
+        "This system processes controlled and operationally sensitive information."
+    )
+    system_use_banner_enabled: bool = True
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

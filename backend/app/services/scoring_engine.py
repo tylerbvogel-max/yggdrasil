@@ -21,31 +21,43 @@ class NeuronScoreBreakdown:
 
 def calc_burst(fires_in_window: int) -> float:
     """Burst: min(1, fires_in_window / 15)"""
-    return min(1.0, fires_in_window / settings.burst_threshold)
+    assert fires_in_window >= 0, f"fires_in_window must be non-negative, got {fires_in_window}"
+    result = min(1.0, fires_in_window / settings.burst_threshold)
+    assert 0.0 <= result <= 1.0, f"calc_burst result out of range: {result}"
+    return result
 
 
 def calc_impact(avg_utility: float) -> float:
     """Impact: avg_utility (EMA, alpha=0.3)"""
-    return max(0.0, min(1.0, avg_utility))
+    result = max(0.0, min(1.0, avg_utility))
+    assert 0.0 <= result <= 1.0, f"calc_impact result out of range: {result}"
+    return result
 
 
 def calc_precision(dept_fires: int, dept_total_queries: int) -> float:
     """Precision: dept_fires / dept_total_queries. Floor 0.3 if dept_total_queries < 5."""
+    assert dept_fires >= 0, f"dept_fires must be non-negative, got {dept_fires}"
     if dept_total_queries < 5:
         return 0.3
-    return min(1.0, dept_fires / max(1, dept_total_queries))
+    result = min(1.0, dept_fires / max(1, dept_total_queries))
+    assert 0.0 <= result <= 1.0, f"calc_precision result out of range: {result}"
+    return result
 
 
 def calc_novelty(age_queries: int) -> float:
     """Novelty: max(0, 1 - age_queries / 200). Newer neurons score higher."""
-    return max(0.0, 1.0 - age_queries / settings.novelty_halflife_queries)
+    result = max(0.0, 1.0 - age_queries / settings.novelty_halflife_queries)
+    assert 0.0 <= result <= 1.0, f"calc_novelty result out of range: {result}"
+    return result
 
 
 def calc_recency(queries_since_last: int) -> float:
     """Recency: e^(-queries_since / 500). Recently-fired neurons score higher."""
     if queries_since_last < 0:
         return 1.0
-    return math.exp(-queries_since_last / settings.recency_decay_queries)
+    result = math.exp(-queries_since_last / settings.recency_decay_queries)
+    assert 0.0 <= result <= 1.0, f"calc_recency result out of range: {result}"
+    return result
 
 
 _STOP_WORDS = frozenset({
@@ -94,7 +106,9 @@ def calc_relevance(keywords: list[str], neuron_text: str) -> float:
     else:
         token_score = 0.0
 
-    return min(1.0, max(phrase_score, token_score))
+    result = min(1.0, max(phrase_score, token_score))
+    assert 0.0 <= result <= 1.0, f"calc_relevance result out of range: {result}"
+    return result
 
 
 def compute_score(
@@ -130,6 +144,13 @@ def compute_score(
     novelty = calc_novelty(age_queries)
     recency = calc_recency(queries_since_last)
 
+    # Postcondition: all component scores must be in [0, 1]
+    assert 0.0 <= burst <= 1.0, f"burst out of range: {burst}"
+    assert 0.0 <= impact <= 1.0, f"impact out of range: {impact}"
+    assert 0.0 <= precision <= 1.0, f"precision out of range: {precision}"
+    assert 0.0 <= novelty <= 1.0, f"novelty out of range: {novelty}"
+    assert 0.0 <= recency <= 1.0, f"recency out of range: {recency}"
+
     # Relevance: prefer semantic similarity (cortical topography) over keyword matching
     if semantic_similarity is not None:
         relevance = max(0.0, min(1.0, semantic_similarity))
@@ -160,6 +181,7 @@ def compute_score(
         gate = floor
 
     combined = stimulus + modulatory * gate
+    assert combined >= 0, f"combined score must be non-negative, got {combined}"
 
     # Classification match boost: role match is stronger than dept match
     # since role_keys are more specific (e.g. "data_engineer" vs "Engineering")
@@ -183,4 +205,6 @@ def compute_score(
 def update_impact_ema(current_avg: float, new_utility: float) -> float:
     """Update Impact signal using EMA: new_avg = alpha * new + (1-alpha) * old"""
     alpha = settings.impact_ema_alpha
-    return alpha * new_utility + (1 - alpha) * current_avg
+    result = alpha * new_utility + (1 - alpha) * current_avg
+    assert 0.0 <= result <= 1.0, f"update_impact_ema result out of range: {result}"
+    return result

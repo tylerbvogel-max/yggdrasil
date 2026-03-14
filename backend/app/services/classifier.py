@@ -7,6 +7,17 @@ from app.services.claude_cli import claude_chat
 
 logger = logging.getLogger(__name__)
 
+# LLM PROMPT INTENT: Classify a user query into organizational intent, departments, roles, and keywords
+#   to drive neuron candidate selection in the scoring pipeline.
+# INPUT: User's natural-language query (any domain topic). Sent as the user message alongside this system prompt.
+# OUTPUT FORMAT: Raw JSON object (no markdown fences): {"intent": str, "departments": list[str],
+#   "role_keys": list[str], "keywords": list[str]}. Intent is a short snake_case label.
+#   Departments and role_keys are drawn from the enumerated valid sets in the prompt.
+# FAILURE MODES: If the LLM returns non-JSON or malformed JSON, the caller falls back to
+#   {"intent": "general_query", "departments": [], "role_keys": [], "keywords": []}, which causes
+#   the pipeline to score all neurons without filtering — safe but less precise. If the LLM
+#   hallucinates invalid department/role_key values, downstream neuron filtering may miss relevant
+#   candidates. Markdown-wrapped JSON (```json...```) is handled by a secondary parser.
 CLASSIFY_SYSTEM_PROMPT = """You are a query classifier for an aerospace defense contractor organization.
 Given a user query, classify it into:
 1. intent: A short label describing the intent (e.g., "compliance_risk_review", "engineering_analysis", "data_pipeline_design", "cost_reporting", "procurement_request", "proposal_development")

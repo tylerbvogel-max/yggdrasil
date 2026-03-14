@@ -24,6 +24,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 @router.post("/seed", response_model=SeedResponse)
 async def seed_database(force: bool = False, db: AsyncSession = Depends(get_db)):
+    """Seed the neuron graph with initial data; pass force=true to re-seed."""
     result = await load_seed(db, force=force)
     return SeedResponse(**result)
 
@@ -128,6 +129,7 @@ async def create_checkpoint(db: AsyncSession = Depends(get_db)):
 
 @router.get("/cost-report", response_model=CostReportResponse)
 async def cost_report(db: AsyncSession = Depends(get_db)):
+    """Return aggregate token usage and cost statistics across all queries."""
     total_queries = (await db.execute(select(func.count(Query.id)))).scalar() or 0
     total_cost = (await db.execute(select(func.sum(Query.cost_usd)))).scalar() or 0.0
     total_input = (await db.execute(
@@ -1043,6 +1045,136 @@ async def prune_edges(db: AsyncSession = Depends(get_db)):
     }
 
 
+_SCORING_SIGNALS = ["burst", "impact", "precision", "novelty", "recency", "relevance"]
+
+
+def _stats(values: list[float]) -> dict:
+    """Compute mean, stddev, min, max, count for a list of floats."""
+    if not values:
+        return {"mean": 0, "stddev": 0, "min": 0, "max": 0, "count": 0}
+    n = len(values)
+    mean = sum(values) / n
+    variance = sum((v - mean) ** 2 for v in values) / max(1, n - 1)
+    return {
+        "mean": round(mean, 4),
+        "stddev": round(math.sqrt(variance), 4),
+        "min": round(min(values), 4),
+        "max": round(max(values), 4),
+        "count": n,
+    }
+
+
+def _aggregate_signal(queries: list[dict], signal: str) -> list[float]:
+    """Collect all neuron-level values for a signal across queries."""
+    vals: list[float] = []
+    for q in queries:
+        vals.extend(q["signals"].get(signal, []))
+    return vals
+
+
+def _query_means(queries: list[dict], signal: str) -> list[float]:
+    """Per-query mean for a signal."""
+    means: list[float] = []
+    for q in queries:
+        vals = q["signals"].get(signal, [])
+        if vals:
+            means.append(sum(vals) / len(vals))
+    return means
+
+
+def _parse_query_scores(rows, signals: list[str]) -> list[dict]:
+    """Parse raw query rows into structured score dicts with per-signal values."""
+    query_scores: list[dict] = []
+    for qid, scores_json, created_at in rows:
+        try:
+            scores = json.loads(scores_json) if scores_json else []
+        except json.JSONDecodeError:
+            continue
+        if not scores:
+            continue
+        signal_values: dict[str, list[float]] = {s: [] for s in signals}
+        for neuron_score in scores:
+            for s in signals:
+                val = neuron_score.get(s)
+                if val is not None:
+                    signal_values[s].append(float(val))
+        query_scores.append({
+            "query_id": qid,
+            "created_at": created_at.isoformat() if created_at else None,
+            "signals": signal_values,
+        })
+    return query_scores
+
+
+def _scoring_distribution(
+    query_scores: list[dict],
+    recent_window: int,
+    baseline_window: int,
+    drift_threshold: float,
+) -> tuple[dict, list[dict]]:
+    """Build per-signal distribution stats and detect drift. Returns (signals_report, drift_alerts)."""
+    total = len(query_scores)
+    if total <= recent_window:
+        baseline_qs = query_scores
+        recent_qs = query_scores
+        can_detect_drift = False
+    else:
+        recent_qs = query_scores[-recent_window:]
+        baseline_start = max(0, total - recent_window - baseline_window)
+        baseline_qs = query_scores[baseline_start:total - recent_window]
+        can_detect_drift = len(baseline_qs) >= 5
+
+    signals_report: dict = {}
+    drift_alerts: list[dict] = []
+
+    for sig in _SCORING_SIGNALS:
+        baseline_vals = _aggregate_signal(baseline_qs, sig)
+        recent_vals = _aggregate_signal(recent_qs, sig)
+        baseline_means = _query_means(baseline_qs, sig)
+        recent_means = _query_means(recent_qs, sig)
+
+        b_stats = _stats(baseline_vals)
+        r_stats = _stats(recent_vals)
+        bm_stats = _stats(baseline_means)
+        rm_stats = _stats(recent_means)
+
+        drifted = False
+        z_score = 0.0
+        if can_detect_drift and bm_stats["stddev"] > 0.001 and len(recent_means) >= 3:
+            z_score = (rm_stats["mean"] - bm_stats["mean"]) / bm_stats["stddev"]
+            drifted = abs(z_score) > drift_threshold
+
+        signals_report[sig] = {
+            "baseline": b_stats, "recent": r_stats,
+            "baseline_query_means": bm_stats, "recent_query_means": rm_stats,
+            "z_score": round(z_score, 3), "drifted": drifted,
+        }
+
+        if drifted:
+            direction = "increased" if z_score > 0 else "decreased"
+            drift_alerts.append({
+                "signal": sig, "direction": direction, "z_score": round(z_score, 3),
+                "baseline_mean": bm_stats["mean"], "recent_mean": rm_stats["mean"],
+                "message": f"{sig} has {direction} significantly (z={z_score:.1f}): "
+                           f"baseline \u03bc={bm_stats['mean']:.3f} \u2192 recent \u03bc={rm_stats['mean']:.3f}",
+            })
+
+    return signals_report, drift_alerts, can_detect_drift
+
+
+def _scoring_timeline(query_scores: list[dict]) -> list[dict]:
+    """Build per-query timeline for charting (last 50 queries)."""
+    timeline_qs = query_scores[-50:]
+    per_query_timeline: list[dict] = []
+    for q in timeline_qs:
+        entry: dict = {"query_id": q["query_id"], "created_at": q["created_at"]}
+        for sig in _SCORING_SIGNALS:
+            vals = q["signals"].get(sig, [])
+            entry[sig] = round(sum(vals) / len(vals), 4) if vals else 0
+        per_query_timeline.append(entry)
+    return per_query_timeline
+
+
 @router.get("/scoring-health")
 async def scoring_health(
     baseline_window: int = 50,
@@ -1057,9 +1189,6 @@ async def scoring_health(
     Drift is flagged when the recent mean deviates by more than
     `drift_threshold` standard deviations from the baseline mean.
     """
-    SIGNALS = ["burst", "impact", "precision", "novelty", "recency", "relevance"]
-
-    # Fetch queries that have neuron_scores_json, ordered newest-first
     needed = baseline_window + recent_window
     result = await db.execute(
         select(Query.id, Query.neuron_scores_json, Query.created_at)
@@ -1079,136 +1208,24 @@ async def scoring_health(
             "per_query_timeline": [],
         }
 
-    # Parse scores: each query -> list of neuron score dicts
-    query_scores: list[dict] = []  # [{query_id, created_at, signals: {signal: [values]}}]
-    for qid, scores_json, created_at in rows:
-        try:
-            scores = json.loads(scores_json) if scores_json else []
-        except json.JSONDecodeError:
-            continue
-        if not scores:
-            continue
-        signal_values: dict[str, list[float]] = {s: [] for s in SIGNALS}
-        for neuron_score in scores:
-            for s in SIGNALS:
-                val = neuron_score.get(s)
-                if val is not None:
-                    signal_values[s].append(float(val))
-        query_scores.append({
-            "query_id": qid,
-            "created_at": created_at.isoformat() if created_at else None,
-            "signals": signal_values,
-        })
-
-    # Reverse to chronological order (oldest first)
-    query_scores.reverse()
+    query_scores = _parse_query_scores(rows, _SCORING_SIGNALS)
+    query_scores.reverse()  # chronological order (oldest first)
     total = len(query_scores)
 
-    # Split into baseline and recent windows
-    if total <= recent_window:
-        # Not enough for a proper split — use all as baseline, no drift detection
-        baseline_qs = query_scores
-        recent_qs = query_scores
-        can_detect_drift = False
-    else:
-        recent_qs = query_scores[-recent_window:]
-        baseline_start = max(0, total - recent_window - baseline_window)
-        baseline_qs = query_scores[baseline_start:total - recent_window]
-        can_detect_drift = len(baseline_qs) >= 5
-
-    def _stats(values: list[float]) -> dict:
-        if not values:
-            return {"mean": 0, "stddev": 0, "min": 0, "max": 0, "count": 0}
-        n = len(values)
-        mean = sum(values) / n
-        variance = sum((v - mean) ** 2 for v in values) / max(1, n - 1)
-        return {
-            "mean": round(mean, 4),
-            "stddev": round(math.sqrt(variance), 4),
-            "min": round(min(values), 4),
-            "max": round(max(values), 4),
-            "count": n,
-        }
-
-    def _aggregate_signal(queries: list[dict], signal: str) -> list[float]:
-        """Collect all neuron-level values for a signal across queries."""
-        vals: list[float] = []
-        for q in queries:
-            vals.extend(q["signals"].get(signal, []))
-        return vals
-
-    def _query_means(queries: list[dict], signal: str) -> list[float]:
-        """Per-query mean for a signal."""
-        means: list[float] = []
-        for q in queries:
-            vals = q["signals"].get(signal, [])
-            if vals:
-                means.append(sum(vals) / len(vals))
-        return means
-
-    # Build per-signal stats
-    signals_report: dict = {}
-    drift_alerts: list[dict] = []
-
-    for sig in SIGNALS:
-        baseline_vals = _aggregate_signal(baseline_qs, sig)
-        recent_vals = _aggregate_signal(recent_qs, sig)
-        baseline_means = _query_means(baseline_qs, sig)
-        recent_means = _query_means(recent_qs, sig)
-
-        b_stats = _stats(baseline_vals)
-        r_stats = _stats(recent_vals)
-        bm_stats = _stats(baseline_means)
-        rm_stats = _stats(recent_means)
-
-        # Drift detection: compare per-query means
-        drifted = False
-        z_score = 0.0
-        if can_detect_drift and bm_stats["stddev"] > 0.001 and len(recent_means) >= 3:
-            z_score = (rm_stats["mean"] - bm_stats["mean"]) / bm_stats["stddev"]
-            drifted = abs(z_score) > drift_threshold
-
-        signals_report[sig] = {
-            "baseline": b_stats,
-            "recent": r_stats,
-            "baseline_query_means": bm_stats,
-            "recent_query_means": rm_stats,
-            "z_score": round(z_score, 3),
-            "drifted": drifted,
-        }
-
-        if drifted:
-            direction = "increased" if z_score > 0 else "decreased"
-            drift_alerts.append({
-                "signal": sig,
-                "direction": direction,
-                "z_score": round(z_score, 3),
-                "baseline_mean": bm_stats["mean"],
-                "recent_mean": rm_stats["mean"],
-                "message": f"{sig} has {direction} significantly (z={z_score:.1f}): "
-                           f"baseline μ={bm_stats['mean']:.3f} → recent μ={rm_stats['mean']:.3f}",
-            })
-
-    # Per-query timeline for charting (last 50 queries)
-    timeline_qs = query_scores[-50:]
-    per_query_timeline: list[dict] = []
-    for q in timeline_qs:
-        entry: dict = {"query_id": q["query_id"], "created_at": q["created_at"]}
-        for sig in SIGNALS:
-            vals = q["signals"].get(sig, [])
-            entry[sig] = round(sum(vals) / len(vals), 4) if vals else 0
-        per_query_timeline.append(entry)
+    signals_report, drift_alerts, can_detect_drift = _scoring_distribution(
+        query_scores, recent_window, baseline_window, drift_threshold,
+    )
 
     return {
         "status": "ok",
         "queries_analyzed": total,
-        "baseline_window": len(baseline_qs),
-        "recent_window": len(recent_qs),
+        "baseline_window": min(baseline_window, total),
+        "recent_window": min(recent_window, total),
         "can_detect_drift": can_detect_drift,
         "drift_threshold": drift_threshold,
         "signals": signals_report,
         "drift_alerts": drift_alerts,
-        "per_query_timeline": per_query_timeline,
+        "per_query_timeline": _scoring_timeline(query_scores),
     }
 
 
@@ -1224,6 +1241,137 @@ CIRCUIT_BREAKER_THRESHOLDS = {
 }
 
 
+async def _maybe_create_alert(
+    db: AsyncSession, alert_type: str, severity: str, message: str,
+    detail_json: str, signal: str | None = None,
+) -> dict | None:
+    """Create a SystemAlert if no unacknowledged alert of this type (+signal) exists."""
+    filters = [SystemAlert.alert_type == alert_type, SystemAlert.acknowledged == False]
+    if signal is not None:
+        filters.append(SystemAlert.signal == signal)
+    existing = await db.execute(select(SystemAlert).where(*filters))
+    if existing.scalar_one_or_none():
+        return None
+    alert = SystemAlert(
+        alert_type=alert_type, severity=severity, signal=signal,
+        message=message, detail_json=detail_json,
+    )
+    db.add(alert)
+    result = {"type": alert_type, "message": message}
+    if signal is not None:
+        result["signal"] = signal
+    return result
+
+
+async def _health_database(db: AsyncSession, window: int) -> dict:
+    """Check eval quality and user ratings against circuit breaker thresholds."""
+    eval_result = await db.execute(
+        select(EvalScore.overall).order_by(EvalScore.id.desc()).limit(int(window))
+    )
+    eval_scores = [row[0] for row in eval_result.all()]
+    avg_eval = sum(eval_scores) / len(eval_scores) if eval_scores else None
+
+    rating_result = await db.execute(
+        select(Query.user_rating).where(Query.user_rating.isnot(None))
+        .order_by(Query.id.desc()).limit(int(window))
+    )
+    ratings = [row[0] for row in rating_result.all()]
+    avg_rating = sum(ratings) / len(ratings) if ratings else None
+
+    tripped = False
+    reasons: list[str] = []
+    alerts: list[dict] = []
+
+    if avg_eval is not None and avg_eval < CIRCUIT_BREAKER_THRESHOLDS["min_avg_eval_overall"]:
+        tripped = True
+        reasons.append(f"avg eval overall {avg_eval:.2f} < {CIRCUIT_BREAKER_THRESHOLDS['min_avg_eval_overall']}")
+        created = await _maybe_create_alert(
+            db, "quality_drop", "critical",
+            f"Average eval overall dropped to {avg_eval:.2f} (threshold: {CIRCUIT_BREAKER_THRESHOLDS['min_avg_eval_overall']})",
+            json.dumps({"avg_eval": avg_eval, "window": len(eval_scores)}),
+        )
+        if created:
+            alerts.append(created)
+
+    if avg_rating is not None and avg_rating < CIRCUIT_BREAKER_THRESHOLDS["min_avg_user_rating"]:
+        tripped = True
+        reasons.append(f"avg user rating {avg_rating:.2f} < {CIRCUIT_BREAKER_THRESHOLDS['min_avg_user_rating']}")
+
+    return {
+        "tripped": tripped, "reasons": reasons, "alerts": alerts,
+        "avg_eval": avg_eval, "eval_count": len(eval_scores),
+        "avg_rating": avg_rating, "rating_count": len(ratings),
+    }
+
+
+async def _health_pipeline(db: AsyncSession, window: int) -> dict:
+    """Check zero-hit rate and API model version changes."""
+    recent_queries = await db.execute(
+        select(Query.selected_neuron_ids).order_by(Query.id.desc()).limit(int(window))
+    )
+    rows = recent_queries.all()
+    reasons: list[str] = []
+    if rows:
+        zero_hits = sum(1 for (ids,) in rows if not ids or ids == "[]")
+        zero_pct = zero_hits / len(rows)
+        if zero_pct > CIRCUIT_BREAKER_THRESHOLDS["max_zero_hit_pct"]:
+            reasons.append(f"zero-hit rate {zero_pct:.0%} > {CIRCUIT_BREAKER_THRESHOLDS['max_zero_hit_pct']:.0%}")
+
+    version_result = await db.execute(
+        select(Query.model_version).where(Query.model_version.isnot(None))
+        .order_by(Query.id.desc()).limit(int(window))
+    )
+    versions = [row[0] for row in version_result.all()]
+    unique_versions = list(set(versions)) if versions else []
+    model_version_changed = len(unique_versions) > 1
+
+    alerts: list[dict] = []
+    if model_version_changed:
+        created = await _maybe_create_alert(
+            db, "api_change", "info",
+            f"Multiple model versions detected in recent queries: {', '.join(unique_versions)}",
+            json.dumps({"versions": unique_versions}),
+        )
+        if created:
+            alerts.append(created)
+
+    return {
+        "reasons": reasons, "alerts": alerts,
+        "model_versions": unique_versions, "model_version_changed": model_version_changed,
+    }
+
+
+async def _health_graph(db: AsyncSession) -> tuple[list[dict], dict]:
+    """Run drift detection via scoring_health and create alerts for drifted signals."""
+    drift_result = await scoring_health(db=db)
+    alerts: list[dict] = []
+    if drift_result.get("status") == "ok" and drift_result.get("drift_alerts"):
+        for da in drift_result["drift_alerts"]:
+            created = await _maybe_create_alert(
+                db, "drift", "warning", da["message"],
+                json.dumps(da), signal=da["signal"],
+            )
+            if created:
+                alerts.append(created)
+    return alerts, drift_result
+
+
+async def _fetch_active_alerts(db: AsyncSession) -> list[dict]:
+    """Fetch all unacknowledged system alerts."""
+    result = await db.execute(
+        select(SystemAlert).where(SystemAlert.acknowledged == False)
+        .order_by(SystemAlert.created_at.desc())
+    )
+    return [
+        {
+            "id": a.id, "type": a.alert_type, "severity": a.severity,
+            "signal": a.signal, "message": a.message,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in result.scalars().all()
+    ]
+
+
 @router.get("/health-check")
 async def health_check(db: AsyncSession = Depends(get_db)):
     """Production health check: drift detection, quality monitoring, circuit breaker.
@@ -1232,165 +1380,43 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     detects API model version changes, and persists alerts to system_alerts.
     Returns go/no-go status.
     """
-    alerts_created: list[dict] = []
     window = CIRCUIT_BREAKER_THRESHOLDS["eval_window"]
-    circuit_breaker_tripped = False
-    reasons: list[str] = []
+    alerts_created: list[dict] = []
 
-    # 1. Drift detection — reuse scoring-health logic
-    drift_result = await scoring_health(db=db)
-    if drift_result.get("status") == "ok" and drift_result.get("drift_alerts"):
-        for da in drift_result["drift_alerts"]:
-            # Check if we already have an unacknowledged alert for this signal
-            existing = await db.execute(
-                select(SystemAlert).where(
-                    SystemAlert.alert_type == "drift",
-                    SystemAlert.signal == da["signal"],
-                    SystemAlert.acknowledged == False,
-                )
-            )
-            if not existing.scalar_one_or_none():
-                alert = SystemAlert(
-                    alert_type="drift",
-                    severity="warning",
-                    signal=da["signal"],
-                    message=da["message"],
-                    detail_json=json.dumps(da),
-                )
-                db.add(alert)
-                alerts_created.append({"type": "drift", "signal": da["signal"], "message": da["message"]})
+    graph_alerts, drift_result = await _health_graph(db)
+    alerts_created.extend(graph_alerts)
 
-    # 2. Quality check — recent eval scores
-    eval_result = await db.execute(
-        select(EvalScore.overall)
-        .order_by(EvalScore.id.desc())
-        .limit(int(window))
-    )
-    eval_scores = [row[0] for row in eval_result.all()]
-    avg_eval = sum(eval_scores) / len(eval_scores) if eval_scores else None
+    db_health = await _health_database(db, window)
+    alerts_created.extend(db_health["alerts"])
 
-    if avg_eval is not None and avg_eval < CIRCUIT_BREAKER_THRESHOLDS["min_avg_eval_overall"]:
-        circuit_breaker_tripped = True
-        reasons.append(f"avg eval overall {avg_eval:.2f} < {CIRCUIT_BREAKER_THRESHOLDS['min_avg_eval_overall']}")
-        existing = await db.execute(
-            select(SystemAlert).where(
-                SystemAlert.alert_type == "quality_drop",
-                SystemAlert.acknowledged == False,
-            )
-        )
-        if not existing.scalar_one_or_none():
-            alert = SystemAlert(
-                alert_type="quality_drop",
-                severity="critical",
-                message=f"Average eval overall dropped to {avg_eval:.2f} (threshold: {CIRCUIT_BREAKER_THRESHOLDS['min_avg_eval_overall']})",
-                detail_json=json.dumps({"avg_eval": avg_eval, "window": len(eval_scores)}),
-            )
-            db.add(alert)
-            alerts_created.append({"type": "quality_drop", "message": alert.message})
+    pipeline_health = await _health_pipeline(db, window)
+    alerts_created.extend(pipeline_health["alerts"])
 
-    # 3. User rating check
-    rating_result = await db.execute(
-        select(Query.user_rating)
-        .where(Query.user_rating.isnot(None))
-        .order_by(Query.id.desc())
-        .limit(int(window))
-    )
-    ratings = [row[0] for row in rating_result.all()]
-    avg_rating = sum(ratings) / len(ratings) if ratings else None
+    reasons = db_health["reasons"] + pipeline_health["reasons"]
+    circuit_breaker_tripped = db_health["tripped"] or bool(pipeline_health["reasons"])
 
-    if avg_rating is not None and avg_rating < CIRCUIT_BREAKER_THRESHOLDS["min_avg_user_rating"]:
-        circuit_breaker_tripped = True
-        reasons.append(f"avg user rating {avg_rating:.2f} < {CIRCUIT_BREAKER_THRESHOLDS['min_avg_user_rating']}")
-
-    # 4. Zero-hit query detection
-    recent_queries = await db.execute(
-        select(Query.selected_neuron_ids)
-        .order_by(Query.id.desc())
-        .limit(int(window))
-    )
-    rows = recent_queries.all()
-    if rows:
-        zero_hits = sum(1 for (ids,) in rows if not ids or ids == "[]")
-        zero_pct = zero_hits / len(rows)
-        if zero_pct > CIRCUIT_BREAKER_THRESHOLDS["max_zero_hit_pct"]:
-            reasons.append(f"zero-hit rate {zero_pct:.0%} > {CIRCUIT_BREAKER_THRESHOLDS['max_zero_hit_pct']:.0%}")
-
-    # 5. API model version change detection
-    version_result = await db.execute(
-        select(Query.model_version)
-        .where(Query.model_version.isnot(None))
-        .order_by(Query.id.desc())
-        .limit(int(window))
-    )
-    versions = [row[0] for row in version_result.all()]
-    unique_versions = list(set(versions)) if versions else []
-    model_version_changed = len(unique_versions) > 1
-
-    if model_version_changed:
-        existing = await db.execute(
-            select(SystemAlert).where(
-                SystemAlert.alert_type == "api_change",
-                SystemAlert.acknowledged == False,
-            )
-        )
-        if not existing.scalar_one_or_none():
-            alert = SystemAlert(
-                alert_type="api_change",
-                severity="info",
-                message=f"Multiple model versions detected in recent queries: {', '.join(unique_versions)}",
-                detail_json=json.dumps({"versions": unique_versions}),
-            )
-            db.add(alert)
-            alerts_created.append({"type": "api_change", "message": alert.message})
-
-    # 6. Circuit breaker alert
     if circuit_breaker_tripped:
-        existing = await db.execute(
-            select(SystemAlert).where(
-                SystemAlert.alert_type == "circuit_breaker",
-                SystemAlert.acknowledged == False,
-            )
+        created = await _maybe_create_alert(
+            db, "circuit_breaker", "critical",
+            f"Circuit breaker tripped: {'; '.join(reasons)}",
+            json.dumps({"reasons": reasons}),
         )
-        if not existing.scalar_one_or_none():
-            alert = SystemAlert(
-                alert_type="circuit_breaker",
-                severity="critical",
-                message=f"Circuit breaker tripped: {'; '.join(reasons)}",
-                detail_json=json.dumps({"reasons": reasons}),
-            )
-            db.add(alert)
-            alerts_created.append({"type": "circuit_breaker", "message": alert.message})
+        if created:
+            alerts_created.append(created)
 
     await db.commit()
-
-    # Fetch all active (unacknowledged) alerts
-    active_alerts_result = await db.execute(
-        select(SystemAlert)
-        .where(SystemAlert.acknowledged == False)
-        .order_by(SystemAlert.created_at.desc())
-    )
-    active_alerts = [
-        {
-            "id": a.id,
-            "type": a.alert_type,
-            "severity": a.severity,
-            "signal": a.signal,
-            "message": a.message,
-            "created_at": a.created_at.isoformat() if a.created_at else None,
-        }
-        for a in active_alerts_result.scalars().all()
-    ]
+    active_alerts = await _fetch_active_alerts(db)
 
     return {
         "status": "tripped" if circuit_breaker_tripped else "ok",
         "circuit_breaker_tripped": circuit_breaker_tripped,
         "reasons": reasons,
-        "avg_eval_overall": round(avg_eval, 3) if avg_eval is not None else None,
-        "avg_user_rating": round(avg_rating, 3) if avg_rating is not None else None,
-        "eval_count": len(eval_scores),
-        "rating_count": len(ratings),
-        "model_versions": unique_versions,
-        "model_version_changed": model_version_changed,
+        "avg_eval_overall": round(db_health["avg_eval"], 3) if db_health["avg_eval"] is not None else None,
+        "avg_user_rating": round(db_health["avg_rating"], 3) if db_health["avg_rating"] is not None else None,
+        "eval_count": db_health["eval_count"],
+        "rating_count": db_health["rating_count"],
+        "model_versions": pipeline_health["model_versions"],
+        "model_version_changed": pipeline_health["model_version_changed"],
         "drift_alerts_count": len(drift_result.get("drift_alerts", [])),
         "active_alerts": active_alerts,
         "new_alerts": alerts_created,
@@ -1479,16 +1505,8 @@ def _is_false_positive(text: str, match_str: str, pii_type: str) -> bool:
     return False
 
 
-async def run_compliance_audit(db: AsyncSession) -> dict:
-    """Reusable compliance audit logic. Returns the full audit dict.
-
-    Used by both the /compliance-audit endpoint and snapshot creation.
-    """
-    result = await db.execute(select(Neuron).where(Neuron.is_active == True))
-    neurons = result.scalars().all()
-    total_neurons = len(neurons)
-
-    # ── 1. PII Scan (MET-3) ──
+def _audit_pii_exposure(neurons) -> dict:
+    """Scan neurons for PII patterns (MET-3). Returns pii_scan section."""
     pii_findings: list[dict] = []
     for neuron in neurons:
         for field_name, text_val in [("content", neuron.content), ("summary", neuron.summary), ("label", neuron.label)]:
@@ -1496,7 +1514,6 @@ async def run_compliance_audit(db: AsyncSession) -> dict:
                 continue
             for pattern, pii_type in _PII_PATTERNS:
                 matches = pattern.findall(text_val)
-                # Filter out false positives (DFARS clauses, example emails)
                 real_matches = [m for m in matches if not _is_false_positive(text_val, m, pii_type)]
                 if real_matches:
                     pii_findings.append({
@@ -1508,8 +1525,16 @@ async def run_compliance_audit(db: AsyncSession) -> dict:
                         "match_count": len(real_matches),
                         "excerpt": real_matches[0][:20] + "..." if len(real_matches[0]) > 20 else real_matches[0],
                     })
+    return {
+        "findings": pii_findings,
+        "total_findings": len(pii_findings),
+        "neurons_with_pii": len(set(f["neuron_id"] for f in pii_findings)),
+        "clean": len(pii_findings) == 0,
+    }
 
-    # ── 2. Bias / Coverage Assessment (MET-4) ──
+
+def _audit_neuron_coverage(neurons, total_neurons: int) -> dict:
+    """Compute per-department/layer/source coverage tallies. Returns coverage context dict."""
     dept_counts: dict[str, int] = {}
     dept_invocations: dict[str, int] = {}
     dept_utility: dict[str, list[float]] = {}
@@ -1525,28 +1550,42 @@ async def run_compliance_audit(db: AsyncSession) -> dict:
         st = neuron.source_type or "unknown"
         source_type_counts[st] = source_type_counts.get(st, 0) + 1
 
-    # Coverage imbalance: coefficient of variation
     dept_values = list(dept_counts.values())
     dept_mean = sum(dept_values) / len(dept_values) if dept_values else 0
     dept_variance = sum((v - dept_mean) ** 2 for v in dept_values) / max(1, len(dept_values) - 1) if len(dept_values) > 1 else 0
     dept_cv = math.sqrt(dept_variance) / dept_mean if dept_mean > 0 else 0
 
-    # Eval score disaggregation by answer_mode
+    dept_coverage = sorted([
+        {
+            "department": dept, "neuron_count": count,
+            "pct_of_total": round(count / total_neurons * 100, 1) if total_neurons else 0,
+            "total_invocations": dept_invocations.get(dept, 0),
+            "avg_utility": round(sum(dept_utility.get(dept, [0.5])) / len(dept_utility.get(dept, [0.5])), 3),
+        }
+        for dept, count in dept_counts.items()
+    ], key=lambda x: -x["neuron_count"])
+
+    return {
+        "dept_counts": dept_counts, "dept_invocations": dept_invocations,
+        "dept_utility": dept_utility, "layer_counts": layer_counts,
+        "source_type_counts": source_type_counts, "dept_cv": dept_cv,
+        "dept_coverage": dept_coverage,
+    }
+
+
+async def _audit_bias_assessment(db: AsyncSession, coverage: dict, total_neurons: int) -> dict:
+    """Build bias/coverage assessment section (MET-4). Returns bias_assessment dict."""
     eval_by_mode = await db.execute(
         select(
-            EvalScore.answer_mode,
-            func.count(EvalScore.id),
-            func.avg(EvalScore.accuracy),
-            func.avg(EvalScore.completeness),
-            func.avg(EvalScore.clarity),
-            func.avg(EvalScore.faithfulness),
+            EvalScore.answer_mode, func.count(EvalScore.id),
+            func.avg(EvalScore.accuracy), func.avg(EvalScore.completeness),
+            func.avg(EvalScore.clarity), func.avg(EvalScore.faithfulness),
             func.avg(EvalScore.overall),
         ).group_by(EvalScore.answer_mode)
     )
     eval_disaggregation = [
         {
-            "mode": row[0],
-            "count": row[1],
+            "mode": row[0], "count": row[1],
             "avg_accuracy": round(float(row[2] or 0), 2),
             "avg_completeness": round(float(row[3] or 0), 2),
             "avg_clarity": round(float(row[4] or 0), 2),
@@ -1555,29 +1594,37 @@ async def run_compliance_audit(db: AsyncSession) -> dict:
         }
         for row in eval_by_mode.all()
     ]
+    return {
+        "department_coverage": coverage["dept_coverage"],
+        "department_count": len(coverage["dept_counts"]),
+        "coverage_cv": round(coverage["dept_cv"], 3),
+        "coverage_imbalanced": coverage["dept_cv"] > 0.5,
+        "layer_distribution": {f"L{k}": v for k, v in sorted(coverage["layer_counts"].items())},
+        "eval_disaggregation": eval_disaggregation,
+    }
 
-    # Department coverage detail
-    dept_coverage = sorted([
-        {
-            "department": dept,
-            "neuron_count": count,
-            "pct_of_total": round(count / total_neurons * 100, 1) if total_neurons else 0,
-            "total_invocations": dept_invocations.get(dept, 0),
-            "avg_utility": round(sum(dept_utility.get(dept, [0.5])) / len(dept_utility.get(dept, [0.5])), 3),
-        }
-        for dept, count in dept_counts.items()
-    ], key=lambda x: -x["neuron_count"])
 
-    # ── 3. Scoring Baselines (MET-1) ──
-    SIGNALS = ["burst", "impact", "precision", "novelty", "recency", "relevance"]
+def _percentile(vals: list[float], p: float) -> float:
+    """Compute the p-th percentile of a sorted list using linear interpolation."""
+    if not vals:
+        return 0.0
+    sorted_vals = sorted(vals)
+    k = (len(sorted_vals) - 1) * (p / 100)
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return sorted_vals[int(k)]
+    return sorted_vals[f] * (c - k) + sorted_vals[c] * (k - f)
 
+
+async def _audit_scoring_baselines(db: AsyncSession) -> dict:
+    """Compute scoring baselines from recent queries (MET-1). Returns scoring_baselines section."""
     scores_result = await db.execute(
         select(Query.neuron_scores_json)
         .where(Query.neuron_scores_json.isnot(None))
-        .order_by(Query.id.desc())
-        .limit(200)
+        .order_by(Query.id.desc()).limit(200)
     )
-    all_signal_values: dict[str, list[float]] = {s: [] for s in SIGNALS}
+    all_signal_values: dict[str, list[float]] = {s: [] for s in _SCORING_SIGNALS}
     queries_parsed = 0
     for (scores_json,) in scores_result.all():
         try:
@@ -1588,24 +1635,13 @@ async def run_compliance_audit(db: AsyncSession) -> dict:
             continue
         queries_parsed += 1
         for ns in scores:
-            for s in SIGNALS:
+            for s in _SCORING_SIGNALS:
                 val = ns.get(s)
                 if val is not None:
                     all_signal_values[s].append(float(val))
 
-    def _percentile(vals: list[float], p: float) -> float:
-        if not vals:
-            return 0.0
-        sorted_vals = sorted(vals)
-        k = (len(sorted_vals) - 1) * (p / 100)
-        f = math.floor(k)
-        c = math.ceil(k)
-        if f == c:
-            return sorted_vals[int(k)]
-        return sorted_vals[f] * (c - k) + sorted_vals[c] * (k - f)
-
     scoring_baselines: dict[str, dict] = {}
-    for sig in SIGNALS:
+    for sig in _SCORING_SIGNALS:
         vals = all_signal_values[sig]
         n = len(vals)
         if n == 0:
@@ -1614,91 +1650,117 @@ async def run_compliance_audit(db: AsyncSession) -> dict:
         mean = sum(vals) / n
         variance = sum((v - mean) ** 2 for v in vals) / max(1, n - 1)
         scoring_baselines[sig] = {
-            "count": n,
-            "mean": round(mean, 4),
-            "stddev": round(math.sqrt(variance), 4),
-            "min": round(min(vals), 4),
-            "max": round(max(vals), 4),
-            "p25": round(_percentile(vals, 25), 4),
-            "p50": round(_percentile(vals, 50), 4),
-            "p75": round(_percentile(vals, 75), 4),
-            "p95": round(_percentile(vals, 95), 4),
+            "count": n, "mean": round(mean, 4), "stddev": round(math.sqrt(variance), 4),
+            "min": round(min(vals), 4), "max": round(max(vals), 4),
+            "p25": round(_percentile(vals, 25), 4), "p50": round(_percentile(vals, 50), 4),
+            "p75": round(_percentile(vals, 75), 4), "p95": round(_percentile(vals, 95), 4),
         }
 
-    # ── 4. Provenance Audit (A007) ──
+    return {
+        "queries_analyzed": queries_parsed,
+        "signals": scoring_baselines,
+        "all_signal_values": all_signal_values,
+        "metric_rationale": {
+            "burst": "Recency-weighted firing frequency. Higher = neuron is trending. Prevents stale content from dominating.",
+            "impact": "EMA of user feedback ratings. Reflects demonstrated usefulness in past queries.",
+            "precision": "Keyword overlap between query and neuron content. Direct relevance signal.",
+            "novelty": "Inverse of invocation frequency. Promotes under-used neurons to prevent echo chambers.",
+            "recency": "Temporal decay since last firing. Newer content gets a natural boost.",
+            "relevance": "LLM-assessed semantic similarity (when available). Highest-fidelity signal but most expensive.",
+        },
+    }
+
+
+def _audit_provenance(neurons) -> dict:
+    """Check primary-source neurons for missing citations, URLs, staleness (A007)."""
     missing_citation = []
     missing_source_url = []
-    stale_neurons = []  # regulatory/technical neurons with no last_verified
+    stale_neurons = []
     now = datetime.utcnow()
 
     for neuron in neurons:
         is_primary = neuron.source_type in ("regulatory_primary", "technical_primary")
-
-        if is_primary and not neuron.citation:
-            missing_citation.append({
-                "neuron_id": neuron.id,
-                "label": neuron.label[:80],
-                "department": neuron.department,
-                "source_type": neuron.source_type,
-            })
-
-        if is_primary and not neuron.source_url:
-            missing_source_url.append({
-                "neuron_id": neuron.id,
-                "label": neuron.label[:80],
-                "department": neuron.department,
-                "source_type": neuron.source_type,
-            })
-
-        if is_primary and neuron.last_verified:
+        if not is_primary:
+            continue
+        entry = {"neuron_id": neuron.id, "label": neuron.label[:80],
+                 "department": neuron.department, "source_type": neuron.source_type}
+        if not neuron.citation:
+            missing_citation.append(entry)
+        if not neuron.source_url:
+            missing_source_url.append(entry)
+        if neuron.last_verified:
             days_since = (now - neuron.last_verified).days
             if days_since > 365:
                 stale_neurons.append({
-                    "neuron_id": neuron.id,
-                    "label": neuron.label[:80],
-                    "department": neuron.department,
-                    "source_type": neuron.source_type,
+                    **entry,
                     "last_verified": neuron.last_verified.isoformat(),
                     "days_since_verified": days_since,
                 })
 
-    # ── 5. Validity & Reliability (MET-2) ──
-    # Confidence intervals, cross-validation, and robustness metrics
-    import random as _random
+    return {
+        "missing_citations": missing_citation,
+        "missing_citations_count": len(missing_citation),
+        "missing_source_urls": missing_source_url,
+        "missing_source_urls_count": len(missing_source_url),
+        "stale_neurons": stale_neurons,
+        "stale_neurons_count": len(stale_neurons),
+    }
 
-    # Gather all eval scores with their dimensions
+
+def _ci95(values: list[float]) -> dict:
+    """Compute mean and 95% confidence interval."""
+    n = len(values)
+    if n < 2:
+        return {"mean": round(values[0], 3) if values else 0, "ci_lower": 0, "ci_upper": 0, "n": n, "stderr": 0}
+    mean = sum(values) / n
+    variance = sum((v - mean) ** 2 for v in values) / (n - 1)
+    stderr = math.sqrt(variance / n)
+    t_val = 2.0 if n < 30 else 1.96
+    margin = t_val * stderr
+    return {
+        "mean": round(mean, 3), "ci_lower": round(mean - margin, 3),
+        "ci_upper": round(mean + margin, 3), "n": n, "stderr": round(stderr, 4),
+    }
+
+
+def _cross_validate_mode(overall_vals: list[float], mode: str, k_folds: int = 5) -> dict:
+    """Run k-fold cross-validation on overall scores for a single mode."""
+    import random as _random
+    n = len(overall_vals)
+    if n < k_folds:
+        return {"folds": k_folds, "n": n, "fold_means": [], "fold_cv": 0,
+                "stable": True, "message": "Too few samples for cross-validation"}
+
+    shuffled = list(overall_vals)
+    _random.Random(hash(mode)).shuffle(shuffled)
+    fold_size = n // k_folds
+    fold_means = []
+    for i in range(k_folds):
+        start = i * fold_size
+        end = start + fold_size if i < k_folds - 1 else n
+        fold_vals = shuffled[start:end]
+        fold_means.append(round(sum(fold_vals) / len(fold_vals), 3))
+
+    fm_mean = sum(fold_means) / len(fold_means)
+    fm_var = sum((v - fm_mean) ** 2 for v in fold_means) / max(1, len(fold_means) - 1)
+    fm_cv = math.sqrt(fm_var) / fm_mean if fm_mean > 0 else 0
+
+    return {
+        "folds": k_folds, "n": n, "fold_means": fold_means,
+        "fold_cv": round(fm_cv, 4), "stable": fm_cv < 0.10,
+        "message": "Stable" if fm_cv < 0.10 else "High variance across folds \u2014 results may not be robust",
+    }
+
+
+async def _audit_validity_reliability(db: AsyncSession, all_signal_values: dict[str, list[float]]) -> dict:
+    """Compute confidence intervals, cross-validation, signal robustness (MET-2)."""
     all_evals = await db.execute(
-        select(
-            EvalScore.answer_mode,
-            EvalScore.accuracy,
-            EvalScore.completeness,
-            EvalScore.clarity,
-            EvalScore.faithfulness,
-            EvalScore.overall,
-        ).order_by(EvalScore.id)
+        select(EvalScore.answer_mode, EvalScore.accuracy, EvalScore.completeness,
+               EvalScore.clarity, EvalScore.faithfulness, EvalScore.overall)
+        .order_by(EvalScore.id)
     )
     eval_rows = all_evals.all()
 
-    def _ci95(values: list[float]) -> dict:
-        """Compute mean and 95% confidence interval."""
-        n = len(values)
-        if n < 2:
-            return {"mean": round(values[0], 3) if values else 0, "ci_lower": 0, "ci_upper": 0, "n": n, "stderr": 0}
-        mean = sum(values) / n
-        variance = sum((v - mean) ** 2 for v in values) / (n - 1)
-        stderr = math.sqrt(variance / n)
-        # t-approx for 95% CI (use 1.96 for large n, conservative 2.0 for small)
-        t_val = 2.0 if n < 30 else 1.96
-        margin = t_val * stderr
-        return {
-            "mean": round(mean, 3),
-            "ci_lower": round(mean - margin, 3),
-            "ci_upper": round(mean + margin, 3),
-            "n": n,
-            "stderr": round(stderr, 4),
-        }
-
-    # Per-mode confidence intervals for each dimension
     modes_data: dict[str, dict[str, list[float]]] = {}
     for mode, acc, comp, clar, faith, overall in eval_rows:
         if mode not in modes_data:
@@ -1709,47 +1771,11 @@ async def run_compliance_audit(db: AsyncSession) -> dict:
         modes_data[mode]["faithfulness"].append(float(faith))
         modes_data[mode]["overall"].append(float(overall))
 
-    confidence_intervals: dict[str, dict[str, dict]] = {}
-    for mode, dims in modes_data.items():
-        confidence_intervals[mode] = {dim: _ci95(vals) for dim, vals in dims.items()}
+    confidence_intervals = {mode: {dim: _ci95(vals) for dim, vals in dims.items()} for mode, dims in modes_data.items()}
+    cross_validation = {mode: _cross_validate_mode(dims["overall"], mode) for mode, dims in modes_data.items()}
 
-    # Cross-validation: 5-fold stability of overall scores per mode
-    K_FOLDS = 5
-    cross_validation: dict[str, dict] = {}
-    for mode, dims in modes_data.items():
-        overall_vals = dims["overall"]
-        n = len(overall_vals)
-        if n < K_FOLDS:
-            cross_validation[mode] = {"folds": K_FOLDS, "n": n, "fold_means": [], "fold_cv": 0, "stable": True, "message": "Too few samples for cross-validation"}
-            continue
-
-        # Deterministic shuffle based on mode name for reproducibility
-        shuffled = list(overall_vals)
-        _random.Random(hash(mode)).shuffle(shuffled)
-        fold_size = n // K_FOLDS
-        fold_means = []
-        for i in range(K_FOLDS):
-            start = i * fold_size
-            end = start + fold_size if i < K_FOLDS - 1 else n
-            fold_vals = shuffled[start:end]
-            fold_means.append(round(sum(fold_vals) / len(fold_vals), 3))
-
-        fm_mean = sum(fold_means) / len(fold_means)
-        fm_var = sum((v - fm_mean) ** 2 for v in fold_means) / max(1, len(fold_means) - 1)
-        fm_cv = math.sqrt(fm_var) / fm_mean if fm_mean > 0 else 0
-
-        cross_validation[mode] = {
-            "folds": K_FOLDS,
-            "n": n,
-            "fold_means": fold_means,
-            "fold_cv": round(fm_cv, 4),
-            "stable": fm_cv < 0.10,  # CV < 10% across folds = stable
-            "message": "Stable" if fm_cv < 0.10 else "High variance across folds — results may not be robust",
-        }
-
-    # Robustness: scoring signal CV (coefficient of variation per signal)
     signal_robustness: dict[str, dict] = {}
-    for sig in SIGNALS:
+    for sig in _SCORING_SIGNALS:
         vals = all_signal_values[sig]
         if not vals:
             signal_robustness[sig] = {"cv": 0, "robust": True, "n": 0}
@@ -1757,21 +1783,18 @@ async def run_compliance_audit(db: AsyncSession) -> dict:
         mean = sum(vals) / len(vals)
         variance = sum((v - mean) ** 2 for v in vals) / max(1, len(vals) - 1)
         cv = math.sqrt(variance) / mean if mean > 0 else 0
-        signal_robustness[sig] = {
-            "cv": round(cv, 4),
-            "robust": cv < 1.5,  # CV < 150% is reasonable for scoring signals
-            "n": len(vals),
-        }
+        signal_robustness[sig] = {"cv": round(cv, 4), "robust": cv < 1.5, "n": len(vals)}
 
-    validity_reliability = {
+    return {
         "confidence_intervals": confidence_intervals,
         "cross_validation": cross_validation,
         "signal_robustness": signal_robustness,
         "total_evals": len(eval_rows),
     }
 
-    # ── 6. Fairness Analysis & Remediation (MET-4 expanded) ──
-    # Per-department eval quality — do some departments get worse answers?
+
+async def _audit_dept_eval_quality(db: AsyncSession) -> list[dict]:
+    """Query per-department eval quality for fairness analysis."""
     dept_eval_result = await db.execute(text("""
         SELECT n.department, e.answer_mode,
                COUNT(*) as cnt,
@@ -1791,39 +1814,28 @@ async def run_compliance_audit(db: AsyncSession) -> dict:
         GROUP BY n.department, e.answer_mode
         ORDER BY n.department, e.answer_mode
     """))
-    dept_eval_rows = dept_eval_result.fetchall()
-
-    dept_eval_quality: list[dict] = []
-    for row in dept_eval_rows:
-        dept_eval_quality.append({
-            "department": row[0],
-            "answer_mode": row[1],
-            "eval_count": row[2],
-            "avg_overall": round(float(row[3]), 2),
-            "avg_faithfulness": round(float(row[4]), 2),
-        })
-
-    # Invocation disparity: ratio of most-invoked to least-invoked department
-    inv_values = [v for v in dept_invocations.values() if v > 0]
-    invocation_disparity = round(max(inv_values) / min(inv_values), 1) if len(inv_values) >= 2 and min(inv_values) > 0 else None
-
-    # Utility disparity: range of avg utility across departments
-    dept_avg_utilities = [
-        sum(dept_utility[d]) / len(dept_utility[d])
-        for d in dept_utility if dept_utility[d]
+    return [
+        {
+            "department": row[0], "answer_mode": row[1], "eval_count": row[2],
+            "avg_overall": round(float(row[3]), 2), "avg_faithfulness": round(float(row[4]), 2),
+        }
+        for row in dept_eval_result.fetchall()
     ]
-    utility_range = round(max(dept_avg_utilities) - min(dept_avg_utilities), 4) if len(dept_avg_utilities) >= 2 else 0
 
-    # Automated remediation recommendations
-    remediation_items: list[dict] = []
+
+def _audit_remediation(
+    dept_cv: float, dept_counts: dict, dept_invocations: dict,
+    total_neurons: int, dept_eval_quality: list[dict],
+) -> list[dict]:
+    """Generate automated remediation recommendations for coverage/quality/utilization gaps."""
+    items: list[dict] = []
 
     if dept_cv > 0.5:
-        # Find under-represented departments
         fair_share = total_neurons / len(dept_counts) if dept_counts else 0
         for dept, count in dept_counts.items():
             if count < fair_share * 0.5:
                 deficit = round(fair_share - count)
-                remediation_items.append({
+                items.append({
                     "type": "coverage_gap",
                     "severity": "high" if count < fair_share * 0.25 else "medium",
                     "department": dept,
@@ -1831,35 +1843,49 @@ async def run_compliance_audit(db: AsyncSession) -> dict:
                     "action": f"Use autopilot gap-driven queries targeting {dept} topics to grow coverage.",
                 })
 
-    # Check for departments with notably lower eval quality
     if dept_eval_quality:
         neuron_evals = [d for d in dept_eval_quality if "neuron" in d["answer_mode"]]
         if len(neuron_evals) >= 2:
             avg_all = sum(d["avg_overall"] for d in neuron_evals) / len(neuron_evals)
             for d in neuron_evals:
                 if d["avg_overall"] < avg_all - 0.5 and d["eval_count"] >= 3:
-                    remediation_items.append({
-                        "type": "quality_gap",
-                        "severity": "medium",
-                        "department": d["department"],
-                        "message": f"{d['department']} neuron-assisted evals average {d['avg_overall']:.1f} vs system avg {avg_all:.1f} — content quality may need improvement.",
+                    items.append({
+                        "type": "quality_gap", "severity": "medium", "department": d["department"],
+                        "message": f"{d['department']} neuron-assisted evals average {d['avg_overall']:.1f} vs system avg {avg_all:.1f} \u2014 content quality may need improvement.",
                         "action": f"Review and refine neuron content in {d['department']} department. Run targeted blind evals to confirm.",
                     })
 
-    # Check for departments with very low invocations (unused knowledge)
+    inv_values = [v for v in dept_invocations.values() if v > 0]
     if inv_values:
         median_inv = sorted(inv_values)[len(inv_values) // 2]
         for dept, inv in dept_invocations.items():
             if inv < median_inv * 0.1 and dept_counts.get(dept, 0) > 10:
-                remediation_items.append({
-                    "type": "utilization_gap",
-                    "severity": "low",
-                    "department": dept,
+                items.append({
+                    "type": "utilization_gap", "severity": "low", "department": dept,
                     "message": f"{dept} has {dept_counts[dept]} neurons but only {inv} invocations (median is {median_inv}). Content may not match real queries.",
                     "action": f"Review {dept} neuron labels and summaries for relevance. Consider sample queries to test activation.",
                 })
 
-    fairness_analysis = {
+    return items
+
+
+def _audit_fairness(coverage: dict, total_neurons: int, dept_eval_quality: list[dict]) -> dict:
+    """Assemble fairness analysis section from coverage and eval quality data."""
+    dept_invocations = coverage["dept_invocations"]
+    dept_utility = coverage["dept_utility"]
+    dept_cv = coverage["dept_cv"]
+
+    inv_values = [v for v in dept_invocations.values() if v > 0]
+    invocation_disparity = round(max(inv_values) / min(inv_values), 1) if len(inv_values) >= 2 and min(inv_values) > 0 else None
+
+    dept_avg_utilities = [sum(dept_utility[d]) / len(dept_utility[d]) for d in dept_utility if dept_utility[d]]
+    utility_range = round(max(dept_avg_utilities) - min(dept_avg_utilities), 4) if len(dept_avg_utilities) >= 2 else 0
+
+    remediation_items = _audit_remediation(
+        dept_cv, coverage["dept_counts"], dept_invocations, total_neurons, dept_eval_quality,
+    )
+
+    return {
         "department_eval_quality": dept_eval_quality,
         "invocation_disparity_ratio": invocation_disparity,
         "utility_range": utility_range,
@@ -1869,45 +1895,39 @@ async def run_compliance_audit(db: AsyncSession) -> dict:
         "fairness_pass": dept_cv <= 0.5 and len(remediation_items) == 0,
     }
 
-    return {  # compliance-audit response
+
+async def run_compliance_audit(db: AsyncSession) -> dict:
+    """Reusable compliance audit logic. Returns the full audit dict.
+
+    Used by both the /compliance-audit endpoint and snapshot creation.
+    Orchestrates per-check helpers for PII, bias, scoring, provenance,
+    validity, and fairness.
+    """
+    result = await db.execute(select(Neuron).where(Neuron.is_active == True))
+    neurons = result.scalars().all()
+    total_neurons = len(neurons)
+
+    pii_scan = _audit_pii_exposure(neurons)
+    coverage = _audit_neuron_coverage(neurons, total_neurons)
+    bias_assessment = await _audit_bias_assessment(db, coverage, total_neurons)
+    scoring = await _audit_scoring_baselines(db)
+    provenance = _audit_provenance(neurons)
+    provenance["source_type_distribution"] = coverage["source_type_counts"]
+    validity = await _audit_validity_reliability(db, scoring["all_signal_values"])
+    dept_eval_quality = await _audit_dept_eval_quality(db)
+    fairness = _audit_fairness(coverage, total_neurons, dept_eval_quality)
+
+    # Remove internal-only key before returning
+    scoring_baselines = {k: v for k, v in scoring.items() if k != "all_signal_values"}
+
+    return {
         "total_neurons": total_neurons,
-        "pii_scan": {
-            "findings": pii_findings,
-            "total_findings": len(pii_findings),
-            "neurons_with_pii": len(set(f["neuron_id"] for f in pii_findings)),
-            "clean": len(pii_findings) == 0,
-        },
-        "bias_assessment": {
-            "department_coverage": dept_coverage,
-            "department_count": len(dept_counts),
-            "coverage_cv": round(dept_cv, 3),
-            "coverage_imbalanced": dept_cv > 0.5,
-            "layer_distribution": {f"L{k}": v for k, v in sorted(layer_counts.items())},
-            "eval_disaggregation": eval_disaggregation,
-        },
-        "scoring_baselines": {
-            "queries_analyzed": queries_parsed,
-            "signals": scoring_baselines,
-            "metric_rationale": {
-                "burst": "Recency-weighted firing frequency. Higher = neuron is trending. Prevents stale content from dominating.",
-                "impact": "EMA of user feedback ratings. Reflects demonstrated usefulness in past queries.",
-                "precision": "Keyword overlap between query and neuron content. Direct relevance signal.",
-                "novelty": "Inverse of invocation frequency. Promotes under-used neurons to prevent echo chambers.",
-                "recency": "Temporal decay since last firing. Newer content gets a natural boost.",
-                "relevance": "LLM-assessed semantic similarity (when available). Highest-fidelity signal but most expensive.",
-            },
-        },
-        "provenance_audit": {
-            "source_type_distribution": source_type_counts,
-            "missing_citations": missing_citation,
-            "missing_citations_count": len(missing_citation),
-            "missing_source_urls": missing_source_url,
-            "missing_source_urls_count": len(missing_source_url),
-            "stale_neurons": stale_neurons,
-            "stale_neurons_count": len(stale_neurons),
-        },
-        "validity_reliability": validity_reliability,
-        "fairness_analysis": fairness_analysis,
+        "pii_scan": pii_scan,
+        "bias_assessment": bias_assessment,
+        "scoring_baselines": scoring_baselines,
+        "provenance_audit": provenance,
+        "validity_reliability": validity,
+        "fairness_analysis": fairness,
     }
 
 
@@ -1919,28 +1939,19 @@ async def compliance_audit(db: AsyncSession = Depends(get_db)):
 
 # ── Governance Dashboard: live metrics for AI objectives, change log, system health ──
 
-@router.get("/governance-dashboard")
-async def governance_dashboard(db: AsyncSession = Depends(get_db)):
-    """Aggregate live governance metrics: AI objectives progress, change activity, quality trends.
-
-    Feeds the Governance page with computed KPI status against defined targets.
-    """
-    # ── Total counts ──
+async def _governance_overview(db: AsyncSession) -> dict:
+    """Fetch total counts and quality KPIs for governance dashboard."""
     total_neurons = (await db.execute(select(func.count(Neuron.id)).where(Neuron.is_active == True))).scalar() or 0
     total_queries = (await db.execute(select(func.count(Query.id)))).scalar() or 0
     total_evals = (await db.execute(select(func.count(EvalScore.id)))).scalar() or 0
     total_refinements = (await db.execute(select(func.count(NeuronRefinement.id)))).scalar() or 0
 
-    # ── Quality KPIs ──
-    # Avg eval overall (all time)
     avg_eval = (await db.execute(select(func.avg(EvalScore.overall)))).scalar()
     avg_eval = round(float(avg_eval), 2) if avg_eval else None
 
-    # Avg faithfulness (hallucination prevention)
     avg_faith = (await db.execute(select(func.avg(EvalScore.faithfulness)))).scalar()
     avg_faith = round(float(avg_faith), 2) if avg_faith else None
 
-    # Avg user rating
     avg_rating_result = await db.execute(
         select(func.avg(Query.user_rating)).where(Query.user_rating.isnot(None))
     )
@@ -1950,7 +1961,21 @@ async def governance_dashboard(db: AsyncSession = Depends(get_db)):
         select(func.count(Query.id)).where(Query.user_rating.isnot(None))
     )).scalar() or 0
 
-    # ── Cost KPIs (two views: total training cost vs production-only run cost) ──
+    return {
+        "totals": {
+            "neurons": total_neurons, "queries": total_queries,
+            "evaluations": total_evals, "refinements": total_refinements,
+            "rated_queries": rated_count,
+        },
+        "quality": {
+            "avg_eval": avg_eval, "avg_faith": avg_faith, "avg_rating": avg_rating,
+        },
+        "total_queries": total_queries,
+    }
+
+
+async def _governance_cost_kpis(db: AsyncSession, total_queries: int) -> dict:
+    """Compute cost KPIs: total, per-query, per-1M tokens, run vs opus split."""
     total_cost = (await db.execute(select(func.sum(Query.cost_usd)))).scalar() or 0.0
     avg_cost = round(total_cost / total_queries, 6) if total_queries > 0 else 0.0
     total_tokens_result = await db.execute(select(
@@ -1960,7 +1985,6 @@ async def governance_dashboard(db: AsyncSession = Depends(get_db)):
     total_tokens = total_tokens_result.scalar() or 0
     cost_per_1m = round(total_cost / total_tokens * 1_000_000, 2) if total_tokens > 0 else None
 
-    # Slot-level cost breakdown by tier
     slot_cost_result = await db.execute(text("""
         SELECT
             SUM(CASE WHEN (slot->>'mode') LIKE '%opus%' THEN (slot->>'cost_usd')::float ELSE 0 END) as opus_cost,
@@ -1973,24 +1997,17 @@ async def governance_dashboard(db: AsyncSession = Depends(get_db)):
         WHERE queries.results_json IS NOT NULL
     """))
     opus_cost_total, opus_token_total, run_slot_cost, run_slot_tokens = slot_cost_result.one()
-
-    # Opus benchmark: cost per 1M tokens for opus-tier slots only
     opus_cost_1m = round(float(opus_cost_total) / float(opus_token_total) * 1_000_000, 2) if opus_token_total and opus_token_total > 0 else None
 
-    # Run cost: haiku/sonnet slots + classify overhead (always Haiku, always needed in production)
     classify_cost_result = await db.execute(text("""
-        SELECT COALESCE(SUM(classify_input_tokens + classify_output_tokens), 0)
-        FROM queries
+        SELECT COALESCE(SUM(classify_input_tokens + classify_output_tokens), 0) FROM queries
     """))
     classify_tokens = float(classify_cost_result.scalar() or 0)
-    # Classify is always Haiku — estimate cost at Haiku rate ($0.25/1M in, $1.25/1M out)
-    # Use a blended classify rate: total classify cost / total classify tokens
     classify_cost_est_result = await db.execute(text("""
         SELECT COALESCE(SUM(
             classify_input_tokens * 1.00 / 1000000.0 +
             classify_output_tokens * 5.00 / 1000000.0
-        ), 0)
-        FROM queries
+        ), 0) FROM queries
     """))
     classify_cost_est = float(classify_cost_est_result.scalar() or 0)
 
@@ -1998,18 +2015,22 @@ async def governance_dashboard(db: AsyncSession = Depends(get_db)):
     run_total_tokens = (run_slot_tokens or 0) + classify_tokens
     run_cost_per_1m = round(run_total_cost / run_total_tokens * 1_000_000, 2) if run_total_tokens > 0 else None
 
-    # ── Synthesized KPIs: Parity Index & Value Score ──
-    # Parity Index = avg neuron eval / avg opus eval (quality parity)
-    # Value Score = (neuron_eval / 5) / (run_cost / opus_cost) (quality-per-dollar in production)
+    return {
+        "avg_cost": avg_cost, "total_cost": round(total_cost, 4),
+        "cost_per_1m": cost_per_1m, "run_cost_per_1m": run_cost_per_1m,
+        "opus_cost_1m": opus_cost_1m,
+    }
+
+
+async def _governance_parity(db: AsyncSession, run_cost_per_1m, opus_cost_1m) -> dict:
+    """Compute parity index and value score KPIs."""
     opus_eval_result = await db.execute(
-        select(func.avg(EvalScore.overall))
-        .where(EvalScore.answer_mode.like("opus_%"))
+        select(func.avg(EvalScore.overall)).where(EvalScore.answer_mode.like("opus_%"))
     )
     avg_opus_eval = opus_eval_result.scalar()
 
     neuron_eval_result = await db.execute(
-        select(func.avg(EvalScore.overall))
-        .where(EvalScore.answer_mode.like("%_neuron"))
+        select(func.avg(EvalScore.overall)).where(EvalScore.answer_mode.like("%_neuron"))
     )
     avg_neuron_eval = neuron_eval_result.scalar()
 
@@ -2018,14 +2039,20 @@ async def governance_dashboard(db: AsyncSession = Depends(get_db)):
     if avg_neuron_eval and run_cost_per_1m and opus_cost_1m and opus_cost_1m > 0:
         value_score = round((float(avg_neuron_eval) / 5.0) / (run_cost_per_1m / opus_cost_1m), 2)
 
-    # ── Coverage KPIs ──
-    # Departments with neurons
+    return {
+        "parity_index": parity_index, "value_score": value_score,
+        "avg_opus_eval": round(float(avg_opus_eval), 2) if avg_opus_eval else None,
+        "avg_neuron_eval": round(float(avg_neuron_eval), 2) if avg_neuron_eval else None,
+    }
+
+
+async def _governance_compliance(db: AsyncSession) -> dict:
+    """Fetch coverage CV, zero-hit rate, change activity, and alert count."""
     dept_count = (await db.execute(
         select(func.count(func.distinct(Neuron.department)))
         .where(Neuron.department.isnot(None), Neuron.is_active == True)
     )).scalar() or 0
 
-    # Coverage CV (fairness metric)
     dept_neuron_counts = await db.execute(
         select(Neuron.department, func.count(Neuron.id))
         .where(Neuron.is_active == True, Neuron.department.isnot(None))
@@ -2039,7 +2066,6 @@ async def governance_dashboard(db: AsyncSession = Depends(get_db)):
     else:
         coverage_cv = 0.0
 
-    # Zero-hit rate (last 50 queries)
     recent_q = await db.execute(
         select(Query.selected_neuron_ids).order_by(Query.id.desc()).limit(50)
     )
@@ -2047,79 +2073,75 @@ async def governance_dashboard(db: AsyncSession = Depends(get_db)):
     zero_hits = sum(1 for (ids,) in recent_rows if not ids or ids == "[]") if recent_rows else 0
     zero_hit_pct = round(zero_hits / len(recent_rows) * 100, 1) if recent_rows else 0
 
-    # ── Change activity (last 30 days) ──
     thirty_days_ago = datetime.utcnow() - timedelta(days=30)
     recent_refinements = (await db.execute(
-        select(func.count(NeuronRefinement.id))
-        .where(NeuronRefinement.created_at >= thirty_days_ago)
+        select(func.count(NeuronRefinement.id)).where(NeuronRefinement.created_at >= thirty_days_ago)
     )).scalar() or 0
-
     recent_autopilot = (await db.execute(
-        select(func.count(AutopilotRun.id))
-        .where(AutopilotRun.created_at >= thirty_days_ago)
+        select(func.count(AutopilotRun.id)).where(AutopilotRun.created_at >= thirty_days_ago)
     )).scalar() or 0
 
-    # Recent change details (last 10)
     recent_changes_q = await db.execute(
-        select(
-            NeuronRefinement.id,
-            NeuronRefinement.action,
-            NeuronRefinement.field,
-            NeuronRefinement.reason,
-            NeuronRefinement.neuron_id,
-            NeuronRefinement.created_at,
-        )
-        .order_by(NeuronRefinement.created_at.desc())
-        .limit(10)
+        select(NeuronRefinement.id, NeuronRefinement.action, NeuronRefinement.field,
+               NeuronRefinement.reason, NeuronRefinement.neuron_id, NeuronRefinement.created_at)
+        .order_by(NeuronRefinement.created_at.desc()).limit(10)
     )
     recent_changes = [
-        {
-            "id": r[0],
-            "action": r[1],
-            "field": r[2],
-            "reason": (r[3] or "")[:120],
-            "neuron_id": r[4],
-            "created_at": r[5].isoformat() if r[5] else None,
-        }
+        {"id": r[0], "action": r[1], "field": r[2], "reason": (r[3] or "")[:120],
+         "neuron_id": r[4], "created_at": r[5].isoformat() if r[5] else None}
         for r in recent_changes_q.all()
     ]
 
-    # ── Active alerts ──
     active_alert_count = (await db.execute(
         select(func.count(SystemAlert.id)).where(SystemAlert.acknowledged == False)
     )).scalar() or 0
 
     return {
-        "totals": {
-            "neurons": total_neurons,
-            "queries": total_queries,
-            "evaluations": total_evals,
-            "refinements": total_refinements,
-            "departments": dept_count,
-            "rated_queries": rated_count,
-        },
-        "kpis": {
-            "avg_eval_overall": avg_eval,
-            "avg_faithfulness": avg_faith,
-            "avg_user_rating": avg_rating,
-            "avg_cost_per_query": avg_cost,
-            "total_cost_usd": round(total_cost, 4),
-            "cost_per_1m_tokens": cost_per_1m,
-            "run_cost_per_1m": run_cost_per_1m,
-            "zero_hit_pct": zero_hit_pct,
-            "parity_index": parity_index,
-            "value_score": value_score,
-            "avg_opus_eval": round(float(avg_opus_eval), 2) if avg_opus_eval else None,
-            "avg_neuron_eval": round(float(avg_neuron_eval), 2) if avg_neuron_eval else None,
-            "opus_cost_per_1m": round(opus_cost_1m, 2) if opus_cost_1m else None,
-            "coverage_cv": coverage_cv,
-        },
+        "dept_count": dept_count, "coverage_cv": coverage_cv,
+        "zero_hit_pct": zero_hit_pct,
         "change_activity": {
             "refinements_30d": recent_refinements,
             "autopilot_runs_30d": recent_autopilot,
             "recent_changes": recent_changes,
         },
         "active_alerts": active_alert_count,
+    }
+
+
+@router.get("/governance-dashboard")
+async def governance_dashboard(db: AsyncSession = Depends(get_db)):
+    """Aggregate live governance metrics: AI objectives progress, change activity, quality trends.
+
+    Feeds the Governance page with computed KPI status against defined targets.
+    """
+    overview = await _governance_overview(db)
+    cost = await _governance_cost_kpis(db, overview["total_queries"])
+    parity = await _governance_parity(db, cost["run_cost_per_1m"], cost["opus_cost_1m"])
+    compliance = await _governance_compliance(db)
+
+    return {
+        "totals": {
+            **overview["totals"],
+            "departments": compliance["dept_count"],
+        },
+        "kpis": {
+            "avg_eval_overall": overview["quality"]["avg_eval"],
+            "avg_faithfulness": overview["quality"]["avg_faith"],
+            "avg_user_rating": overview["quality"]["avg_rating"],
+            "avg_cost_per_query": cost["avg_cost"],
+            "total_cost_usd": cost["total_cost"],
+            "cost_per_1m_tokens": cost["cost_per_1m"],
+            "run_cost_per_1m": cost["run_cost_per_1m"],
+            "zero_hit_pct": compliance["zero_hit_pct"],
+            "parity_index": parity["parity_index"],
+            "value_score": parity["value_score"],
+            "avg_opus_eval": parity["avg_opus_eval"],
+            "avg_neuron_eval": parity["avg_neuron_eval"],
+            "opus_cost_per_1m": round(cost["opus_cost_1m"], 2) if cost["opus_cost_1m"] else None,
+            "coverage_cv": compliance["coverage_cv"],
+        },
+        "change_activity": compliance["change_activity"],
+        "active_alerts": compliance["active_alerts"],
     }
 
 

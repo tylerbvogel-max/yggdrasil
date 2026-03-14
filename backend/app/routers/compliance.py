@@ -14,11 +14,28 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _ALLOWED_PREFIXES = ("docs", "backend/app")
 _MAX_FILE_BYTES = 64 * 1024  # 64 KB cap
 
+from app.config import settings
 from app.database import get_db, async_session
-from app.models import ManagementReview, ComplianceSnapshot, EvidenceMapping, Neuron, NeuronRefinement
+from app.models import ManagementReview, ComplianceSnapshot, EvidenceMapping, Neuron, NeuronRefinement, AuditLog
 from app.routers.admin import run_compliance_audit
 
 router = APIRouter(prefix="/admin", tags=["compliance"])
+
+
+# ── System Use Notification Banner (AC-8, CMMC 3.1.9) ──
+
+@router.get("/system-banner")
+async def get_system_banner():
+    """Return the system use notification banner text and enabled state.
+
+    AC-8: System use notification — display approved banner before granting access.
+    CMMC 3.1.9: Provide privacy and security notices consistent with CUI rules.
+    """
+    return {
+        "enabled": settings.system_use_banner_enabled,
+        "banner_text": settings.system_use_banner if settings.system_use_banner_enabled else "",
+        "session_timeout_minutes": settings.session_timeout_minutes,
+    }
 
 # Review cadence in days (from governance.md)
 REVIEW_CADENCES: dict[str, int] = {
@@ -488,6 +505,93 @@ def _get_evidence_seed() -> list[dict]:
          "status": "addressed", "evidence_type": "endpoint", "evidence_location": "/admin/compliance-snapshots"},
         {"framework": "iso_42001", "requirement_id": "A.9.4", "requirement_name": "Management Review of AIMS",
          "status": "addressed", "evidence_type": "review_log", "evidence_location": "management_reviews"},
+
+        # FedRAMP Moderate (NIST 800-53 Rev 5)
+        {"framework": "fedramp_moderate", "requirement_id": "AC", "requirement_name": "Access Control",
+         "status": "gap", "evidence_type": "code", "evidence_location": "backend/app/routers/",
+         "notes": "No authentication layer. Must implement RBAC, session management, least privilege."},
+        {"framework": "fedramp_moderate", "requirement_id": "AU", "requirement_name": "Audit & Accountability",
+         "status": "partial", "evidence_type": "table", "evidence_location": "queries",
+         "verification_query": "Query provenance logged; missing centralized tamper-proof audit log"},
+        {"framework": "fedramp_moderate", "requirement_id": "CM", "requirement_name": "Configuration Management",
+         "status": "partial", "evidence_type": "code", "evidence_location": "backend/requirements.txt",
+         "verification_query": "Dependencies pinned; missing baseline configuration documentation"},
+        {"framework": "fedramp_moderate", "requirement_id": "CP", "requirement_name": "Contingency Planning",
+         "status": "gap", "evidence_type": "document", "evidence_location": "docs/",
+         "notes": "No contingency plan, backup procedures, or DR documentation"},
+        {"framework": "fedramp_moderate", "requirement_id": "IA", "requirement_name": "Identification & Authentication",
+         "status": "gap", "evidence_type": "code", "evidence_location": "backend/app/",
+         "notes": "No authentication system. Must implement MFA, credential management."},
+        {"framework": "fedramp_moderate", "requirement_id": "IR", "requirement_name": "Incident Response",
+         "status": "partial", "evidence_type": "document", "evidence_location": "docs/governance.md",
+         "verification_query": "P1-P4 severity levels defined; missing formal IR plan and testing"},
+        {"framework": "fedramp_moderate", "requirement_id": "RA", "requirement_name": "Risk Assessment",
+         "status": "addressed", "evidence_type": "document", "evidence_location": "docs/risk-map.md",
+         "verification_query": "15 failure modes with likelihood x impact scoring"},
+        {"framework": "fedramp_moderate", "requirement_id": "SC", "requirement_name": "System & Communications Protection",
+         "status": "partial", "evidence_type": "code", "evidence_location": "backend/app/services/input_guard.py",
+         "verification_query": "Input guard provides application-layer boundary protection; missing TLS, encryption at rest"},
+        {"framework": "fedramp_moderate", "requirement_id": "SI", "requirement_name": "System & Information Integrity",
+         "status": "partial", "evidence_type": "code", "evidence_location": "backend/app/services/input_guard.py",
+         "verification_query": "Input validation, output risk tagging, PII scanning; missing flaw remediation tracking"},
+        {"framework": "fedramp_moderate", "requirement_id": "CA", "requirement_name": "Security Assessment & Authorization",
+         "status": "gap", "evidence_type": "document", "evidence_location": "docs/",
+         "notes": "No SSP, SAR, POA&M, or ATO. Required for FedRAMP authorization."},
+
+        # SOC 2 Type II (Trust Services Criteria)
+        {"framework": "soc2_type2", "requirement_id": "CC3", "requirement_name": "Risk Assessment",
+         "status": "addressed", "evidence_type": "document", "evidence_location": "docs/risk-map.md",
+         "verification_query": "Risk register with treatment plans and quarterly reassessment"},
+        {"framework": "soc2_type2", "requirement_id": "CC4", "requirement_name": "Monitoring Activities",
+         "status": "addressed", "evidence_type": "endpoint", "evidence_location": "/admin/scoring-health",
+         "verification_query": "Drift detection, circuit breaker, compliance snapshots"},
+        {"framework": "soc2_type2", "requirement_id": "CC6", "requirement_name": "Logical & Physical Access",
+         "status": "gap", "evidence_type": "code", "evidence_location": "backend/app/",
+         "notes": "No authentication/authorization. Critical gap for multi-user."},
+        {"framework": "soc2_type2", "requirement_id": "CC7", "requirement_name": "System Operations",
+         "status": "partial", "evidence_type": "endpoint", "evidence_location": "/admin/health-check",
+         "verification_query": "Health check, alerts, monitoring; missing vulnerability management"},
+        {"framework": "soc2_type2", "requirement_id": "CC9", "requirement_name": "Risk Mitigation",
+         "status": "addressed", "evidence_type": "document", "evidence_location": "docs/governance.md",
+         "verification_query": "Risk register with treatment decisions, vendor risk documented"},
+        {"framework": "soc2_type2", "requirement_id": "A1", "requirement_name": "Availability",
+         "status": "partial", "evidence_type": "endpoint", "evidence_location": "/admin/health-check",
+         "notes": "Health check exists; missing SLA, capacity planning, backup/recovery"},
+        {"framework": "soc2_type2", "requirement_id": "PI1", "requirement_name": "Processing Integrity",
+         "status": "addressed", "evidence_type": "endpoint", "evidence_location": "/admin/compliance-audit",
+         "verification_query": "Deterministic scoring, output grounding checks, compliance validation"},
+        {"framework": "soc2_type2", "requirement_id": "C1", "requirement_name": "Confidentiality",
+         "status": "partial", "evidence_type": "code", "evidence_location": "backend/app/corvus/capture.py",
+         "notes": "Data local-only, screen captures ephemeral; missing data classification, encryption at rest"},
+        {"framework": "soc2_type2", "requirement_id": "P1", "requirement_name": "Privacy",
+         "status": "partial", "evidence_type": "endpoint", "evidence_location": "/admin/compliance-audit",
+         "notes": "PII scanning exists; missing privacy notice, consent management, retention policy"},
+
+        # CMMC Level 2 (NIST 800-171r2 — 110 CUI security requirements)
+        {"framework": "cmmc_level2", "requirement_id": "3.1", "requirement_name": "Access Control (22 practices)",
+         "status": "gap", "evidence_type": "code", "evidence_location": "backend/app/",
+         "notes": "No authentication. Must implement RBAC, MFA, least privilege for CUI handling."},
+        {"framework": "cmmc_level2", "requirement_id": "3.3", "requirement_name": "Audit & Accountability (9 practices)",
+         "status": "partial", "evidence_type": "table", "evidence_location": "queries",
+         "verification_query": "Application-level audit trail exists; missing system-level audit events"},
+        {"framework": "cmmc_level2", "requirement_id": "3.4", "requirement_name": "Configuration Management (9 practices)",
+         "status": "partial", "evidence_type": "code", "evidence_location": "backend/requirements.txt",
+         "verification_query": "Git-tracked, deps pinned; missing baseline configs and change control"},
+        {"framework": "cmmc_level2", "requirement_id": "3.5", "requirement_name": "Identification & Authentication (11 practices)",
+         "status": "gap", "evidence_type": "code", "evidence_location": "backend/app/",
+         "notes": "No user identification or authentication. Critical gap for CUI environments."},
+        {"framework": "cmmc_level2", "requirement_id": "3.11", "requirement_name": "Risk Assessment (3 practices)",
+         "status": "addressed", "evidence_type": "document", "evidence_location": "docs/risk-map.md",
+         "verification_query": "Risk register, vulnerability scanning via compliance audit"},
+        {"framework": "cmmc_level2", "requirement_id": "3.12", "requirement_name": "Security Assessment (4 practices)",
+         "status": "partial", "evidence_type": "endpoint", "evidence_location": "/admin/compliance-snapshots",
+         "verification_query": "Self-assessment via snapshots; missing POA&M and continuous monitoring program"},
+        {"framework": "cmmc_level2", "requirement_id": "3.13", "requirement_name": "System & Comms Protection (16 practices)",
+         "status": "partial", "evidence_type": "code", "evidence_location": "backend/app/services/input_guard.py",
+         "verification_query": "App-layer boundary protection; missing TLS, encryption at rest, network segmentation"},
+        {"framework": "cmmc_level2", "requirement_id": "3.14", "requirement_name": "System & Info Integrity (7 practices)",
+         "status": "partial", "evidence_type": "code", "evidence_location": "backend/app/services/input_guard.py",
+         "verification_query": "Input validation, PII detection, scoring health monitoring"},
     ]
 
 
@@ -840,4 +944,196 @@ async def code_review_checklist(db: AsyncSession = Depends(get_db)):
             "total_invocations": sum(n.invocations or 0 for n in neurons),
             "refinement_count": refinement_count,
         },
+    }
+
+
+# ── Audit Log (AU-2, AU-3, AU-6, AU-7) ──
+
+@router.get("/audit-log")
+async def list_audit_log(
+    action: str | None = None,
+    endpoint_filter: str | None = None,
+    since: str | None = None,
+    status_code_min: int | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """Query audit log records with optional filters. Supports AU-6 audit review and AU-7 report generation."""
+    q = select(AuditLog).order_by(desc(AuditLog.timestamp))
+    if action:
+        q = q.where(AuditLog.action == action.upper())
+    if endpoint_filter:
+        q = q.where(AuditLog.endpoint.contains(endpoint_filter))
+    if since:
+        q = q.where(AuditLog.timestamp >= datetime.fromisoformat(since))
+    if status_code_min:
+        q = q.where(AuditLog.status_code >= status_code_min)
+    q = q.offset(offset).limit(limit)
+    result = await db.execute(q)
+    rows = result.scalars().all()
+    return [_audit_to_dict(r) for r in rows]
+
+
+@router.get("/audit-log/summary")
+async def audit_log_summary(
+    since: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Audit log summary statistics for dashboard and AU-6 review."""
+    base = select(AuditLog)
+    if since:
+        base = base.where(AuditLog.timestamp >= datetime.fromisoformat(since))
+
+    # Total count
+    total_result = await db.execute(select(func.count(AuditLog.id)).select_from(base.subquery()))
+    total = total_result.scalar() or 0
+
+    # Count by action
+    action_result = await db.execute(
+        select(AuditLog.action, func.count(AuditLog.id))
+        .where(AuditLog.timestamp >= datetime.fromisoformat(since) if since else True)
+        .group_by(AuditLog.action)
+    )
+    by_action = {row[0]: row[1] for row in action_result.all()}
+
+    # Count errors (4xx/5xx)
+    error_result = await db.execute(
+        select(func.count(AuditLog.id))
+        .where(AuditLog.status_code >= 400)
+        .where(AuditLog.timestamp >= datetime.fromisoformat(since) if since else True)
+    )
+    error_count = error_result.scalar() or 0
+
+    # Most recent entry
+    latest_result = await db.execute(
+        select(AuditLog.timestamp).order_by(desc(AuditLog.timestamp)).limit(1)
+    )
+    latest = latest_result.scalar_one_or_none()
+
+    # Top endpoints
+    endpoint_result = await db.execute(
+        select(AuditLog.endpoint, func.count(AuditLog.id).label("cnt"))
+        .where(AuditLog.timestamp >= datetime.fromisoformat(since) if since else True)
+        .group_by(AuditLog.endpoint)
+        .order_by(desc("cnt"))
+        .limit(10)
+    )
+    top_endpoints = [{"endpoint": row[0], "count": row[1]} for row in endpoint_result.all()]
+
+    return {
+        "total_records": total,
+        "by_action": by_action,
+        "error_count": error_count,
+        "latest_entry": latest.isoformat() if latest else None,
+        "top_endpoints": top_endpoints,
+    }
+
+
+def _audit_to_dict(r: AuditLog) -> dict:
+    return {
+        "id": r.id,
+        "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+        "action": r.action,
+        "endpoint": r.endpoint,
+        "status_code": r.status_code,
+        "user_agent": r.user_agent,
+        "client_ip": r.client_ip,
+        "request_body_summary": r.request_body_summary,
+        "response_time_ms": r.response_time_ms,
+        "error_detail": r.error_detail,
+    }
+
+
+# ── Security Framework Catalogs (FedRAMP, SOC 2, CMMC) ──
+
+@router.get("/frameworks")
+async def list_frameworks():
+    """Return available security compliance frameworks with summary statistics."""
+    from app.data.fedramp_moderate_baseline import get_fedramp_summary
+    from app.data.soc2_type2_criteria import get_soc2_summary
+    from app.data.cmmc_level2_practices import get_cmmc_summary
+    return {
+        "frameworks": [
+            get_fedramp_summary(),
+            get_soc2_summary(),
+            get_cmmc_summary(),
+        ]
+    }
+
+
+@router.get("/frameworks/fedramp")
+async def fedramp_controls(
+    family: str | None = None,
+    status: str | None = None,
+):
+    """Return FedRAMP Moderate baseline controls, optionally filtered by family or status."""
+    from app.data.fedramp_moderate_baseline import get_fedramp_controls, get_fedramp_summary
+    controls = get_fedramp_controls()
+    if family:
+        controls = [c for c in controls if c["family"] == family.upper()]
+    if status:
+        controls = [c for c in controls if c["status"] == status]
+    return {"summary": get_fedramp_summary(), "controls": controls}
+
+
+@router.get("/frameworks/soc2")
+async def soc2_criteria(
+    category: str | None = None,
+    status: str | None = None,
+):
+    """Return SOC 2 Type II Trust Services Criteria, optionally filtered by category or status."""
+    from app.data.soc2_type2_criteria import get_soc2_criteria, get_soc2_summary
+    criteria = get_soc2_criteria()
+    if category:
+        criteria = [c for c in criteria if c["category"].lower() == category.lower()]
+    if status:
+        criteria = [c for c in criteria if c["status"] == status]
+    return {"summary": get_soc2_summary(), "criteria": criteria}
+
+
+@router.get("/frameworks/cmmc")
+async def cmmc_practices(
+    family: str | None = None,
+    status: str | None = None,
+):
+    """Return CMMC Level 2 practices (NIST 800-171r2), optionally filtered by family or status."""
+    from app.data.cmmc_level2_practices import get_cmmc_practices, get_cmmc_summary
+    practices = get_cmmc_practices()
+    if family:
+        practices = [p for p in practices if p["family"] == family]
+    if status:
+        practices = [p for p in practices if p["status"] == status]
+    return {"summary": get_cmmc_summary(), "practices": practices}
+
+
+@router.get("/frameworks/unified")
+async def unified_framework_view(status: str | None = None):
+    """Return all three frameworks in a unified view with cross-framework control mapping."""
+    from app.data.fedramp_moderate_baseline import get_fedramp_controls, get_fedramp_summary
+    from app.data.soc2_type2_criteria import get_soc2_criteria, get_soc2_summary
+    from app.data.cmmc_level2_practices import get_cmmc_practices, get_cmmc_summary
+
+    fedramp = get_fedramp_controls()
+    soc2 = get_soc2_criteria()
+    cmmc = get_cmmc_practices()
+
+    if status:
+        fedramp = [c for c in fedramp if c["status"] == status]
+        soc2 = [c for c in soc2 if c["status"] == status]
+        cmmc = [p for p in cmmc if p["status"] == status]
+
+    # Aggregate status counts across all frameworks
+    all_items = fedramp + soc2 + cmmc
+    total_counts: dict[str, int] = {}
+    for item in all_items:
+        s = item["status"]
+        total_counts[s] = total_counts.get(s, 0) + 1
+
+    return {
+        "total_controls": len(all_items),
+        "status_counts": total_counts,
+        "fedramp": {"summary": get_fedramp_summary(), "controls": fedramp},
+        "soc2": {"summary": get_soc2_summary(), "criteria": soc2},
+        "cmmc": {"summary": get_cmmc_summary(), "practices": cmmc},
     }

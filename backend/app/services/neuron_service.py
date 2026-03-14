@@ -151,6 +151,7 @@ async def score_candidates(
     if not candidates:
         return []
 
+    input_count = len(candidates)
     candidate_ids = [n.id for n in candidates]
     query_window = max(0, total_queries - settings.burst_window_queries)
 
@@ -260,6 +261,10 @@ async def score_candidates(
         scores.append(score)
 
     scores.sort(key=lambda s: s.combined, reverse=True)
+
+    # Postconditions: all scores non-negative, output length bounded by input
+    assert all(s.combined >= 0 for s in scores), "All combined scores must be non-negative"
+    assert len(scores) <= input_count, f"Output length {len(scores)} exceeds input length {input_count}"
     return scores
 
 
@@ -279,6 +284,9 @@ async def spread_activation(
     Each hop compounds decay: hop-N activation = source_activation * edge_weight * decay.
     Uses max (not sum) across paths to prevent hub bias.
     """
+    assert top_k_count > 0, f"top_k_count must be positive, got {top_k_count}"
+    input_length = len(scored)
+
     if not settings.spread_enabled or not scored:
         return scored
 
@@ -429,6 +437,7 @@ async def spread_activation(
     # Displaced neurons go back to below_cutoff
     displaced = merged[top_k_count:]
     result = new_top_k + displaced + below_cutoff
+    assert len(result) >= input_length, f"Spread activation lost neurons: {len(result)} < {input_length}"
     return result
 
 
@@ -446,6 +455,7 @@ async def apply_diversity_floor(
     5. For underrepresented departments, pull in highest-scoring candidates from full list
     6. Displace lowest-scoring non-regulatory, non-underrepresented neurons
     """
+    assert top_k_count > 0, f"top_k_count must be positive, got {top_k_count}"
     top_k = all_scored[:top_k_count]
     if not top_k:
         return top_k
@@ -562,6 +572,8 @@ async def record_firing(
     global_query_offset: int = 0,
 ) -> NeuronFiring:
     """Record a neuron firing event."""
+    assert neuron_id > 0, f"neuron_id must be positive, got {neuron_id}"
+    assert query_id > 0, f"query_id must be positive, got {query_id}"
     firing = NeuronFiring(
         neuron_id=neuron_id,
         query_id=query_id,
@@ -589,6 +601,9 @@ async def get_neuron_tree(
     If max_depth is set, only builds tree to that depth (0=roots only, 2=roots+children+grandchildren).
     At 200K neurons, callers should use max_depth=2 or the /neurons/children endpoint.
     """
+    if max_depth is not None:
+        assert 0 <= max_depth <= 20, f"max_depth must be in [0, 20], got {max_depth}"
+
     conditions = [Neuron.layer >= 0]  # Exclude concept neurons (layer=-1); shown separately
     if department:
         conditions.append(Neuron.department == department)
@@ -607,7 +622,8 @@ async def get_neuron_tree(
     for n in all_neurons:
         children_map.setdefault(n.parent_id, []).append(n)
 
-    def build_node(neuron: Neuron) -> dict:
+    def build_node(neuron: Neuron, depth: int = 0, max_depth: int = 10) -> dict:
+        assert depth <= max_depth, f"build_node exceeded max recursion depth {max_depth}"
         node = {
             "id": neuron.id,
             "layer": neuron.layer,
@@ -619,8 +635,8 @@ async def get_neuron_tree(
             "avg_utility": neuron.avg_utility,
         }
         kids = children_map.get(neuron.id, [])
-        if kids:
-            node["children"] = [build_node(c) for c in kids]
+        if kids and depth < max_depth:
+            node["children"] = [build_node(c, depth + 1, max_depth) for c in kids]
         return node
 
     roots = children_map.get(None, [])

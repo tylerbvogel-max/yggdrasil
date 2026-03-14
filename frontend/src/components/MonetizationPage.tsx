@@ -11,11 +11,11 @@ export default function MonetizationPage() {
         <div className="result-card" style={{ marginBottom: 12, padding: '14px 18px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
             <h4 style={{ color: 'var(--text)', margin: 0 }}>Cost to Develop</h4>
-            <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent)' }}>$180K &ndash; $260K</span>
+            <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent)' }}>$280K &ndash; $400K</span>
           </div>
           <p style={{ color: 'var(--text-dim)', fontSize: '0.82rem', lineHeight: 1.6, marginBottom: 8 }}>
-            Estimated 1,000&ndash;1,200+ hours of senior-level engineering at $150&ndash;$220/hr (blended US contractor rate for
-            full-stack + AI/ML + domain expertise). This is what it would cost to hire someone to rebuild this from scratch.
+            Estimated 1,400&ndash;1,800+ hours of senior-level engineering at $150&ndash;$220/hr (blended US contractor rate for
+            full-stack + AI/ML + domain expertise). This is what it would cost to hire someone to rebuild Yggdrasil + Corvus from scratch.
           </p>
           <table className="score-table" style={{ fontSize: '0.78rem' }}>
             <thead><tr><th>Work Area</th><th>Est. Hours</th><th>Rationale</th></tr></thead>
@@ -56,6 +56,21 @@ export default function MonetizationPage() {
                 <td style={{ color: 'var(--text-dim)' }}>NIST AI RMF (25 subcategories), AIUC-1 (45 requirements, 6 domains), ISO 42001 crosswalk, input guards, reference detection hooks, fairness analysis</td>
               </tr>
               <tr>
+                <td>Corvus screen capture + OCR pipeline</td>
+                <td>120&ndash;160</td>
+                <td style={{ color: 'var(--text-dim)' }}>Chrome extension (desktopCapture API), JPEG frame processing, Tesseract OCR, perceptual image hashing for dedup, text similarity dedup, app classifier with custom app teaching, crop region management</td>
+              </tr>
+              <tr>
+                <td>Corvus interpretation engine</td>
+                <td>100&ndash;140</td>
+                <td style={{ color: 'var(--text-dim)' }}>Dual-mode interpretation (vision + text), adaptive cadence with novelty scoring, interrupt intelligence, session management with rolling briefs, attention steering (watch/ignore lists), entity extraction + cross-app tracking, end-of-day digest generation</td>
+              </tr>
+              <tr>
+                <td>Corvus &harr; Yggdrasil integration</td>
+                <td>40&ndash;60</td>
+                <td style={{ color: 'var(--text-dim)' }}>Domain entity detection triggers Yggdrasil context enrichment, observation-to-neuron pipeline with provenance, digest submission to neuron graph, configurable enrich modes (always/entities/never)</td>
+              </tr>
+              <tr>
                 <td>PostgreSQL + async backend</td>
                 <td>80&ndash;100</td>
                 <td style={{ color: 'var(--text-dim)' }}>17 backend services, 7 API routers, async SQLAlchemy + asyncpg, multi-tenant user_id columns, centralized model registry</td>
@@ -73,9 +88,11 @@ export default function MonetizationPage() {
             </tbody>
           </table>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: 8, fontStyle: 'italic' }}>
-            Low end: 1,000 hrs &times; $150/hr = $150K, padded to $180K for project management overhead.
-            High end: 1,200 hrs &times; $200/hr = $240K, padded to $260K. Rates reflect senior engineers with both AI/ML pipeline
-            experience and regulated-industry domain knowledge &mdash; a rare combination that commands premium rates.
+            Low end: 1,400 hrs &times; $160/hr = $224K, padded to $280K for project management overhead.
+            High end: 1,800 hrs &times; $200/hr = $360K, padded to $400K. Corvus adds ~360 hours of additional engineering
+            (screen capture pipeline, dual-mode interpretation, adaptive cadence, entity extraction, session management,
+            Chrome extension, Yggdrasil integration). Rates reflect senior engineers with AI/ML pipeline
+            experience, computer vision/OCR knowledge, and regulated-industry domain expertise.
           </div>
         </div>
 
@@ -83,22 +100,27 @@ export default function MonetizationPage() {
         <div className="result-card" style={{ marginBottom: 12, padding: '14px 18px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
             <h4 style={{ color: 'var(--text)', margin: 0 }}>IP Sale (one-time)</h4>
-            <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent)' }}>$500K &ndash; $900K</span>
+            <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent)' }}>$750K &ndash; $1.5M</span>
           </div>
           <p style={{ color: 'var(--text-dim)', fontSize: '0.82rem', lineHeight: 1.6, marginBottom: 8 }}>
-            IP sale value is typically 2&ndash;4x development cost, reflecting the buyer's avoided risk, time-to-market
-            acceleration, and the value of a working system vs. a greenfield build. The multiplier accounts for:
+            IP sale value is typically 2&ndash;4x development cost, reflecting the buyer&apos;s avoided risk, time-to-market
+            acceleration, and the value of a working system vs. a greenfield build. With Corvus, the multiplier is driven
+            higher by demonstrable labor-displacement ROI &mdash; a buyer isn&apos;t just acquiring a knowledge retrieval system,
+            they&apos;re acquiring a workforce augmentation platform with quantifiable payback:
           </p>
           <ul style={{ paddingLeft: 20, color: 'var(--text-dim)', fontSize: '0.8rem', lineHeight: 1.7, marginBottom: 8 }}>
-            <li><strong style={{ color: 'var(--text)' }}>Eliminated build risk</strong> &mdash; Buyer gets a proven, working system. No architectural false starts, no "6 months in and we need to pivot the scoring model." A ground-up build has ~30% chance of significant rework; buying eliminates that.</li>
+            <li><strong style={{ color: 'var(--text)' }}>Quantifiable labor savings</strong> &mdash; Corvus displaces 25&ndash;40% of compliance analyst, research analyst, program coordinator, and quality auditor workload. At a mid-size org, that&apos;s $350K&ndash;$700K/year in savings. A buyer acquiring this IP can immediately deploy it internally to reduce headcount growth, or resell it to customers with a concrete ROI pitch backed by the labor savings model.</li>
+            <li><strong style={{ color: 'var(--text)' }}>Eliminated build risk</strong> &mdash; Buyer gets a proven, working system. No architectural false starts, no &ldquo;6 months in and we need to pivot the scoring model.&rdquo; A ground-up build has ~30% chance of significant rework; buying eliminates that.</li>
             <li><strong style={{ color: 'var(--text)' }}>Time-to-market</strong> &mdash; 12&ndash;18 months of development compressed to an integration timeline. In regulated industries where compliance certification alone takes 3&ndash;6 months, the calendar savings are worth more than the dollar savings.</li>
-            <li><strong style={{ color: 'var(--text)' }}>Domain-specific neuron corpus</strong> &mdash; 2,055 neurons across 9 aerospace departments with co-firing relationships isn't just code &mdash; it's curated institutional knowledge. Recreating the corpus requires the same domain research regardless of how good your engineers are.</li>
+            <li><strong style={{ color: 'var(--text)' }}>Domain-specific neuron corpus</strong> &mdash; 2,055 neurons across 9 aerospace departments with co-firing relationships isn&apos;t just code &mdash; it&apos;s curated institutional knowledge. Recreating the corpus requires the same domain research regardless of how good your engineers are.</li>
             <li><strong style={{ color: 'var(--text)' }}>Compliance head start</strong> &mdash; NIST AI RMF gap analysis, AIUC-1 assessment with 45 requirements, ISO 42001 crosswalk already mapped. A buyer in defense/aerospace needs this anyway; getting it pre-built with the product saves 200+ hours of compliance work.</li>
-            <li><strong style={{ color: 'var(--text)' }}>MCP integration layer</strong> &mdash; The MCP server with structural resolver and project caching represents a ready-made developer integration surface. Building MCP tooling from scratch requires deep protocol knowledge and iteration on the tool API design.</li>
+            <li><strong style={{ color: 'var(--text)' }}>Two-product platform</strong> &mdash; Yggdrasil (knowledge retrieval) and Corvus (continuous monitoring) are distinct product surfaces that share infrastructure. A buyer gets two monetizable products from one acquisition, each with its own expansion path: Yggdrasil scales via MCP integrations, Corvus scales via per-seat deployment across teams.</li>
             <li><strong style={{ color: 'var(--text)' }}>Evaluation infrastructure</strong> &mdash; Blind A/B framework, drift detection, autopilot with gap detection, provenance tracking. This is the kind of infrastructure that gets deprioritized in internal builds but is critical for production AI systems.</li>
           </ul>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontStyle: 'italic' }}>
-            Low end: ~2.5x development cost ($180K &times; 2.8 &asymp; $500K). High end: ~3.5x ($260K &times; 3.5 &asymp; $900K).
+            Low end: ~2.7x development cost ($280K &times; 2.7 &asymp; $750K). High end: ~3.8x ($400K &times; 3.8 &asymp; $1.5M).
+            The multiplier is higher than a pure-software acquisition because the labor savings model provides the buyer
+            with an immediate, quantifiable return &mdash; they can project internal savings or customer ROI from day one.
             Comparable acquisitions: AI startups with working products in regulated verticals have been acquired for $500K&ndash;$2M
             at pre-revenue stage, with the premium driven by compliance readiness and domain specificity.
           </div>
@@ -108,11 +130,12 @@ export default function MonetizationPage() {
         <div className="result-card" style={{ marginBottom: 12, padding: '14px 18px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
             <h4 style={{ color: 'var(--text)', margin: 0 }}>SaaS ARR (20 customers)</h4>
-            <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent)' }}>$1.2M &ndash; $3M</span>
+            <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent)' }}>$2.4M &ndash; $6M</span>
           </div>
           <p style={{ color: 'var(--text-dim)', fontSize: '0.82rem', lineHeight: 1.6, marginBottom: 8 }}>
-            Per-seat pricing of $5K&ndash;$12.5K/month across 20 enterprise customers. The range reflects tiered pricing
-            based on feature access and usage volume.
+            Per-seat pricing of $5K&ndash;$12.5K/month across 20 enterprise customers, with Corvus driving multi-seat
+            deployments (average 2&ndash;4 seats per org). Corvus&apos;s demonstrable labor savings model (2&ndash;5x ROI) strengthens
+            close rates and justifies multi-seat expansion &mdash; each additional monitored workstation compounds the savings.
           </p>
           <table className="score-table" style={{ fontSize: '0.78rem', marginBottom: 8 }}>
             <thead><tr><th>Tier</th><th>Monthly/Seat</th><th>Includes</th><th>Target Customer</th></tr></thead>
@@ -126,28 +149,57 @@ export default function MonetizationPage() {
               <tr>
                 <td style={{ fontWeight: 600 }}>Professional</td>
                 <td>$8K</td>
-                <td style={{ color: 'var(--text-dim)' }}>+ Autopilot gap detection, drift monitoring, evaluation framework, per-project caching, auto-clustering insights, batch ingestion</td>
-                <td style={{ color: 'var(--text-dim)' }}>Defense contractors needing autonomous knowledge maintenance + audit trails</td>
+                <td style={{ color: 'var(--text-dim)' }}>+ Corvus screen monitoring (single seat), autopilot gap detection, drift monitoring, evaluation framework, per-project caching, auto-clustering insights, batch ingestion</td>
+                <td style={{ color: 'var(--text-dim)' }}>Defense contractors needing autonomous audit trail generation + knowledge maintenance</td>
               </tr>
               <tr>
                 <td style={{ fontWeight: 600 }}>Enterprise</td>
                 <td>$12.5K</td>
-                <td style={{ color: 'var(--text-dim)' }}>+ Org-scoped tenant isolation, RBAC on neurons, full NIST/AIUC-1 compliance posture, regulatory monitoring, transparency reports, custom neuron graphs</td>
-                <td style={{ color: 'var(--text-dim)' }}>Prime contractors, government agencies requiring certified AI with classification controls</td>
+                <td style={{ color: 'var(--text-dim)' }}>+ Multi-seat Corvus deployment, org-scoped tenant isolation, RBAC on neurons, full NIST/AIUC-1 compliance posture, regulatory monitoring, transparency reports, custom neuron graphs</td>
+                <td style={{ color: 'var(--text-dim)' }}>Prime contractors, government agencies requiring certified AI with classification controls and continuous audit monitoring</td>
+              </tr>
+            </tbody>
+          </table>
+          <table className="score-table" style={{ fontSize: '0.78rem', marginBottom: 8 }}>
+            <thead><tr><th>Customer Size</th><th>Typical Seats</th><th>Annual Contract</th><th>Their Annual Savings</th><th>Customer ROI</th></tr></thead>
+            <tbody>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Small contractor</td>
+                <td>1&ndash;2</td>
+                <td>$60K &ndash; $150K</td>
+                <td style={{ color: '#22c55e' }}>$120K &ndash; $200K</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>2&ndash;3x</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Mid-size supplier</td>
+                <td>2&ndash;3</td>
+                <td>$192K &ndash; $450K</td>
+                <td style={{ color: '#22c55e' }}>$350K &ndash; $700K</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>2&ndash;4x</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Prime contractor</td>
+                <td>3&ndash;5</td>
+                <td>$450K &ndash; $750K</td>
+                <td style={{ color: '#22c55e' }}>$1M &ndash; $3M</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>3&ndash;5x</td>
               </tr>
             </tbody>
           </table>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontStyle: 'italic', marginBottom: 8 }}>
-            ARR calculation: 20 customers &times; weighted average $5K&ndash;$12.5K/mo &times; 12 months = $1.2M&ndash;$3M.
-            Pricing is benchmarked against enterprise AI/knowledge management platforms in regulated industries:
-            Palantir Foundry ($5&ndash;$15K/seat/mo), Databricks ($5&ndash;$20K/mo for enterprise), Veeva ($3&ndash;$10K/seat/mo in life sciences).
-            Compliance certification and defense-sector specificity justify the upper range &mdash; these customers expect to pay premium
-            for tools that satisfy procurement requirements out of the box.
+            ARR calculation: 20 customers &times; average 2&ndash;4 seats &times; weighted average $5K&ndash;$12.5K/mo &times; 12 months = $2.4M&ndash;$6M.
+            The key uplift from the earlier $1.2M&ndash;$3M estimate is multi-seat Corvus deployments: each monitored workstation
+            generates incremental labor savings at near-zero marginal cost. Customers who buy one seat for Yggdrasil expand
+            to 2&ndash;4 seats once Corvus demonstrates audit workload reduction across their compliance and research teams.
+            Pricing is benchmarked against Palantir Foundry ($5&ndash;$15K/seat/mo), Databricks ($5&ndash;$20K/mo for enterprise),
+            Veeva ($3&ndash;$10K/seat/mo in life sciences).
           </div>
           <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem', lineHeight: 1.6 }}>
             <strong style={{ color: 'var(--text)' }}>Why 20 customers is conservative:</strong> The US aerospace and defense industry
             has 200+ prime contractors and thousands of Tier 1&ndash;3 suppliers. Even 20 customers represents {'<'}1% market penetration.
-            The constraint isn't addressable market &mdash; it's sales capacity and compliance certification timeline.
+            The constraint isn&apos;t addressable market &mdash; it&apos;s sales capacity and compliance certification timeline.
+            The labor savings pitch shortens sales cycles because procurement teams can justify the spend with a concrete
+            headcount-offset model rather than subjective &ldquo;productivity improvement&rdquo; claims.
           </p>
         </div>
 
@@ -155,14 +207,14 @@ export default function MonetizationPage() {
         <div className="result-card" style={{ marginBottom: 12, padding: '14px 18px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
             <h4 style={{ color: 'var(--text)', margin: 0 }}>Company Valuation (5&ndash;8x ARR)</h4>
-            <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent)' }}>$6M &ndash; $24M</span>
+            <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent)' }}>$12M &ndash; $48M</span>
           </div>
           <p style={{ color: 'var(--text-dim)', fontSize: '0.82rem', lineHeight: 1.6, marginBottom: 8 }}>
             SaaS companies are typically valued at a multiple of ARR. The 5&ndash;8x range reflects the characteristics
-            of the business:
+            of the business, with Corvus&apos;s labor-displacement model significantly strengthening several multiple drivers:
           </p>
           <table className="score-table" style={{ fontSize: '0.78rem', marginBottom: 8 }}>
-            <thead><tr><th>Multiple Driver</th><th>Impact</th><th>Yggdrasil Position</th></tr></thead>
+            <thead><tr><th>Multiple Driver</th><th>Impact</th><th>Yggdrasil + Corvus Position</th></tr></thead>
             <tbody>
               <tr>
                 <td style={{ fontWeight: 600 }}>Vertical SaaS premium</td>
@@ -170,19 +222,29 @@ export default function MonetizationPage() {
                 <td style={{ color: 'var(--text-dim)' }}>Domain-specific AI for aerospace/defense commands higher multiples than horizontal tools (Veeva trades at 8&ndash;12x; vertical &gt; horizontal)</td>
               </tr>
               <tr>
+                <td style={{ fontWeight: 600 }}>Demonstrable customer ROI</td>
+                <td>&uarr;&uarr; multiple</td>
+                <td style={{ color: 'var(--text-dim)' }}>Corvus labor savings provide 2&ndash;5x customer payback within the first year. SaaS companies with quantifiable ROI stories (not just &ldquo;productivity&rdquo;) command premium multiples because they can prove value to procurement committees and survive budget cuts</td>
+              </tr>
+              <tr>
                 <td style={{ fontWeight: 600 }}>Compliance moat</td>
                 <td>&uarr; multiple</td>
-                <td style={{ color: 'var(--text-dim)' }}>Pre-certified NIST/AIUC-1 creates switching costs. Once a customer's auditors approve, moving to an uncertified competitor triggers re-audit</td>
+                <td style={{ color: 'var(--text-dim)' }}>Pre-certified NIST/AIUC-1 creates switching costs. Once a customer&apos;s auditors approve, moving to an uncertified competitor triggers re-audit</td>
               </tr>
               <tr>
                 <td style={{ fontWeight: 600 }}>Net revenue retention</td>
+                <td>&uarr;&uarr; multiple</td>
+                <td style={{ color: 'var(--text-dim)' }}>Corvus drives seat expansion: customers start with 1 seat, expand to 2&ndash;5 as they see labor savings compound across teams. Combined with neuron graph deepening and regulatory monitoring, expected NRR {'>'} 130%. High NRR is the single strongest predictor of SaaS valuation multiple</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Multi-product platform</td>
                 <td>&uarr; multiple</td>
-                <td style={{ color: 'var(--text-dim)' }}>Regulatory monitoring + autopilot create recurring value. Neuron graphs deepen over time, increasing switching cost. Expected NRR {'>'} 120%</td>
+                <td style={{ color: 'var(--text-dim)' }}>Two distinct product surfaces (Yggdrasil knowledge retrieval + Corvus continuous monitoring) sharing infrastructure. Multi-product SaaS commands higher multiples because it creates multiple expansion vectors and reduces single-product concentration risk</td>
               </tr>
               <tr>
                 <td style={{ fontWeight: 600 }}>Early stage / scale risk</td>
                 <td>&darr; multiple</td>
-                <td style={{ color: 'var(--text-dim)' }}>Pre-revenue, single-developer team, no proven sales motion yet. This is the primary discount factor</td>
+                <td style={{ color: 'var(--text-dim)' }}>Pre-revenue, single-developer team, no proven sales motion yet. This is the primary discount factor &mdash; partially offset by the concrete ROI model that de-risks the sales thesis</td>
               </tr>
               <tr>
                 <td style={{ fontWeight: 600 }}>Developer tooling angle</td>
@@ -192,15 +254,17 @@ export default function MonetizationPage() {
               <tr>
                 <td style={{ fontWeight: 600 }}>AI infrastructure category</td>
                 <td>&uarr; multiple</td>
-                <td style={{ color: 'var(--text-dim)' }}>AI-native companies in 2024&ndash;2026 see elevated multiples. Context enrichment / RAG infrastructure is a particularly hot category</td>
+                <td style={{ color: 'var(--text-dim)' }}>AI-native companies in 2024&ndash;2026 see elevated multiples. Context enrichment / RAG infrastructure is a particularly hot category. Corvus adds a workforce-augmentation angle that resonates with the &ldquo;AI replacing tasks, not jobs&rdquo; narrative investors favor</td>
               </tr>
             </tbody>
           </table>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontStyle: 'italic' }}>
-            Low end: $1.2M ARR &times; 5x = $6M (accounts for early-stage discount, pre-revenue risk).
-            High end: $3M ARR &times; 8x = $24M (assumes compliance certification complete, proven sales motion, strong NRR).
+            Low end: $2.4M ARR &times; 5x = $12M (accounts for early-stage discount, pre-revenue risk).
+            High end: $6M ARR &times; 8x = $48M (assumes compliance certification complete, proven sales motion, strong NRR, multi-seat expansion validated).
             The wide range reflects uncertainty at pre-revenue stage &mdash; the multiple compresses or expands dramatically
-            based on whether the first 5 customers validate the pricing model.
+            based on whether the first 5 customers validate the labor-savings pricing model.
+            The key insight: Corvus transforms the valuation thesis from &ldquo;AI knowledge tool&rdquo; (commodity risk, 4&ndash;6x)
+            to &ldquo;workforce augmentation platform with compliance moat&rdquo; (defensible, 6&ndash;10x).
           </div>
         </div>
 
@@ -208,6 +272,163 @@ export default function MonetizationPage() {
           Knowledge base built entirely from open-source information (FAR/DFARS, MIL-STDs, NADCAP, AS9100, etc.).
           Value is in the retrieval architecture and compliance posture, not the raw content.
           Google's entire business is built on indexing publicly available web pages.
+        </div>
+      </section>
+
+      <section style={{ marginBottom: 32 }}>
+        <h3 style={{ color: '#22c55e', marginBottom: 12 }}>Customer ROI: Corvus Labor Savings at Scale</h3>
+        <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', lineHeight: 1.6, marginBottom: 16 }}>
+          Corvus automates the continuous screen monitoring, cross-application context synthesis, regulatory pattern detection,
+          and audit trail generation that currently requires dedicated headcount. The ROI calculation below models what an
+          enterprise customer saves by displacing portions of these roles with Corvus at scale.
+        </p>
+
+        {/* Roles Displaced */}
+        <div className="result-card" style={{ marginBottom: 12, padding: '14px 18px' }}>
+          <h4 style={{ color: 'var(--text)', marginBottom: 8 }}>Roles &amp; Workload Displaced</h4>
+          <table className="score-table" style={{ fontSize: '0.78rem', marginBottom: 8 }}>
+            <thead><tr><th>Role</th><th>Loaded Cost/yr</th><th>Current Allocation</th><th>Corvus Coverage</th><th>Savings/FTE</th></tr></thead>
+            <tbody>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Compliance Analyst</td>
+                <td>$130K</td>
+                <td style={{ color: 'var(--text-dim)' }}>~40% monitoring regulatory references, tracking standard changes across documents, maintaining audit trail notes</td>
+                <td style={{ color: 'var(--text-dim)' }}>Entity extraction detects FAR/DFARS/MIL-STD/NIST references automatically; cross-app tracking links regulatory mentions across Outlook, Teams, Jira; session digests produce audit-ready summaries</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>$52K</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Research Analyst</td>
+                <td>$120K</td>
+                <td style={{ color: 'var(--text-dim)' }}>~35% synthesizing information across applications, tracking action items from meetings, following cross-functional threads</td>
+                <td style={{ color: 'var(--text-dim)' }}>Vision/OCR captures live screen content; interpretation engine synthesizes across app boundaries; cross-app entity tracking surfaces recurring themes; Yggdrasil enrichment injects domain context automatically</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>$42K</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Program Coordinator</td>
+                <td>$110K</td>
+                <td style={{ color: 'var(--text-dim)' }}>~25% tracking what teams are working on, identifying schedule/risk signals, preparing status updates from scattered sources</td>
+                <td style={{ color: 'var(--text-dim)' }}>Continuous app-switch detection with time-in-app tracking; alert rules flag keywords in real-time; interrupt intelligence decides when to surface findings; end-of-day digests auto-generate status summaries</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>$28K</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Quality Auditor</td>
+                <td>$140K</td>
+                <td style={{ color: 'var(--text-dim)' }}>~30% reviewing process adherence, checking that references are current, auditing documentation against standards</td>
+                <td style={{ color: 'var(--text-dim)' }}>Domain pattern detection (AS9100, NADCAP, ISO references); Yggdrasil neuron graph validates institutional knowledge against live screen content; provenance tracking maintains full audit chain</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>$42K</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontStyle: 'italic' }}>
+            Loaded costs include salary, benefits, overhead (~1.3&ndash;1.4x base salary). Savings percentages reflect the portion
+            of each role's time spent on tasks Corvus directly automates &mdash; not full role elimination, but workload reduction
+            that either reduces headcount needs at scale or reallocates capacity to higher-value work.
+          </div>
+        </div>
+
+        {/* Scaling Model */}
+        <div className="result-card" style={{ marginBottom: 12, padding: '14px 18px' }}>
+          <h4 style={{ color: 'var(--text)', marginBottom: 8 }}>Savings at Scale (per customer org)</h4>
+          <table className="score-table" style={{ fontSize: '0.78rem', marginBottom: 8 }}>
+            <thead><tr><th>Org Size</th><th>Affected Headcount</th><th>Annual Savings</th><th>Corvus Cost (Enterprise)</th><th>Net ROI</th><th>Payback Period</th></tr></thead>
+            <tbody>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Small contractor (50&ndash;200 ppl)</td>
+                <td style={{ color: 'var(--text-dim)' }}>2&ndash;4 FTEs across compliance, research, PM</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>$120K &ndash; $200K</td>
+                <td>$60K &ndash; $150K</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>2&ndash;3x</td>
+                <td>4&ndash;6 months</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Mid-size supplier (200&ndash;1,000 ppl)</td>
+                <td style={{ color: 'var(--text-dim)' }}>6&ndash;12 FTEs, multiple divisions with duplicated audit/research roles</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>$350K &ndash; $700K</td>
+                <td>$150K &ndash; $300K</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>2&ndash;4x</td>
+                <td>3&ndash;5 months</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Prime contractor (1,000+ ppl)</td>
+                <td style={{ color: 'var(--text-dim)' }}>20&ndash;50+ FTEs across programs, divisions, and compliance teams</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>$1M &ndash; $3M</td>
+                <td>$300K &ndash; $600K</td>
+                <td style={{ fontWeight: 600, color: '#22c55e' }}>3&ndash;5x</td>
+                <td>2&ndash;4 months</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontStyle: 'italic' }}>
+            Corvus cost assumes Enterprise tier ($12.5K/seat/mo) with 1&ndash;4 seats depending on org size.
+            Savings compound because audit and compliance workload scales super-linearly with org size &mdash;
+            larger orgs have more programs, more regulatory touch points, and more cross-functional coordination overhead.
+            Corvus scales at near-zero marginal cost per additional monitored workstation.
+          </div>
+        </div>
+
+        {/* What Corvus Replaces */}
+        <div className="result-card" style={{ marginBottom: 12, padding: '14px 18px' }}>
+          <h4 style={{ color: 'var(--text)', marginBottom: 8 }}>The Manual Process Corvus Replaces</h4>
+          <table className="score-table" style={{ fontSize: '0.78rem', marginBottom: 8 }}>
+            <thead><tr><th>Manual Process</th><th>Current Cost</th><th>Corvus Capability</th><th>Improvement</th></tr></thead>
+            <tbody>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Cross-app context assembly</td>
+                <td style={{ color: 'var(--text-dim)' }}>Analyst manually checks Teams, Outlook, Jira, Databricks for related threads (15&ndash;30 min per synthesis)</td>
+                <td style={{ color: 'var(--text-dim)' }}>Screen capture + OCR + entity extraction across all visible apps, cross-app entity detection links related items automatically</td>
+                <td style={{ color: '#22c55e', fontWeight: 600 }}>Continuous, real-time</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Regulatory reference monitoring</td>
+                <td style={{ color: 'var(--text-dim)' }}>Compliance team manually tracks FAR/DFARS/MIL-STD changes, cross-references against active programs (2&ndash;4 hrs/week per analyst)</td>
+                <td style={{ color: 'var(--text-dim)' }}>Domain pattern detection fires on 10+ regulatory patterns; Yggdrasil enrichment provides instant institutional context for any detected standard</td>
+                <td style={{ color: '#22c55e', fontWeight: 600 }}>{'>'} 90% time reduction</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Status reporting</td>
+                <td style={{ color: 'var(--text-dim)' }}>PMs compile daily/weekly updates from meetings, chat, email (1&ndash;2 hrs/day)</td>
+                <td style={{ color: 'var(--text-dim)' }}>Session digests auto-synthesize what was worked on, decisions made, open threads, and risks &mdash; generated from actual screen activity</td>
+                <td style={{ color: '#22c55e', fontWeight: 600 }}>Auto-generated</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Audit trail maintenance</td>
+                <td style={{ color: 'var(--text-dim)' }}>Manual logging of what was reviewed, when, by whom (ongoing overhead on every regulated task)</td>
+                <td style={{ color: 'var(--text-dim)' }}>Every capture, interpretation, entity detection, and alert is timestamped and stored with full provenance; session briefs maintain rolling context</td>
+                <td style={{ color: '#22c55e', fontWeight: 600 }}>Zero manual effort</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Risk/anomaly detection</td>
+                <td style={{ color: 'var(--text-dim)' }}>Relies on someone noticing something unusual across scattered information sources (human attention is the bottleneck)</td>
+                <td style={{ color: 'var(--text-dim)' }}>Alert rules with regex pattern matching, adaptive interpretation cadence that accelerates during high-novelty periods, interrupt intelligence that decides when findings warrant attention</td>
+                <td style={{ color: '#22c55e', fontWeight: 600 }}>Always-on vigilance</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* SaaS pricing justification */}
+        <div className="result-card" style={{ padding: '14px 18px' }}>
+          <h4 style={{ color: 'var(--text)', marginBottom: 8 }}>Pricing Justification: Why $5K&ndash;$12.5K/seat/mo is Underpriced</h4>
+          <p style={{ color: 'var(--text-dim)', fontSize: '0.82rem', lineHeight: 1.6, marginBottom: 8 }}>
+            A single compliance analyst costs $130K/year loaded. Corvus displaces 40% of that workload = $52K saved.
+            At $12.5K/mo ($150K/yr) for Enterprise tier, a customer needs to reduce just <strong style={{ color: 'var(--text)' }}>3 FTEs&apos;
+            partial workload</strong> to break even &mdash; and mid-size orgs have 6&ndash;12 affected roles. The tool pays for
+            itself within one quarter and generates compounding ROI as the neuron graph deepens and Yggdrasil enrichment
+            becomes more precise.
+          </p>
+          <p style={{ color: 'var(--text-dim)', fontSize: '0.82rem', lineHeight: 1.6, marginBottom: 8 }}>
+            At prime contractor scale (20&ndash;50 affected FTEs), the savings reach <strong style={{ color: 'var(--text)' }}>$1M&ndash;$3M/year</strong> against
+            a Corvus cost of $300K&ndash;$600K. That&apos;s a 3&ndash;5x ROI before accounting for the <em>quality improvement</em> from
+            continuous monitoring vs. periodic manual reviews. Audit findings that would have been caught in a quarterly review
+            are now caught in real-time &mdash; the cost of a late-caught compliance gap in defense contracting can exceed the
+            entire annual Corvus subscription.
+          </p>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontStyle: 'italic' }}>
+            The labor savings model is conservative: it only counts direct workload displacement, not secondary benefits like
+            faster audit cycles, reduced compliance penalties, earlier risk detection, or the institutional knowledge retention
+            effect (Corvus captures context that would otherwise be lost to employee turnover). In regulated industries,
+            a single avoided compliance violation can justify the entire deployment.
+          </div>
         </div>
       </section>
 

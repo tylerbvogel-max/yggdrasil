@@ -1,5 +1,6 @@
 """FastAPI app with lifespan auto-seed."""
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -7,12 +8,19 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from app.middleware.audit import AuditMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from sqlalchemy import select, func, text
+from sqlalchemy.exc import SQLAlchemyError
+
+logger = logging.getLogger(__name__)
 
 from app.database import engine, async_session
 from app.models import Base, Neuron, SystemState, BatchJob, SourceDocument, NeuronSourceLink, ManagementReview, ComplianceSnapshot, EvidenceMapping, ObservationQueue
 from app.models_corvus import CorvusKnownApp, CorvusSession
 from app.routers import query, neurons, admin, autopilot, performance, provenance, compliance, ingest, corvus
+from app.compliance.router import router as compliance_suite_router
+from app.compliance.models import ComplianceSuiteRun, ComplianceProviderResult, ComplianceAttestation  # noqa: F401 — for create_all
 from app.seed.loader import load_seed
 from app.seed.regulatory_seed import seed_regulatory
 
@@ -40,13 +48,8 @@ async def _table_exists(conn, table: str) -> bool:
     return result.fetchone() is not None
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Create tables
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    # Migrate: make neuron_refinements.query_id nullable
+async def _migrate_refinements_and_config(engine):
+    """Migrate refinements nullable constraint and autopilot_config columns."""
     async with engine.begin() as conn:
         try:
             if await _table_exists(conn, "neuron_refinements"):
@@ -60,10 +63,9 @@ async def lifespan(app: FastAPI):
                         "ALTER TABLE neuron_refinements ALTER COLUMN query_id DROP NOT NULL"
                     ))
                     print("Migrated: neuron_refinements.query_id is now nullable")
-        except Exception as e:
-            print(f"Migration check skipped: {e}")
+        except SQLAlchemyError as e:
+            logger.warning("Migration check skipped: %s", e)
 
-    # Migrate: add new columns to autopilot_config if missing
     async with engine.begin() as conn:
         try:
             if await _table_exists(conn, "autopilot_config"):
@@ -77,10 +79,12 @@ async def lifespan(app: FastAPI):
                         "ALTER TABLE autopilot_config ADD COLUMN max_layer INTEGER DEFAULT 5"
                     ))
                     print("Migrated: added autopilot_config.max_layer")
-        except Exception as e:
-            print(f"Autopilot migration skipped: {e}")
+        except SQLAlchemyError as e:
+            logger.warning("Autopilot migration skipped: %s", e)
 
-    # Migrate: add cross_ref_departments and standard_date columns to neurons if missing
+
+async def _migrate_neuron_and_query_columns(engine):
+    """Migrate neuron table columns and queries.model_version."""
     async with engine.begin() as conn:
         try:
             if not await _column_exists(conn, "neurons", "cross_ref_departments"):
@@ -93,10 +97,32 @@ async def lifespan(app: FastAPI):
                     "ALTER TABLE neurons ADD COLUMN standard_date VARCHAR(20)"
                 ))
                 print("Migrated: added neurons.standard_date")
-        except Exception as e:
-            print(f"Neurons migration skipped: {e}")
+            if not await _column_exists(conn, "neurons", "embedding"):
+                await conn.execute(text(
+                    "ALTER TABLE neurons ADD COLUMN embedding TEXT"
+                ))
+                print("Migrated: added neurons.embedding")
+            if not await _column_exists(conn, "neurons", "authority_level"):
+                await conn.execute(text(
+                    "ALTER TABLE neurons ADD COLUMN authority_level VARCHAR(30)"
+                ))
+                print("Migrated: added neurons.authority_level")
+        except SQLAlchemyError as e:
+            logger.warning("Neurons migration skipped: %s", e)
 
-    # Migrate: add edge indexes and last_updated_query column for scaling
+    async with engine.begin() as conn:
+        try:
+            if not await _column_exists(conn, "queries", "model_version"):
+                await conn.execute(text(
+                    "ALTER TABLE queries ADD COLUMN model_version VARCHAR(100)"
+                ))
+                print("Migrated: added queries.model_version")
+        except SQLAlchemyError as e:
+            logger.warning("Query model_version migration skipped: %s", e)
+
+
+async def _migrate_edge_columns(engine):
+    """Migrate edge table columns: scaling indexes, types, provenance, context."""
     async with engine.begin() as conn:
         try:
             if await _table_exists(conn, "neuron_edges"):
@@ -105,7 +131,6 @@ async def lifespan(app: FastAPI):
                         "ALTER TABLE neuron_edges ADD COLUMN last_updated_query INTEGER DEFAULT 0"
                     ))
                     print("Migrated: added neuron_edges.last_updated_query")
-
                 if not await _index_exists(conn, "ix_neuron_edges_target_weight"):
                     await conn.execute(text(
                         "CREATE INDEX ix_neuron_edges_target_weight ON neuron_edges(target_id, weight)"
@@ -114,36 +139,11 @@ async def lifespan(app: FastAPI):
                         "CREATE INDEX ix_neuron_edges_source_weight ON neuron_edges(source_id, weight)"
                     ))
                     print("Migrated: added neuron_edges target/source weight indexes")
-        except Exception as e:
-            print(f"Edge scaling migration skipped: {e}")
-
-    # Migrate: add embedding column to neurons for semantic similarity
-    async with engine.begin() as conn:
-        try:
-            if not await _column_exists(conn, "neurons", "embedding"):
-                await conn.execute(text(
-                    "ALTER TABLE neurons ADD COLUMN embedding TEXT"
-                ))
-                print("Migrated: added neurons.embedding")
-        except Exception as e:
-            print(f"Embedding migration skipped: {e}")
-
-    # Migrate: add edge_type column to neuron_edges for typed edges (stellate vs pyramidal)
-    async with engine.begin() as conn:
-        try:
-            if await _table_exists(conn, "neuron_edges"):
                 if not await _column_exists(conn, "neuron_edges", "edge_type"):
                     await conn.execute(text(
                         "ALTER TABLE neuron_edges ADD COLUMN edge_type VARCHAR(20) DEFAULT 'pyramidal'"
                     ))
                     print("Migrated: added neuron_edges.edge_type")
-        except Exception as e:
-            print(f"Edge type migration skipped: {e}")
-
-    # Migrate: add source and last_adjusted columns to neuron_edges for provenance tracking
-    async with engine.begin() as conn:
-        try:
-            if await _table_exists(conn, "neuron_edges"):
                 if not await _column_exists(conn, "neuron_edges", "source"):
                     await conn.execute(text(
                         "ALTER TABLE neuron_edges ADD COLUMN source VARCHAR(20) DEFAULT 'organic'"
@@ -154,10 +154,46 @@ async def lifespan(app: FastAPI):
                         "ALTER TABLE neuron_edges ADD COLUMN last_adjusted TIMESTAMP DEFAULT now()"
                     ))
                     print("Migrated: added neuron_edges.last_adjusted")
-        except Exception as e:
-            print(f"Edge provenance migration skipped: {e}")
+                if not await _column_exists(conn, "neuron_edges", "context"):
+                    await conn.execute(text(
+                        "ALTER TABLE neuron_edges ADD COLUMN context VARCHAR(300)"
+                    ))
+                    print("Migrated: added neuron_edges.context")
+        except SQLAlchemyError as e:
+            logger.warning("Edge migration skipped: %s", e)
 
-    # Migrate: create inhibitory_regulators table if missing
+
+async def _migrate_obs_queue_columns(engine):
+    """Migrate observation_queue eval columns."""
+    async with engine.begin() as conn:
+        try:
+            if await _table_exists(conn, "observation_queue"):
+                if not await _column_exists(conn, "observation_queue", "eval_json"):
+                    await conn.execute(text(
+                        "ALTER TABLE observation_queue ADD COLUMN eval_json TEXT"
+                    ))
+                    print("Migrated: added observation_queue.eval_json")
+                if not await _column_exists(conn, "observation_queue", "eval_model"):
+                    await conn.execute(text(
+                        "ALTER TABLE observation_queue ADD COLUMN eval_model VARCHAR(20)"
+                    ))
+                    print("Migrated: added observation_queue.eval_model")
+                if not await _column_exists(conn, "observation_queue", "eval_input_tokens"):
+                    await conn.execute(text(
+                        "ALTER TABLE observation_queue ADD COLUMN eval_input_tokens INTEGER DEFAULT 0"
+                    ))
+                    print("Migrated: added observation_queue.eval_input_tokens")
+                if not await _column_exists(conn, "observation_queue", "eval_output_tokens"):
+                    await conn.execute(text(
+                        "ALTER TABLE observation_queue ADD COLUMN eval_output_tokens INTEGER DEFAULT 0"
+                    ))
+                    print("Migrated: added observation_queue.eval_output_tokens")
+        except SQLAlchemyError as e:
+            logger.warning("Observation queue eval migration skipped: %s", e)
+
+
+async def _migrate_create_tables(engine):
+    """Create new tables if missing: inhibitory_regulators, source_documents, etc."""
     async with engine.begin() as conn:
         try:
             if not await _table_exists(conn, "inhibitory_regulators"):
@@ -178,21 +214,9 @@ async def lifespan(app: FastAPI):
                     )
                 """))
                 print("Migrated: created inhibitory_regulators table")
-        except Exception as e:
-            print(f"Inhibitory regulators migration skipped: {e}")
+        except SQLAlchemyError as e:
+            logger.warning("Inhibitory regulators migration skipped: %s", e)
 
-    # Migrate: add model_version column to queries if missing
-    async with engine.begin() as conn:
-        try:
-            if not await _column_exists(conn, "queries", "model_version"):
-                await conn.execute(text(
-                    "ALTER TABLE queries ADD COLUMN model_version VARCHAR(100)"
-                ))
-                print("Migrated: added queries.model_version")
-        except Exception as e:
-            print(f"Query model_version migration skipped: {e}")
-
-    # Migrate: create source_documents table if missing
     async with engine.begin() as conn:
         try:
             if not await _table_exists(conn, "source_documents"):
@@ -216,10 +240,12 @@ async def lifespan(app: FastAPI):
                     "CREATE INDEX ix_source_documents_family ON source_documents(family)"
                 ))
                 print("Migrated: created source_documents table")
-        except Exception as e:
-            print(f"Source documents migration skipped: {e}")
+        except SQLAlchemyError as e:
+            logger.warning("Source documents migration skipped: %s", e)
 
-    # Migrate: create neuron_source_links table if missing
+
+async def _migrate_create_source_links(engine):
+    """Create neuron_source_links table if missing."""
     async with engine.begin() as conn:
         try:
             if not await _table_exists(conn, "neuron_source_links"):
@@ -245,10 +271,12 @@ async def lifespan(app: FastAPI):
                     "CREATE INDEX ix_neuron_source_links_source_document_id ON neuron_source_links(source_document_id)"
                 ))
                 print("Migrated: created neuron_source_links table")
-        except Exception as e:
-            print(f"Neuron source links migration skipped: {e}")
+        except SQLAlchemyError as e:
+            logger.warning("Neuron source links migration skipped: %s", e)
 
-    # Migrate: create observation_queue table if missing (Corvus integration)
+
+async def _migrate_create_queue_and_profiles(engine):
+    """Create observation_queue and project_profiles tables if missing."""
     async with engine.begin() as conn:
         try:
             if not await _table_exists(conn, "observation_queue"):
@@ -273,60 +301,9 @@ async def lifespan(app: FastAPI):
                     )
                 """))
                 print("Migrated: created observation_queue table")
-        except Exception as e:
-            print(f"Observation queue migration skipped: {e}")
+        except SQLAlchemyError as e:
+            logger.warning("Observation queue migration skipped: %s", e)
 
-    # Migrate: add eval columns to observation_queue if missing
-    async with engine.begin() as conn:
-        try:
-            if await _table_exists(conn, "observation_queue"):
-                if not await _column_exists(conn, "observation_queue", "eval_json"):
-                    await conn.execute(text(
-                        "ALTER TABLE observation_queue ADD COLUMN eval_json TEXT"
-                    ))
-                    print("Migrated: added observation_queue.eval_json")
-                if not await _column_exists(conn, "observation_queue", "eval_model"):
-                    await conn.execute(text(
-                        "ALTER TABLE observation_queue ADD COLUMN eval_model VARCHAR(20)"
-                    ))
-                    print("Migrated: added observation_queue.eval_model")
-                if not await _column_exists(conn, "observation_queue", "eval_input_tokens"):
-                    await conn.execute(text(
-                        "ALTER TABLE observation_queue ADD COLUMN eval_input_tokens INTEGER DEFAULT 0"
-                    ))
-                    print("Migrated: added observation_queue.eval_input_tokens")
-                if not await _column_exists(conn, "observation_queue", "eval_output_tokens"):
-                    await conn.execute(text(
-                        "ALTER TABLE observation_queue ADD COLUMN eval_output_tokens INTEGER DEFAULT 0"
-                    ))
-                    print("Migrated: added observation_queue.eval_output_tokens")
-        except Exception as e:
-            print(f"Observation queue eval migration skipped: {e}")
-
-    # Migrate: add context column to neuron_edges if missing
-    async with engine.begin() as conn:
-        try:
-            if await _table_exists(conn, "neuron_edges"):
-                if not await _column_exists(conn, "neuron_edges", "context"):
-                    await conn.execute(text(
-                        "ALTER TABLE neuron_edges ADD COLUMN context VARCHAR(300)"
-                    ))
-                    print("Migrated: added neuron_edges.context")
-        except Exception as e:
-            print(f"Edge context migration skipped: {e}")
-
-    # Migrate: add authority_level column to neurons if missing
-    async with engine.begin() as conn:
-        try:
-            if not await _column_exists(conn, "neurons", "authority_level"):
-                await conn.execute(text(
-                    "ALTER TABLE neurons ADD COLUMN authority_level VARCHAR(30)"
-                ))
-                print("Migrated: added neurons.authority_level")
-        except Exception as e:
-            print(f"Neuron authority_level migration skipped: {e}")
-
-    # Migrate: create project_profiles table if missing
     async with engine.begin() as conn:
         try:
             if not await _table_exists(conn, "project_profiles"):
@@ -342,8 +319,108 @@ async def lifespan(app: FastAPI):
                     )
                 """))
                 print("Migrated: created project_profiles table")
-        except Exception as e:
-            print(f"Project profiles migration skipped: {e}")
+        except SQLAlchemyError as e:
+            logger.warning("Project profiles migration skipped: %s", e)
+
+
+async def _migrate_compliance_suite_tables(engine):
+    """Create compliance suite tables if missing: suite_runs, provider_results, attestations."""
+    async with engine.begin() as conn:
+        try:
+            if not await _table_exists(conn, "compliance_suite_runs"):
+                await conn.execute(text("""
+                    CREATE TABLE compliance_suite_runs (
+                        id SERIAL PRIMARY KEY,
+                        started_at TIMESTAMPTZ NOT NULL,
+                        completed_at TIMESTAMPTZ,
+                        framework_filter VARCHAR(50),
+                        total_providers INTEGER DEFAULT 0,
+                        passed INTEGER DEFAULT 0,
+                        failed INTEGER DEFAULT 0,
+                        skipped INTEGER DEFAULT 0,
+                        duration_ms INTEGER DEFAULT 0,
+                        triggered_by VARCHAR(50) DEFAULT 'manual',
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """))
+                print("Migrated: created compliance_suite_runs table")
+        except SQLAlchemyError as e:
+            logger.warning("compliance_suite_runs migration skipped: %s", e)
+
+    async with engine.begin() as conn:
+        try:
+            if not await _table_exists(conn, "compliance_provider_results"):
+                await conn.execute(text("""
+                    CREATE TABLE compliance_provider_results (
+                        id SERIAL PRIMARY KEY,
+                        run_id INTEGER NOT NULL REFERENCES compliance_suite_runs(id),
+                        provider_id VARCHAR(100) NOT NULL,
+                        passed BOOLEAN NOT NULL,
+                        detail TEXT,
+                        duration_ms INTEGER DEFAULT 0,
+                        collected_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """))
+                await conn.execute(text("CREATE INDEX ix_cpr_run_id ON compliance_provider_results(run_id)"))
+                await conn.execute(text("CREATE INDEX ix_cpr_provider_id ON compliance_provider_results(provider_id)"))
+                print("Migrated: created compliance_provider_results table")
+        except SQLAlchemyError as e:
+            logger.warning("compliance_provider_results migration skipped: %s", e)
+
+    async with engine.begin() as conn:
+        try:
+            if not await _table_exists(conn, "compliance_attestations"):
+                await conn.execute(text("""
+                    CREATE TABLE compliance_attestations (
+                        id SERIAL PRIMARY KEY,
+                        provider_id VARCHAR(100) NOT NULL,
+                        attested_by VARCHAR(200) NOT NULL,
+                        attested_at TIMESTAMPTZ NOT NULL,
+                        re_attestation_due TIMESTAMPTZ,
+                        notes TEXT,
+                        superseded_at TIMESTAMPTZ,
+                        created_at TIMESTAMPTZ DEFAULT now()
+                    )
+                """))
+                await conn.execute(text("CREATE INDEX ix_ca_provider_id ON compliance_attestations(provider_id)"))
+                print("Migrated: created compliance_attestations table")
+        except SQLAlchemyError as e:
+            logger.warning("compliance_attestations migration skipped: %s", e)
+
+    # Migrate TIMESTAMP → TIMESTAMPTZ for timezone-aware datetime support
+    async with engine.begin() as conn:
+        try:
+            for tbl, cols in [
+                ("compliance_suite_runs", ["started_at", "completed_at", "created_at"]),
+                ("compliance_provider_results", ["collected_at"]),
+                ("compliance_attestations", ["attested_at", "re_attestation_due", "superseded_at", "created_at"]),
+            ]:
+                for col in cols:
+                    await conn.execute(text(
+                        f"ALTER TABLE {tbl} ALTER COLUMN {col} TYPE TIMESTAMPTZ USING {col} AT TIME ZONE 'UTC'"
+                    ))
+        except SQLAlchemyError:
+            pass  # Already migrated or table doesn't exist yet
+
+
+async def _run_migrations(engine):
+    """Run all schema migrations: column additions then table creations."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    await _migrate_refinements_and_config(engine)
+    await _migrate_neuron_and_query_columns(engine)
+    await _migrate_edge_columns(engine)
+    await _migrate_obs_queue_columns(engine)
+    await _migrate_create_tables(engine)
+    await _migrate_create_source_links(engine)
+    await _migrate_create_queue_and_profiles(engine)
+    await _migrate_compliance_suite_tables(engine)
+
+
+async def _seed_core_data():
+    """Auto-seed neurons, regulatory data, and clean up interrupted batch jobs."""
+    import asyncio
 
     # Auto-seed on first run
     async with async_session() as db:
@@ -361,7 +438,6 @@ async def lifespan(app: FastAPI):
         if force_reseed:
             print(f"Regulatory neuron count ({rcount}) below v2 threshold — will force re-seed")
 
-    import asyncio
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, lambda: seed_regulatory(force=force_reseed))
 
@@ -378,6 +454,11 @@ async def lifespan(app: FastAPI):
             await db.commit()
             print(f"Marked {len(interrupted)} batch job(s) as interrupted")
 
+
+async def _seed_corvus_and_compliance():
+    """Seed Corvus apps, initialize Corvus subsystem, seed evidence and compliance."""
+    import asyncio
+
     # Seed Corvus known apps if table is empty
     async with async_session() as db:
         try:
@@ -392,8 +473,8 @@ async def lifespan(app: FastAPI):
                     db.add(CorvusKnownApp(id=app_id, name=name, description=desc))
                 await db.commit()
                 print("Seeded Corvus known apps")
-        except Exception as e:
-            print(f"Corvus known apps seed skipped: {e}")
+        except (SQLAlchemyError, Exception) as e:
+            logger.warning("Corvus known apps seed skipped: %s", e)
 
     # Initialize Corvus subsystem (session, custom apps, interpretation loop)
     try:
@@ -401,10 +482,9 @@ async def lifespan(app: FastAPI):
         from app.corvus.capture import load_custom_apps
         await init_session()
         await load_custom_apps()
-        import asyncio
         _corvus_task = asyncio.create_task(interpretation_loop())
-    except Exception as e:
-        print(f"Corvus init skipped: {e}")
+    except (ImportError, SQLAlchemyError, Exception) as e:
+        logger.warning("Corvus init skipped: %s", e)
 
     # Auto-seed evidence mappings if table is empty
     async with async_session() as db:
@@ -414,16 +494,25 @@ async def lifespan(app: FastAPI):
                 from app.routers.compliance import _seed_evidence_data
                 result = await _seed_evidence_data(db)
                 print(f"Auto-seeded evidence mappings: {result}")
-        except Exception as e:
-            print(f"Evidence map seed skipped: {e}")
+        except (SQLAlchemyError, ImportError) as e:
+            logger.warning("Evidence map seed skipped: %s", e)
 
     # Auto-snapshot compliance if none exists or last is >7 days old
     try:
         from app.routers.compliance import maybe_auto_snapshot
         await maybe_auto_snapshot()
-    except Exception as e:
-        print(f"Auto-snapshot skipped: {e}")
+    except (SQLAlchemyError, ImportError) as e:
+        logger.warning("Auto-snapshot skipped: %s", e)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await _run_migrations(engine)
+    # Load compliance suite registry (frameworks + providers)
+    from app.compliance.registry import load_all as load_compliance_registry
+    load_compliance_registry()
+    await _seed_core_data()
+    await _seed_corvus_and_compliance()
     yield
 
 
@@ -436,20 +525,34 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:8002"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Security headers middleware — defense-in-depth headers on all responses
+# Addresses: NIST 800-53 AC-12/SC-10/SC-28, CMMC 3.1.11/3.13.9, SOC 2 CC6.1
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Audit logging middleware — logs all POST/PUT/DELETE/PATCH to audit_log table
+# Addresses: NIST 800-53 AU-2/AU-3/AU-12, CMMC 3.3.1, SOC 2 CC7.2
+app.add_middleware(AuditMiddleware)
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Catch all unhandled exceptions and return JSON instead of plain text."""
+    """Catch all unhandled exceptions and return sanitized JSON error.
+
+    SI-11: Error messages must not reveal system implementation details.
+    """
     if isinstance(exc, HTTPException):
         raise exc
     status = 504 if "timed out" in str(exc).lower() else 500
+    # Log the real error server-side, return generic message to client
+    logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
     return JSONResponse(
         status_code=status,
-        content={"detail": str(exc) or "Internal server error"},
+        content={"detail": "Internal server error"},
     )
 
 
@@ -462,10 +565,12 @@ app.include_router(provenance.router)
 app.include_router(compliance.router)
 app.include_router(ingest.router)
 app.include_router(corvus.router)
+app.include_router(compliance_suite_router)
 
 
 @app.get("/health")
 async def health():
+    """Return system health status with neuron count and total queries."""
     async with async_session() as db:
         neuron_count = (await db.execute(select(func.count(Neuron.id)))).scalar() or 0
         state = (await db.execute(select(SystemState).where(SystemState.id == 1))).scalar_one_or_none()
@@ -490,6 +595,7 @@ if frontend_dist.exists():
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
+        """Serve the SPA frontend, falling back to index.html for client-side routes."""
         # Check if it's a real static file first (before API prefix check)
         file_path = frontend_dist / full_path
         if full_path and file_path.exists() and file_path.is_file():

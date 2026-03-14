@@ -66,6 +66,10 @@ async def claude_chat(
 
     `model` should be a MODEL_REGISTRY key ("haiku", "sonnet", "opus") or None for default.
     """
+    # JPL Rule 5: at least one of system_prompt or user_message must be non-empty
+    assert (system_prompt and system_prompt.strip()) or (user_message and user_message.strip()), \
+        "claude_chat requires a non-empty system_prompt or user_message"
+
     # Must unset CLAUDECODE to avoid nesting guard
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
@@ -127,7 +131,7 @@ async def claude_chat(
     # - cache read: 0.10x price
     cost_usd = estimate_cost_with_cache(model, base_input, cache_create, cache_read, output_tokens)
 
-    return {
+    result = {
         "text": text,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
@@ -135,13 +139,29 @@ async def claude_chat(
         "model_version": model_version,
     }
 
+    # JPL Rule 5: postcondition — return dict has required keys and sane token counts
+    assert "text" in result and "input_tokens" in result and "output_tokens" in result, \
+        "claude_chat result missing required keys"
+    assert result["input_tokens"] >= 0, f"input_tokens must be non-negative, got {result['input_tokens']}"
+    assert result["output_tokens"] >= 0, f"output_tokens must be non-negative, got {result['output_tokens']}"
+
+    return result
+
 
 def estimate_cost(model: str | None, input_tokens: int, output_tokens: int) -> float:
     """Estimate USD cost from token counts and model name (no cache differentiation)."""
+    # JPL Rule 5: token counts must be non-negative
+    assert input_tokens >= 0, f"input_tokens must be non-negative, got {input_tokens}"
+    assert output_tokens >= 0, f"output_tokens must be non-negative, got {output_tokens}"
+
     info = MODEL_REGISTRY.get(model or DEFAULT_MODEL)
     if not info:
         info = MODEL_REGISTRY[DEFAULT_MODEL]
-    return (input_tokens * info.input_price + output_tokens * info.output_price) / 1_000_000
+    result = (input_tokens * info.input_price + output_tokens * info.output_price) / 1_000_000
+
+    # JPL Rule 5: cost must be non-negative
+    assert result >= 0, f"estimated cost must be non-negative, got {result}"
+    return result
 
 
 def estimate_cost_with_cache(
@@ -158,6 +178,12 @@ def estimate_cost_with_cache(
     - cache_read: charged at 0.10x input price
     - output: charged at full output price
     """
+    # JPL Rule 5: all token counts must be non-negative
+    assert base_input >= 0, f"base_input must be non-negative, got {base_input}"
+    assert cache_create >= 0, f"cache_create must be non-negative, got {cache_create}"
+    assert cache_read >= 0, f"cache_read must be non-negative, got {cache_read}"
+    assert output_tokens >= 0, f"output_tokens must be non-negative, got {output_tokens}"
+
     info = MODEL_REGISTRY.get(model or DEFAULT_MODEL)
     if not info:
         info = MODEL_REGISTRY[DEFAULT_MODEL]
@@ -167,4 +193,8 @@ def estimate_cost_with_cache(
         + cache_read * info.input_price * 0.10
     )
     output_cost = output_tokens * info.output_price
-    return (input_cost + output_cost) / 1_000_000
+    result = (input_cost + output_cost) / 1_000_000
+
+    # JPL Rule 5: cost must be non-negative
+    assert result >= 0, f"estimated cost must be non-negative, got {result}"
+    return result
