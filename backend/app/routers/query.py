@@ -74,6 +74,50 @@ async def get_context(req: ContextRequest, db: AsyncSession = Depends(get_db)):
     )
 
 
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=10000)
+    model: str = Field("haiku", pattern=r"^(haiku|sonnet|opus)$")
+    history: list[dict] = Field(default_factory=list)
+
+
+class ChatResponse(BaseModel):
+    response: str
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def simple_chat(req: ChatRequest):
+    """Direct LLM chat without neuron pipeline. For casual conversation."""
+    system_prompt = (
+        "You are Corvus, an AI assistant embedded in the Yggdrasil knowledge management system. "
+        "You help users understand and work with their organizational knowledge graph. "
+        "Be concise, helpful, and conversational."
+    )
+    # Build conversation context from history
+    history_text = ""
+    if req.history:
+        lines = []
+        for msg in req.history[-10:]:  # last 10 messages
+            role = msg.get("role", "user")
+            text = msg.get("text", "")
+            lines.append(f"{'User' if role == 'user' else 'Assistant'}: {text}")
+        history_text = "\n".join(lines) + "\n\nUser: "
+
+    user_message = history_text + req.message if history_text else req.message
+    result = await claude_chat(system_prompt, user_message, max_tokens=2048, model=req.model)
+    cost = estimate_cost(result["input_tokens"], result["output_tokens"], req.model)
+    return ChatResponse(
+        response=result["text"],
+        model=req.model,
+        input_tokens=result["input_tokens"],
+        output_tokens=result["output_tokens"],
+        cost_usd=cost,
+    )
+
+
 def _parse_slots(query: Query) -> list[SlotResult]:
     """Parse slots from results_json, falling back to legacy columns."""
     if query.results_json:

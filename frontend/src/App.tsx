@@ -30,8 +30,9 @@ import EvidenceMapPage from './components/EvidenceMapPage'
 import CorvusPage from './components/CorvusPage'
 import ObservationReviewPage from './components/ObservationReviewPage'
 import CodeReviewPage from './components/CodeReviewPage'
+import HomePage from './components/HomePage'
 
-type Tab = 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'arch-plan' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks' | 'mgmt-reviews' | 'evidence-map' | 'corvus-feed' | 'corvus-observations' | 'code-review';
+type Tab = 'home' | 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'arch-plan' | 'getting-started' | 'monetization' | 'compliance' | 'compliance-audit' | 'quality' | 'fairness' | 'governance' | 'performance' | 'perf-explain' | 'method-risks' | 'mgmt-reviews' | 'evidence-map' | 'corvus-feed' | 'corvus-observations' | 'code-review';
 
 type Theme = 'corvus-native' | 'yggdrasil-dark' | 'yggdrasil-light' | 'high-contrast' | 'colorblind';
 
@@ -127,7 +128,7 @@ function getInitialTheme(): Theme {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('explorer');
+  const [tab, setTab] = useState<Tab>('home');
   const [explorerNeuronId, setExplorerNeuronId] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
@@ -168,8 +169,8 @@ export default function App() {
     <div className="app app-sidebar-layout">
       <aside className={`sidebar${collapsed ? ' sidebar-collapsed' : ''}`}>
         <div className="sidebar-header">
-          <img src="/corvus-logo-128.png" alt="Corvus" className="sidebar-logo" />
-          {!collapsed && <h1 className="app-title">Corvus</h1>}
+          <img src="/corvus-logo-128.png" alt="Corvus" className="sidebar-logo" onClick={() => setTab('home')} style={{ cursor: 'pointer' }} />
+          {!collapsed && <h1 className="app-title" onClick={() => setTab('home')} style={{ cursor: 'pointer' }}>Corvus</h1>}
           <button
             className="sidebar-toggle"
             onClick={() => setCollapsed(c => !c)}
@@ -249,6 +250,7 @@ export default function App() {
         </>
       )}
       <main className="app-main">
+        {tab === 'home' && <HomePage onNavigate={k => setTab(k as Tab)} />}
         {tab === 'corvus-feed' && <CorvusPage />}
         {tab === 'corvus-observations' && <ObservationReviewPage />}
         {tab === 'explorer' && <Explorer navigateToNeuronId={explorerNeuronId} onNavigateHandled={() => setExplorerNeuronId(null)} />}

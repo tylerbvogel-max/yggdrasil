@@ -4,6 +4,7 @@ import type { SlotSpec, GraphCapacity, StageEvent } from '../api'
 import type { QueryResponse, QuerySummary, QueryDetail, SlotResult, EvalScoreOut, RefineResponse } from '../types'
 import TokenCharts from './TokenCharts'
 import SpreadTrail from './SpreadTrail'
+import NeuronFiringViz from './NeuronFiringViz'
 
 const layerColors = ['var(--layer0)', 'var(--layer1)', 'var(--layer2)', 'var(--layer3)', 'var(--layer4)', 'var(--layer5)'];
 
@@ -42,15 +43,8 @@ function slotColor(mode: string, index: number, total: number): string {
 }
 
 function slotDisplayLabel(slot: SlotResult): string {
-  if (slot.label) return slot.label;
   const m = ALL_MODES.find(m => m.key === slot.mode);
-  const base = m?.label ?? slot.mode;
-  if (slot.token_budget != null && NEURON_MODES.has(slot.mode)) {
-    const budgetStr = `${(slot.token_budget / 1000).toFixed(0)}K`;
-    const topKStr = slot.top_k != null && slot.top_k !== 30 ? ` / K=${slot.top_k}` : '';
-    return `${base} @ ${budgetStr}${topKStr}`;
-  }
-  return base;
+  return m?.label ?? slot.mode;
 }
 
 function slotsToChartModels(slots: SlotResult[], classifyCost: number, baseline: string) {
@@ -614,13 +608,29 @@ function SlotBuilder({ slots, onChange, capacity }: {
 
 // ────────── Action Rail ──────────
 
-function ActionRail({ result, hasMultiSlot, hasNeurons, evalDone, evalLoading, refinePhase, loading, stageStatuses, onEval, onSubmit }: {
+const PIPELINE_LABELS = [
+  { key: 'input_guard', label: 'Input Guard', section: 'section-guard' },
+  { key: 'structural_resolve', label: 'Structural Resolve' },
+  { key: 'embed_query', label: 'Embed Query' },
+  { key: 'classify', label: 'Classify', section: 'section-classification' },
+  { key: 'semantic_prefilter', label: 'Semantic Prefilter' },
+  { key: 'score_neurons', label: 'Score Neurons', section: 'section-activations' },
+  { key: 'spread_activation', label: 'Spread Activation', section: 'section-spread' },
+  { key: 'assemble_prompt', label: 'Assemble Prompt' },
+  { key: 'execute_llm', label: 'Execute LLM', section: 'section-slots' },
+  { key: 'output_checks', label: 'Output Checks' },
+];
+
+function ActionRail({ result, hasMultiSlot, hasNeurons, evalDone, evalLoading, refinePhase, loading, stageStatuses, stageTimes, onEval, onSubmit }: {
   result: QueryResponse | null; hasMultiSlot: boolean; hasNeurons: boolean;
   evalDone: boolean; evalLoading: boolean; refinePhase: RefinePhase;
-  loading: boolean; stageStatuses: Record<string, StageEvent>; onEval: () => void; onSubmit: () => void;
+  loading: boolean; stageStatuses: Record<string, StageEvent>;
+  stageTimes: Record<string, number>; // ms duration per stage
+  onEval: () => void; onSubmit: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const hasResult = !!result;
+  const active = loading || hasResult;
 
   function scrollAndClick(id: string) {
     const el = document.getElementById(id);
@@ -630,61 +640,39 @@ function ActionRail({ result, hasMultiSlot, hasNeurons, evalDone, evalLoading, r
     }
   }
 
-  // ── Pipeline stages ──
-  // These reflect the actual executor pipeline from prepare_context() → execute_query()
   type StageStatus = 'pending' | 'active' | 'done' | 'skipped';
 
-  interface PipelineStage {
-    label: string;
-    detail?: string;
-    status: StageStatus;
-    section?: string; // scroll target
+  function getStageStatus(key: string): StageStatus {
+    if (!active) return 'pending';
+    if (hasResult) {
+      // Every stage that ran is 'done' — the stage completed its job regardless of outcome
+      const ev = stageStatuses[key];
+      if (ev) return 'done';
+      return 'done'; // all stages complete when result exists
+    }
+    const ev = stageStatuses[key];
+    if (ev) return ev.status === 'skipped' ? 'done' : ev.status as StageStatus;
+    return 'pending';
   }
 
-  const pipelineStages: PipelineStage[] = (() => {
-    if (!loading && !hasResult) return [];
-
-    const done = hasResult;
-    const hasClassification = done && !!result.intent;
-    const hasScores = done && result.neuron_scores.length > 0;
-    const hasSlots = done && result.slots.length > 0;
-    const hasGuard = done && !!result.input_guard;
-    const hasOutputChecks = done && (result.output_checks?.length ?? 0) > 0;
-
-    // Derive status from real SSE events when loading, or from result when done
-    function stageStatus(key: string, doneCondition: boolean): StageStatus {
-      if (done) return doneCondition ? 'done' : 'skipped';
-      const ev = stageStatuses[key];
-      if (ev) return ev.status as StageStatus;
-      return 'pending';
+  function getStageDetail(key: string): string | undefined {
+    const ev = stageStatuses[key];
+    if (ev?.detail) {
+      const d = ev.detail as Record<string, unknown>;
+      if (d.intent) return String(d.intent);
+      if (d.verdict) return String(d.verdict);
+      if (d.candidates) return `${d.candidates} candidates`;
+      if (d.scored) return `${d.scored} scored`;
+      if (d.neurons_activated) return `${d.neurons_activated} neurons`;
     }
-
-    function stageDetail(key: string, doneDetail?: string): string | undefined {
-      const ev = stageStatuses[key];
-      if (done) return doneDetail;
-      if (ev?.detail) {
-        const d = ev.detail as Record<string, unknown>;
-        if (d.duration_ms) return `${d.duration_ms}ms`;
-        if (d.count) return `${d.count} items`;
-        if (d.intent) return String(d.intent);
-        if (d.verdict) return String(d.verdict);
-      }
-      return undefined;
+    if (hasResult) {
+      if (key === 'classify' && result.intent) return result.intent;
+      if (key === 'input_guard' && result.input_guard) return result.input_guard.verdict;
+      if (key === 'assemble_prompt') return `${result.neurons_activated} neurons`;
+      if (key === 'execute_llm' && result.slots.length > 0) return result.slots.map(s => s.model).join(', ');
     }
-
-    return [
-      { label: 'Input Guard', detail: stageDetail('input_guard', hasGuard ? result.input_guard!.verdict : undefined), status: stageStatus('input_guard', hasGuard), section: 'section-guard' },
-      { label: 'Structural Resolve', detail: stageDetail('structural_resolve', 'Fast-path check'), status: stageStatus('structural_resolve', done!) },
-      { label: 'Embed Query', detail: stageDetail('embed_query', 'Vector embedding'), status: stageStatus('embed_query', done!) },
-      { label: 'Classify', detail: stageDetail('classify', hasClassification ? result.intent! : undefined), status: stageStatus('classify', hasClassification), section: 'section-classification' },
-      { label: 'Semantic Prefilter', detail: stageDetail('semantic_prefilter', hasScores ? `${result.neuron_scores.length} scored` : undefined), status: stageStatus('semantic_prefilter', hasScores) },
-      { label: 'Score Neurons', detail: stageDetail('score_neurons', hasScores ? '5-signal scoring' : undefined), status: stageStatus('score_neurons', hasScores), section: 'section-activations' },
-      { label: 'Spread Activation', detail: stageDetail('spread_activation', hasScores && result.neuron_scores[0]?.spread_boost > 0 ? 'propagated' : undefined), status: stageStatus('spread_activation', hasScores), section: 'section-spread' },
-      { label: 'Assemble Prompt', detail: stageDetail('assemble_prompt', done ? `${result.neurons_activated} neurons` : undefined), status: stageStatus('assemble_prompt', done! && result.neurons_activated > 0) },
-      { label: 'Execute LLM', detail: stageDetail('execute_llm', hasSlots ? result.slots.map(sl => sl.model).join(', ') : undefined), status: stageStatus('execute_llm', hasSlots), section: 'section-slots' },
-      { label: 'Output Checks', detail: stageDetail('output_checks', hasOutputChecks ? `${result.output_checks!.length} checked` : undefined), status: stageStatus('output_checks', hasOutputChecks) },
-    ];
-  })();
+    return undefined;
+  }
 
   // ── Workflow actions ──
   const workflowSteps = [
@@ -717,9 +705,6 @@ function ActionRail({ result, hasMultiSlot, hasNeurons, evalDone, evalLoading, r
     },
   ];
 
-  const statusIcon = (s: StageStatus) =>
-    s === 'done' ? '\u2713' : s === 'active' ? '\u25CF' : s === 'skipped' ? '\u2014' : '\u25CB';
-
   return (
     <div className={`action-rail${collapsed ? ' collapsed' : ''}`}>
       <div className="rail-header" onClick={() => setCollapsed(c => !c)}>
@@ -728,24 +713,38 @@ function ActionRail({ result, hasMultiSlot, hasNeurons, evalDone, evalLoading, r
       </div>
       {!collapsed && (
         <>
-          {pipelineStages.length > 0 && (
-            <div className="rail-pipeline">
-              {pipelineStages.map((stage, i) => (
-                <div
-                  key={i}
-                  className={`rail-stage rail-stage--${stage.status}`}
+          <div className="rail-section-label">Stages</div>
+          <div className="rail-steps">
+            {PIPELINE_LABELS.map((stage, i) => {
+              const status = getStageStatus(stage.key);
+              const detail = getStageDetail(stage.key);
+              const durationMs = stageTimes[stage.key];
+              const isDone = status === 'done';
+              const isActive = status === 'active';
+              return (
+                <button
+                  key={stage.key}
+                  className={`rail-step${isDone ? ' done' : ''}${isActive ? ' active' : ''}`}
+                  disabled={!active}
                   onClick={() => stage.section && document.getElementById(stage.section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                  style={{ cursor: stage.section ? 'pointer' : 'default' }}
+                  style={{ cursor: stage.section && active ? 'pointer' : 'default' }}
                 >
-                  <span className="rail-stage-icon">{statusIcon(stage.status)}</span>
-                  <div className="rail-stage-text">
-                    <span className="rail-stage-label">{stage.label}</span>
-                    {stage.detail && <span className="rail-stage-detail">{stage.detail}</span>}
+                  <span className="rail-step-num">
+                    {isDone ? '\u2713' : isActive ? '\u25CF' : i + 1}
+                  </span>
+                  <div className="rail-step-content">
+                    <span className="rail-step-label">{stage.label}</span>
+                    {(detail || durationMs != null) && (
+                      <span className="rail-step-meta">
+                        {durationMs != null && <span className="rail-step-time">{durationMs < 1000 ? `${durationMs}ms` : `${(durationMs / 1000).toFixed(1)}s`}</span>}
+                        {detail && <span className="rail-step-detail">{detail}</span>}
+                      </span>
+                    )}
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                </button>
+              );
+            })}
+          </div>
           {hasResult && (
             <>
               <div className="rail-divider" />
@@ -810,6 +809,9 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
   const [refinePhase, setRefinePhase] = useState<RefinePhase>('idle');
   const [liveRefineRestore, setLiveRefineRestore] = useState<RefineResponse | null>(null);
   const [stageStatuses, setStageStatuses] = useState<Record<string, StageEvent>>({});
+  const [stageTimes, setStageTimes] = useState<Record<string, number>>({});
+  const stageTimestamps = useRef<Record<string, number>>({});
+  const [configCollapsed, setConfigCollapsed] = useState(false);
   const abortRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -834,16 +836,11 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
   function buildSlotSpecs(): SlotSpec[] {
     return slotConfigs.map(sc => {
       const isNeuron = NEURON_MODES.has(sc.mode);
-      const modeLabel = ALL_MODES.find(m => m.key === sc.mode)?.label ?? sc.mode;
-      const label = isNeuron
-        ? `${modeLabel} @ ${(sc.tokenBudget / 1000).toFixed(0)}K / K=${sc.topK} / Pool=${sc.candidatePool}`
-        : undefined;
       return {
         mode: sc.mode,
         token_budget: sc.tokenBudget,
         top_k: sc.topK,
         candidate_pool: isNeuron ? sc.candidatePool : undefined,
-        label,
       };
     });
   }
@@ -863,6 +860,9 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
     setRefinePhase('idle');
     setLiveRefineRestore(null);
     setStageStatuses({});
+    setStageTimes({});
+    stageTimestamps.current = {};
+    setConfigCollapsed(true);
     setView('new');
     setSelectedQuery(null);
     // Start elapsed timer
@@ -890,9 +890,25 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
     try {
       const { promise, abort } = submitQueryStream(message, specs, (event) => {
         setStageStatuses(prev => ({ ...prev, [event.stage]: event }));
+        // Track timing: duration = time since last stage event
+        const now = Date.now();
+        const keys = Object.keys(stageTimestamps.current);
+        if (keys.length > 0) {
+          const lastKey = keys[keys.length - 1];
+          const lastTime = stageTimestamps.current[lastKey];
+          setStageTimes(prev => ({ ...prev, [lastKey]: now - lastTime }));
+        }
+        stageTimestamps.current[event.stage] = now;
       });
       abortRef.current = abort;
       const res = await promise;
+      // Capture final stage duration
+      const finishTime = Date.now();
+      const keys = Object.keys(stageTimestamps.current);
+      if (keys.length > 0) {
+        const lastKey = keys[keys.length - 1];
+        setStageTimes(prev => ({ ...prev, [lastKey]: finishTime - stageTimestamps.current[lastKey] }));
+      }
       setResult(res);
       loadHistory();
     } catch (e) {
@@ -918,6 +934,9 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
     setRefinePhase('idle');
     setLiveRefineRestore(null);
     setStageStatuses({});
+    setStageTimes({});
+    stageTimestamps.current = {};
+    setConfigCollapsed(false);
     setError('');
     setView('new');
     setSelectedQuery(null);
@@ -933,6 +952,8 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
     setRefinePhase('idle');
     setLiveRefineRestore(null);
     setStageStatuses({});
+    setStageTimes({});
+    stageTimestamps.current = {};
     setView('new');
     setSelectedQuery(null);
     document.querySelector('.query-form')?.scrollIntoView({ behavior: 'smooth' });
@@ -1039,17 +1060,23 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
             onChange={e => setMessage(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleSubmit(); }}
           />
-          <div className="query-controls">
-            <SlotBuilder slots={slotConfigs} onChange={setSlotConfigs} capacity={graphCapacity} />
-            <div className="query-controls-bottom">
-              <select className="baseline-select" value={baseline} onChange={e => setBaseline(e.target.value)}>
-                {ALL_MODES.map(m => (
-                  <option key={m.key} value={m.key}>Baseline: {m.label}</option>
-                ))}
-              </select>
-              <button className="btn" onClick={handleSubmit} disabled={loading || !message.trim() || slotConfigs.length === 0}>
-                {loading ? 'Processing...' : `Submit (${slotConfigs.length} slot${slotConfigs.length !== 1 ? 's' : ''})`}
-              </button>
+          <div className={`query-controls${configCollapsed ? ' config-collapsed' : ''}`}>
+            <div className="config-collapse-toggle" onClick={() => setConfigCollapsed(c => !c)}>
+              <span className={`section-chevron${!configCollapsed ? ' open' : ''}`} />
+              <span>{configCollapsed ? 'Show model config' : 'Model config'}</span>
+            </div>
+            <div className="config-collapsible">
+              <SlotBuilder slots={slotConfigs} onChange={setSlotConfigs} capacity={graphCapacity} />
+              <div className="query-controls-bottom">
+                <select className="baseline-select" value={baseline} onChange={e => setBaseline(e.target.value)}>
+                  {ALL_MODES.map(m => (
+                    <option key={m.key} value={m.key}>Baseline: {m.label}</option>
+                  ))}
+                </select>
+                <button className="btn" onClick={handleSubmit} disabled={loading || !message.trim() || slotConfigs.length === 0}>
+                  {loading ? 'Processing...' : `Submit (${slotConfigs.length} slot${slotConfigs.length !== 1 ? 's' : ''})`}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1062,10 +1089,7 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
             <div className="slot-loading-timer">{(elapsedMs / 1000).toFixed(1)}s</div>
             {slotConfigs.map((sc, i) => {
               const modeInfo = ALL_MODES.find(m => m.key === sc.mode);
-              const isNeuron = NEURON_MODES.has(sc.mode);
-              const label = isNeuron
-                ? `${modeInfo?.label ?? sc.mode} @ ${(sc.tokenBudget / 1000).toFixed(0)}K`
-                : (modeInfo?.label ?? sc.mode);
+              const label = modeInfo?.label ?? sc.mode;
               const done = !slotLoadingSet.has(i);
               return (
                 <div key={sc.id} className={`slot-loading-item${done ? ' done' : ''}`}>
@@ -1096,20 +1120,19 @@ export default function QueryLab({ onNavigateToNeuron }: { onNavigateToNeuron?: 
         {selectedQuery && view === 'history' && <HistoryDetail query={selectedQuery} baseline={baseline} onNavigateToNeuron={onNavigateToNeuron} />}
       </div>
 
-      {(hasResult || loading) && (
-        <ActionRail
-          result={result}
-          hasMultiSlot={hasMultiSlot}
-          hasNeurons={hasNeurons}
-          evalDone={!!evalText}
-          evalLoading={evalLoading}
-          refinePhase={refinePhase}
-          loading={loading}
-          stageStatuses={stageStatuses}
-          onEval={handleEval}
-          onSubmit={handleSubmit}
-        />
-      )}
+      <ActionRail
+        result={result}
+        hasMultiSlot={hasMultiSlot}
+        hasNeurons={hasNeurons}
+        evalDone={!!evalText}
+        evalLoading={evalLoading}
+        refinePhase={refinePhase}
+        loading={loading}
+        stageStatuses={stageStatuses}
+        stageTimes={stageTimes}
+        onEval={handleEval}
+        onSubmit={handleSubmit}
+      />
     </div>
   );
 }
@@ -1131,6 +1154,15 @@ function LiveResult({ result, baseline, totalElapsedMs, rating, setRating, rated
 
   return (
     <>
+      {hasNeurons && (
+        <NeuronFiringViz
+          queryId={result.query_id}
+          neuronScores={result.neuron_scores}
+          neuronsActivated={result.neurons_activated}
+          onNavigateToNeuron={onNavigateToNeuron}
+        />
+      )}
+
       {hasNeurons && result.intent && (
         <Section title="Classification" defaultOpen={false}>
           <div className="tags">
@@ -1139,33 +1171,6 @@ function LiveResult({ result, baseline, totalElapsedMs, rating, setRating, rated
             {result.role_keys.map(r => <span key={r} className="tag role">{r}</span>)}
             {result.keywords.map(k => <span key={k} className="tag keyword">{k}</span>)}
           </div>
-        </Section>
-      )}
-
-      {hasNeurons && (
-        <Section title={`Top Neuron Activations (${result.neurons_activated} total)`} defaultOpen={false}>
-          <table className="score-table">
-            <thead>
-              <tr><th>Neuron</th><th>Combined</th><th>Spread</th><th>Burst</th><th>Impact</th><th>Precision</th><th>Novelty</th><th>Recency</th><th>Relevance</th></tr>
-            </thead>
-            <tbody>
-              {result.neuron_scores.slice(0, 10).map(s => (
-                <tr key={s.neuron_id}>
-                  <td title={`ID: ${s.neuron_id}`} style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label ? `${s.label} (${s.department || '?'})` : `#${s.neuron_id}`}</td><td>{s.combined.toFixed(3)}</td>
-                  <td style={s.spread_boost > 0 ? { color: '#e8a735', fontWeight: 600 } : undefined}>{s.spread_boost > 0 ? s.spread_boost.toFixed(3) : '—'}</td>
-                  <td>{s.burst.toFixed(3)}</td>
-                  <td>{s.impact.toFixed(3)}</td><td>{s.precision.toFixed(3)}</td>
-                  <td>{s.novelty.toFixed(3)}</td><td>{s.recency.toFixed(3)}</td><td>{s.relevance.toFixed(3)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Section>
-      )}
-
-      {result.neuron_scores.length > 0 && (
-        <Section title="Activation Graph" defaultOpen={false}>
-          <SpreadTrail queryId={result.query_id} neuronScores={result.neuron_scores} onNavigateToNeuron={onNavigateToNeuron} />
         </Section>
       )}
 

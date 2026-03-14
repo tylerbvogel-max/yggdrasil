@@ -52,6 +52,29 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// ── Simple chat (no neuron pipeline) ──
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+export interface ChatResponse {
+  response: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+export function sendChat(message: string, model: string = 'haiku', history: ChatMessage[] = []): Promise<ChatResponse> {
+  return json<ChatResponse>('/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, model, history }),
+  });
+}
+
 export function fetchTree(department?: string, maxDepth?: number): Promise<TreeNode[]> {
   const parts: string[] = [];
   if (department) parts.push(`department=${encodeURIComponent(department)}`);
