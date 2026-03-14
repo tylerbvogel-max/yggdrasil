@@ -31,6 +31,7 @@ All code contributions to this project MUST adhere to the following NASA softwar
 - **NASA-STD-8739.8B** — Software Assurance and Software Safety Standard
 - **NASA-STD-8739.9** — Software Formal Inspections Standard
 - **NASA SWEHB** — Software Engineering Handbook (guidance/best practices)
+- **JPL Power of Ten** — Holzmann's 10 rules for safety-critical code (JPL/NASA flight software)
 
 ### Code Review Requirements (per NPR 7150.2D & NASA-STD-8739.8/9)
 1. **Software safety**: All changes must consider failure modes. Code that controls neuron scoring, observation evaluation, or LLM-driven actions must document assumptions and failure behavior.
@@ -42,6 +43,7 @@ All code contributions to this project MUST adhere to the following NASA softwar
 7. **Metrics & measurement**: Track token usage, model costs, and pipeline latency. Cost projections and actuals must remain visible in the UI.
 8. **Third-party software management**: LLM model updates (Haiku/Sonnet/Opus version changes), dependency upgrades, and Anthropic SDK updates must be evaluated for behavioral impact before adoption.
 9. **Documentation**: Public-facing endpoints must have docstrings. Schema changes must include migration logic. LLM system prompts must document their intent and expected output format.
+10. **Safety-critical coding (Power of Ten)**: Simple control flow (no recursion/goto), bounded loops, no dynamic allocation after init, functions under 60 lines, 2+ assertions per function, smallest variable scope, mandatory static analysis, restricted pointer use, zero compiler warnings, development rigor matched to criticality.
 
 ### Corvus Development-Specific Rules
 - Screen capture data is ephemeral — never persist raw screenshots beyond the processing pipeline

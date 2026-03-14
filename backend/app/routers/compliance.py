@@ -15,7 +15,7 @@ _ALLOWED_PREFIXES = ("docs", "backend/app")
 _MAX_FILE_BYTES = 64 * 1024  # 64 KB cap
 
 from app.database import get_db, async_session
-from app.models import ManagementReview, ComplianceSnapshot, EvidenceMapping
+from app.models import ManagementReview, ComplianceSnapshot, EvidenceMapping, Neuron, NeuronRefinement
 from app.routers.admin import run_compliance_audit
 
 router = APIRouter(prefix="/admin", tags=["compliance"])
@@ -633,3 +633,211 @@ def _render_report_html(report: dict) -> str:
     <tbody>{rows}</tbody>
 </table>
 </body></html>"""
+
+
+# ── Code Review Checklist (NASA Standards) ──
+
+NASA_CODE_REVIEW_CHECKLIST = [
+    {
+        "id": "CR-01",
+        "category": "Software Safety",
+        "standard": "NPR 7150.2D §4.7 / NASA-STD-8739.8B",
+        "requirement": "All changes must consider failure modes. Code that controls scoring, evaluation, or LLM-driven actions must document assumptions and failure behavior.",
+        "check_items": [
+            "Error handling for LLM API failures (timeouts, malformed responses)",
+            "Graceful degradation when external services are unavailable",
+            "No silent data corruption — failures must be visible",
+            "Neuron scoring changes validated against known-good baselines",
+        ],
+    },
+    {
+        "id": "CR-02",
+        "category": "Configuration Management",
+        "standard": "NPR 7150.2D §4.6",
+        "requirement": "Every change must be traceable via git commit with descriptive message. No uncommitted changes in production.",
+        "check_items": [
+            "Commit message describes the 'why', not just the 'what'",
+            "Schema migrations included for any model changes",
+            "No hardcoded environment-specific values",
+            "Database migration is idempotent (ADD COLUMN IF NOT EXISTS pattern)",
+        ],
+    },
+    {
+        "id": "CR-03",
+        "category": "Secure Coding",
+        "standard": "NPR 7150.2D §4.5 / NASA Secure Coding Portal",
+        "requirement": "Validate all external inputs, sanitize LLM outputs before database writes, no hardcoded credentials, no injection vectors.",
+        "check_items": [
+            "User inputs validated at API boundary (type, range, length)",
+            "LLM output parsed defensively (try/except on JSON parse)",
+            "SQL queries use parameterized statements (SQLAlchemy ORM or text(:param))",
+            "No credentials, API keys, or secrets in source code",
+            "File paths validated against allowed prefixes (no path traversal)",
+            "CORS settings are intentional and minimal",
+        ],
+    },
+    {
+        "id": "CR-04",
+        "category": "Formal Inspections",
+        "standard": "NASA-STD-8739.9",
+        "requirement": "Non-trivial changes (new endpoints, schema changes, LLM prompt modifications) require structured review against acceptance criteria.",
+        "check_items": [
+            "New API endpoints have docstrings describing behavior",
+            "LLM system prompts document intent and expected output format",
+            "Schema changes have corresponding migration logic",
+            "Breaking changes are flagged with migration path",
+        ],
+    },
+    {
+        "id": "CR-05",
+        "category": "Testing & Verification",
+        "standard": "NPR 7150.2D §4.4 / NASA-STD-8739.8B §3.3",
+        "requirement": "New features require verification evidence. API endpoints need smoke tests. LLM pipeline changes need evaluation against known-good queries.",
+        "check_items": [
+            "New endpoints have at least one test or documented manual verification",
+            "Scoring algorithm changes tested against baseline query results",
+            "Frontend changes verified with build (npm run build passes)",
+            "Edge cases considered (empty results, max limits, concurrent access)",
+        ],
+    },
+    {
+        "id": "CR-06",
+        "category": "Software Classification",
+        "standard": "NASA-STD-8739.8B §3.1",
+        "requirement": "This system processes operational knowledge and influences decision-making. Changes to scoring, neuron creation, or observation approval require heightened review.",
+        "check_items": [
+            "Changes to neuron scoring signals reviewed for unintended bias",
+            "Observation auto-approval or batch operations have human checkpoint",
+            "LLM model version changes evaluated for behavioral drift",
+            "Provenance tracking maintained (source_origin, refinement records)",
+        ],
+    },
+    {
+        "id": "CR-07",
+        "category": "Metrics & Measurement",
+        "standard": "NPR 7150.2D §4.8",
+        "requirement": "Track token usage, model costs, and pipeline latency. Cost projections and actuals must remain visible.",
+        "check_items": [
+            "Token counts recorded for LLM calls (input + output)",
+            "Cost tracking updated when adding new LLM-powered features",
+            "Performance-sensitive operations have timing instrumentation",
+            "New LLM endpoints include model selection parameter",
+        ],
+    },
+    {
+        "id": "CR-08",
+        "category": "Third-Party Software",
+        "standard": "NPR 7150.2D §4.9 / NASA SWEHB §9",
+        "requirement": "LLM model updates, dependency upgrades, and SDK updates must be evaluated for behavioral impact before adoption.",
+        "check_items": [
+            "Anthropic SDK version pinned in requirements.txt",
+            "Model version changes tested against evaluation suite",
+            "New dependencies justified and license-compatible",
+            "COTS/API behavioral changes documented",
+        ],
+    },
+    {
+        "id": "CR-09",
+        "category": "Documentation",
+        "standard": "NPR 7150.2D §4.11",
+        "requirement": "Public-facing endpoints must have docstrings. Schema changes must include migration logic. LLM system prompts must document intent.",
+        "check_items": [
+            "API endpoint has FastAPI docstring (appears in /docs)",
+            "Complex business logic has inline comments explaining 'why'",
+            "LLM prompts include comment block with purpose and expected format",
+            "CLAUDE.md updated if new patterns or conventions introduced",
+        ],
+    },
+    {
+        "id": "CR-10",
+        "category": "Safety-Critical Coding (Power of Ten)",
+        "standard": "JPL/NASA — Holzmann, 'The Power of Ten: Rules for Developing Safety-Critical Code'",
+        "requirement": "Ten coding rules for safety-critical software derived from JPL/NASA flight software practices. These constrain code complexity to enable automated verification and prevent unpredictable failures.",
+        "check_items": [
+            "R1: Simple control flow only — no goto, setjmp, longjmp, or recursion",
+            "R2: All loops have a fixed upper bound (provable termination)",
+            "R3: No dynamic memory allocation after initialization (no malloc/new in operational code)",
+            "R4: No function longer than ~60 lines (single printed page)",
+            "R5: Minimum two assertions per function (document assumptions, catch violations early)",
+            "R6: All variables declared at the smallest possible scope",
+            "R7: Static analysis run on every source file; all findings resolved",
+            "R8: Pointer use restricted to struct members and array elements (no arbitrary pointer arithmetic)",
+            "R9: Compile at highest warning level; all warnings eliminated",
+            "R10: Development environment and coding standards matched to software criticality level",
+        ],
+    },
+    {
+        "id": "CR-11",
+        "category": "Corvus-Specific",
+        "standard": "Corvus Development Policy",
+        "requirement": "Screen capture data is ephemeral. Observation-to-neuron flow must maintain provenance. Human approval required before graph modifications.",
+        "check_items": [
+            "Raw screenshots not persisted beyond processing pipeline",
+            "Observation → neuron flow creates NeuronRefinement records",
+            "LLM evaluation proposals require explicit human approval",
+            "Interpretation cadence and alert thresholds are configurable",
+            "Chrome extension URLs point to integrated backend (port 8002)",
+        ],
+    },
+]
+
+
+@router.get("/code-review")
+async def code_review_checklist(db: AsyncSession = Depends(get_db)):
+    """Return NASA-aligned code review checklist with coverage metrics from the neuron graph."""
+
+    # Count NASA standard neurons and their refinement activity
+    nasa_roles = ["nasa_npr7150", "nasa_std8739", "nasa_swehb", "jpl_power_of_ten"]
+    neuron_result = await db.execute(
+        select(Neuron.id, Neuron.label, Neuron.layer, Neuron.role_key,
+               Neuron.invocations, Neuron.content, Neuron.summary)
+        .where(Neuron.role_key.in_(nasa_roles), Neuron.is_active == True)
+        .order_by(Neuron.role_key, Neuron.layer, Neuron.label)
+    )
+    neurons = neuron_result.all()
+
+    # Group by role
+    standards: dict[str, dict] = {}
+    for n in neurons:
+        rk = n.role_key
+        if rk not in standards:
+            standards[rk] = {"role_label": "", "neurons": [], "total_invocations": 0}
+        entry = {
+            "id": n.id, "label": n.label, "layer": n.layer,
+            "invocations": n.invocations or 0,
+            "has_content": bool(n.content and len(n.content) > 20),
+            "has_summary": bool(n.summary and len(n.summary) > 10),
+        }
+        if n.layer == 1:
+            standards[rk]["role_label"] = n.label
+        else:
+            standards[rk]["neurons"].append(entry)
+        standards[rk]["total_invocations"] += (n.invocations or 0)
+
+    # Recent refinements touching NASA neurons
+    nasa_ids = [n.id for n in neurons]
+    refinement_count = 0
+    if nasa_ids:
+        ref_result = await db.execute(
+            select(func.count(NeuronRefinement.id))
+            .where(NeuronRefinement.neuron_id.in_(nasa_ids))
+        )
+        refinement_count = ref_result.scalar() or 0
+
+    # Coverage score: % of L2 neurons with content
+    l2_neurons = [n for n in neurons if n.layer >= 2]
+    content_count = sum(1 for n in l2_neurons if n.content and len(n.content) > 20)
+    coverage_pct = round(content_count / len(l2_neurons) * 100, 1) if l2_neurons else 0
+
+    return {
+        "checklist": NASA_CODE_REVIEW_CHECKLIST,
+        "standards_coverage": standards,
+        "metrics": {
+            "total_nasa_neurons": len(neurons),
+            "l2_with_content": content_count,
+            "l2_total": len(l2_neurons),
+            "coverage_pct": coverage_pct,
+            "total_invocations": sum(n.invocations or 0 for n in neurons),
+            "refinement_count": refinement_count,
+        },
+    }
