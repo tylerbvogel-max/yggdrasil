@@ -111,6 +111,60 @@ def calc_relevance(keywords: list[str], neuron_text: str) -> float:
     return result
 
 
+def _resolve_relevance(
+    semantic_similarity: float | None,
+    keywords: list[str],
+    neuron_text: str,
+) -> float:
+    if semantic_similarity is not None:
+        return max(0.0, min(1.0, semantic_similarity))
+    return calc_relevance(keywords, neuron_text)
+
+
+def _compute_gated_combined(
+    burst: float,
+    impact: float,
+    precision: float,
+    novelty: float,
+    recency: float,
+    relevance: float,
+) -> float:
+    stimulus = settings.weight_relevance * relevance
+
+    modulatory = (
+        settings.weight_burst * burst
+        + settings.weight_impact * impact
+        + settings.weight_precision * precision
+        + settings.weight_novelty * novelty
+        + settings.weight_recency * recency
+    )
+
+    threshold = settings.relevance_gate_threshold
+    floor = settings.relevance_gate_floor
+    if relevance >= threshold:
+        gate = 1.0
+    elif relevance > 0:
+        gate = floor + (1.0 - floor) * (relevance / threshold)
+    else:
+        gate = floor
+
+    combined = stimulus + modulatory * gate
+    assert combined >= 0, f"combined score must be non-negative, got {combined}"
+    assert isinstance(combined, float), f"combined must be float, got {type(combined)}"
+    return combined
+
+
+def _apply_classification_boost(
+    combined: float, dept_match: bool, role_match: bool
+) -> float:
+    if role_match:
+        combined *= 1.5
+    elif dept_match:
+        combined *= 1.25
+    assert combined >= 0, f"boosted score must be non-negative, got {combined}"
+    return combined
+
+
 def compute_score(
     fires_in_window: int,
     avg_utility: float,
@@ -144,51 +198,15 @@ def compute_score(
     novelty = calc_novelty(age_queries)
     recency = calc_recency(queries_since_last)
 
-    # Postcondition: all component scores must be in [0, 1]
     assert 0.0 <= burst <= 1.0, f"burst out of range: {burst}"
     assert 0.0 <= impact <= 1.0, f"impact out of range: {impact}"
     assert 0.0 <= precision <= 1.0, f"precision out of range: {precision}"
     assert 0.0 <= novelty <= 1.0, f"novelty out of range: {novelty}"
     assert 0.0 <= recency <= 1.0, f"recency out of range: {recency}"
 
-    # Relevance: prefer semantic similarity (cortical topography) over keyword matching
-    if semantic_similarity is not None:
-        relevance = max(0.0, min(1.0, semantic_similarity))
-    else:
-        relevance = calc_relevance(keywords, neuron_text)
-
-    # Stimulus component: direct relevance contribution
-    stimulus = settings.weight_relevance * relevance
-
-    # Modulatory component: burst, impact, precision, novelty, recency
-    modulatory = (
-        settings.weight_burst * burst
-        + settings.weight_impact * impact
-        + settings.weight_precision * precision
-        + settings.weight_novelty * novelty
-        + settings.weight_recency * recency
-    )
-
-    # Relevance gate: without stimulus, modulatory signals are attenuated
-    # Soft gate ramps from floor (spontaneous rate) to 1.0 at threshold
-    threshold = settings.relevance_gate_threshold
-    floor = settings.relevance_gate_floor
-    if relevance >= threshold:
-        gate = 1.0
-    elif relevance > 0:
-        gate = floor + (1.0 - floor) * (relevance / threshold)
-    else:
-        gate = floor
-
-    combined = stimulus + modulatory * gate
-    assert combined >= 0, f"combined score must be non-negative, got {combined}"
-
-    # Classification match boost: role match is stronger than dept match
-    # since role_keys are more specific (e.g. "data_engineer" vs "Engineering")
-    if role_match:
-        combined *= 1.5
-    elif dept_match:
-        combined *= 1.25
+    relevance = _resolve_relevance(semantic_similarity, keywords, neuron_text)
+    combined = _compute_gated_combined(burst, impact, precision, novelty, recency, relevance)
+    combined = _apply_classification_boost(combined, dept_match, role_match)
 
     return NeuronScoreBreakdown(
         neuron_id=neuron_id,

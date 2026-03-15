@@ -33,7 +33,7 @@ _tick_running = False
 _current_step = ""
 _current_detail = ""
 
-TICK_STEPS = ["detect", "generate", "execute", "evaluate", "refine", "apply", "record"]
+TICK_STEPS = ("detect", "generate", "execute", "evaluate", "refine", "apply", "record")
 
 
 def _set_step(step: str, detail: str = ""):
@@ -270,6 +270,142 @@ async def get_run_changes(run_id: int, db: AsyncSession = Depends(get_db)):
 
 # ── Tick Orchestration ─────────────────────────────────────────────────
 
+def _check_cancel():
+    if _cancel_requested:
+        raise _CancelledError("Autopilot tick cancelled by user")
+
+
+def _reset_tick_state():
+    global _tick_running
+    _tick_running = False
+    _set_step("", "")
+
+
+async def _detect_and_gather_context(
+    focus_neuron_id: int | None,
+) -> tuple[GapTarget | None, str | None, str, list[str], str, str]:
+    _set_step("detect", "Scanning for knowledge gaps...")
+    focus_label = None
+    focus_context = ""
+
+    async with async_session() as s0:
+        gap = await detect_gap(s0, focus_neuron_id)
+        if focus_neuron_id:
+            focus_label, focus_context = await _get_subtree_context(s0, focus_neuron_id)
+        recent_result = await s0.execute(
+            select(AutopilotRun.generated_query)
+            .order_by(AutopilotRun.id.desc())
+            .limit(10)
+        )
+        recent_queries = [r[0] for r in recent_result.all()]
+
+    if gap:
+        gap_source = gap.source
+        gap_target_desc = gap.description
+        _set_step("detect", f"Found gap: {gap.source} — {gap.description[:80]}...")
+    else:
+        gap_source = "directive"
+        gap_target_desc = "No structural gaps found — using directive for exploration"
+        _set_step("detect", "No gaps found — falling back to directive-based query")
+
+    return gap, focus_label, focus_context, recent_queries, gap_source, gap_target_desc
+
+
+async def _execute_pipeline(generated_query: str) -> tuple[int, int, float]:
+    _set_step("execute", "Scoring and selecting candidate neurons...")
+    async with async_session() as s2:
+        exec_result = await execute_query(s2, generated_query, modes=["haiku_neuron"])
+        return exec_result["query_id"], exec_result["neurons_activated"], exec_result["total_cost"]
+
+
+async def _evaluate_response(query_id: int, eval_model: str) -> tuple[int, str, float]:
+    _set_step("evaluate", f"Calling {eval_model} to evaluate response quality...")
+    async with async_session() as s3:
+        query = await s3.get(Query, query_id)
+        eval_overall, eval_text, eval_cost = await _self_evaluate(s3, query, model=eval_model)
+        await s3.commit()
+        return eval_overall, eval_text, eval_cost
+
+
+async def _refine_neurons(
+    query_id: int, max_layer: int, focus_neuron_id: int | None,
+    eval_model: str, gap: GapTarget | None,
+) -> tuple[str, list[dict], list[dict], float]:
+    _set_step("refine", f"Calling {eval_model} to analyze gaps and suggest improvements...")
+    async with async_session() as s4:
+        query = await s4.get(Query, query_id)
+        reasoning, updates, new_neurons, refine_cost = await _refine(
+            s4, query, max_layer=max_layer, focus_neuron_id=focus_neuron_id,
+            model=eval_model, gap=gap,
+        )
+        await s4.commit()
+        return reasoning, updates, new_neurons, refine_cost
+
+
+async def _apply_and_resolve(
+    query_id: int, updates: list[dict], new_neurons: list[dict],
+    gap: GapTarget | None,
+) -> tuple[int, int]:
+    n_updates = len(updates) if updates else 0
+    n_new = len(new_neurons) if new_neurons else 0
+    _set_step("apply", f"Applying {n_updates} updates and {n_new} new neurons...")
+    async with async_session() as s5:
+        query = await s5.get(Query, query_id)
+        updates_applied, neurons_created = await _apply_all(s5, query, updates, new_neurons)
+
+        if gap and gap.source == "emergent_queue" and gap.emergent_queue_id and neurons_created > 0:
+            eq_entry = await s5.get(EmergentQueue, gap.emergent_queue_id)
+            if eq_entry:
+                eq_entry.status = "resolved"
+                eq_entry.resolved_at = datetime.now(timezone.utc)
+                eq_entry.notes = f"Resolved by autopilot run (query #{query_id})"
+
+        await s5.commit()
+    return updates_applied, neurons_created
+
+
+async def _record_run(status: str, **kwargs) -> AutopilotRun:
+    _set_step("record", "Saving run metrics...")
+    async with async_session() as s:
+        if status == "completed":
+            cfg = await _get_or_create_config(s)
+            cfg.last_tick_at = func.now()
+        run = AutopilotRun(status=status, **kwargs)
+        s.add(run)
+        await s.commit()
+    return run
+
+
+async def _handle_cancelled(
+    generated_query: str, total_cost: float, run_fields: dict,
+) -> AutopilotTickResponse:
+    _reset_tick_state()
+    try:
+        run_fields.update(eval_text=run_fields["eval_text"] or None)
+        run_fields.update(refine_reasoning=run_fields["refine_reasoning"] or None)
+        await _record_run("cancelled", generated_query=generated_query, cost_usd=total_cost, **run_fields)
+    except Exception:
+        pass
+    return AutopilotTickResponse(status="cancelled", message="Tick cancelled by user")
+
+
+async def _handle_error(
+    exc: Exception, generated_query: str, total_cost: float, run_fields: dict,
+) -> AutopilotTickResponse:
+    _reset_tick_state()
+    try:
+        await _record_run(
+            "error", generated_query=generated_query, cost_usd=total_cost,
+            directive=run_fields["directive"], focus_neuron_label=run_fields["focus_neuron_label"],
+            gap_source=run_fields["gap_source"], gap_target=run_fields["gap_target"],
+            neurons_activated=0, updates_applied=0, neurons_created=0, eval_overall=0,
+            error_message=f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-500:]}",
+        )
+    except Exception:
+        pass
+    return AutopilotTickResponse(status="error", message=str(exc))
+
+
 async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickResponse:
     """Run one gap-driven autopilot cycle."""
     global _cancel_requested, _tick_running, _current_step
@@ -278,198 +414,54 @@ async def _run_tick(db: AsyncSession, config: AutopilotConfig) -> AutopilotTickR
     _current_step = ""
 
     total_cost = 0.0
-    focus_label = None
-    focus_context = ""
     generated_query = "(generation failed)"
-    directive = config.directive
-    focus_neuron_id = config.focus_neuron_id
-    max_layer = config.max_layer
-    eval_model = config.eval_model
-    query_id = None
-    neurons_activated = 0
-    eval_overall = 0
-    eval_text = ""
-    reasoning = ""
-    updates_applied = 0
-    neurons_created = 0
-    gap_source = None
-    gap_target_desc = None
-    gap: GapTarget | None = None
-
-    def _check_cancel():
-        if _cancel_requested:
-            raise _CancelledError("Autopilot tick cancelled by user")
+    run_fields: dict = dict(
+        directive=config.directive, focus_neuron_label=None, gap_source=None,
+        gap_target=None, query_id=None, neurons_activated=0, updates_applied=0,
+        neurons_created=0, eval_overall=0, eval_text="", refine_reasoning="",
+    )
 
     try:
-        # Step 0: Detect gap
-        _set_step("detect", "Scanning for knowledge gaps...")
-        async with async_session() as s0:
-            gap = await detect_gap(s0, focus_neuron_id)
-
-            # Also gather focus context
-            if focus_neuron_id:
-                focus_label, focus_context = await _get_subtree_context(s0, focus_neuron_id)
-
-            recent_result = await s0.execute(
-                select(AutopilotRun.generated_query)
-                .order_by(AutopilotRun.id.desc())
-                .limit(10)
-            )
-            recent_queries = [r[0] for r in recent_result.all()]
-
-        if gap:
-            gap_source = gap.source
-            gap_target_desc = gap.description
-            _set_step("detect", f"Found gap: {gap.source} — {gap.description[:80]}...")
-        else:
-            gap_source = "directive"
-            gap_target_desc = "No structural gaps found — using directive for exploration"
-            _set_step("detect", "No gaps found — falling back to directive-based query")
-
-        _check_cancel()
-
-        # Step 1: Generate targeted query
-        _set_step("generate", "Generating targeted query from gap analysis...")
-        generated_query, gen_cost = await _generate_query(
-            directive, recent_queries, focus_context, gap
+        gap, focus_label, focus_ctx, recent_qs, gap_src, gap_desc = (
+            await _detect_and_gather_context(config.focus_neuron_id)
         )
+        run_fields.update(focus_neuron_label=focus_label, gap_source=gap_src, gap_target=gap_desc)
+        _check_cancel()
+
+        _set_step("generate", "Generating targeted query from gap analysis...")
+        generated_query, gen_cost = await _generate_query(config.directive, recent_qs, focus_ctx, gap)
         total_cost += gen_cost
-
         _check_cancel()
 
-        # Step 2: Execute through pipeline
-        _set_step("execute", "Scoring and selecting candidate neurons...")
-        async with async_session() as s2:
-            exec_result = await execute_query(s2, generated_query, modes=["haiku_neuron"])
-            query_id = exec_result["query_id"]
-            neurons_activated = exec_result["neurons_activated"]
-            total_cost += exec_result["total_cost"]
-
+        query_id, neurons_activated, exec_cost = await _execute_pipeline(generated_query)
+        total_cost += exec_cost
+        run_fields.update(query_id=query_id, neurons_activated=neurons_activated)
         _check_cancel()
 
-        # Step 3: Self-evaluate
-        _set_step("evaluate", f"Calling {eval_model} to evaluate response quality...")
-        async with async_session() as s3:
-            query = await s3.get(Query, query_id)
-            eval_overall, eval_text, eval_cost = await _self_evaluate(s3, query, model=eval_model)
-            await s3.commit()
-            total_cost += eval_cost
-
+        eval_overall, eval_text, eval_cost = await _evaluate_response(query_id, config.eval_model)
+        total_cost += eval_cost
+        run_fields.update(eval_overall=eval_overall, eval_text=eval_text)
         _check_cancel()
 
-        # Step 4: Refine
-        _set_step("refine", f"Calling {eval_model} to analyze gaps and suggest improvements...")
-        async with async_session() as s4:
-            query = await s4.get(Query, query_id)
-            reasoning, updates, new_neurons, refine_cost = await _refine(
-                s4, query, max_layer=max_layer, focus_neuron_id=focus_neuron_id,
-                model=eval_model, gap=gap,
-            )
-            await s4.commit()
-            total_cost += refine_cost
-
+        reasoning, updates, new_neurons, refine_cost = await _refine_neurons(
+            query_id, config.max_layer, config.focus_neuron_id, config.eval_model, gap,
+        )
+        total_cost += refine_cost
+        run_fields.update(refine_reasoning=reasoning)
         _check_cancel()
 
-        # Step 5: Apply all suggestions
-        n_updates = len(updates) if updates else 0
-        n_new = len(new_neurons) if new_neurons else 0
-        _set_step("apply", f"Applying {n_updates} updates and {n_new} new neurons...")
-        async with async_session() as s5:
-            query = await s5.get(Query, query_id)
-            updates_applied, neurons_created = await _apply_all(s5, query, updates, new_neurons)
+        updates_applied, neurons_created = await _apply_and_resolve(query_id, updates, new_neurons, gap)
+        run_fields.update(updates_applied=updates_applied, neurons_created=neurons_created)
 
-            # If gap was from emergent queue and we created neurons, mark it resolved
-            if gap and gap.source == "emergent_queue" and gap.emergent_queue_id and neurons_created > 0:
-                eq_entry = await s5.get(EmergentQueue, gap.emergent_queue_id)
-                if eq_entry:
-                    eq_entry.status = "resolved"
-                    eq_entry.resolved_at = datetime.now(timezone.utc)
-                    eq_entry.notes = f"Resolved by autopilot run (query #{query_id})"
-
-            await s5.commit()
-
-        # Step 6: Record run
-        _set_step("record", "Saving run metrics...")
-        async with async_session() as s6:
-            cfg = await _get_or_create_config(s6)
-            cfg.last_tick_at = func.now()
-            run = AutopilotRun(
-                query_id=query_id,
-                generated_query=generated_query,
-                directive=directive,
-                focus_neuron_label=focus_label,
-                gap_source=gap_source,
-                gap_target=gap_target_desc,
-                neurons_activated=neurons_activated,
-                updates_applied=updates_applied,
-                neurons_created=neurons_created,
-                eval_overall=eval_overall,
-                eval_text=eval_text,
-                refine_reasoning=reasoning,
-                cost_usd=total_cost,
-                status="completed",
-            )
-            s6.add(run)
-            await s6.commit()
-
-        _tick_running = False
-        _current_step = ""
-        _current_detail = ""
+        run = await _record_run("completed", generated_query=generated_query, cost_usd=total_cost, **run_fields)
+        _reset_tick_state()
         return AutopilotTickResponse(status="completed", run_id=run.id)
 
     except _CancelledError:
-        _tick_running = False
-        _current_step = ""
-        _current_detail = ""
-        try:
-            async with async_session() as sc:
-                run = AutopilotRun(
-                    query_id=query_id,
-                    generated_query=generated_query,
-                    directive=directive,
-                    focus_neuron_label=focus_label,
-                    gap_source=gap_source,
-                    gap_target=gap_target_desc,
-                    neurons_activated=neurons_activated,
-                    updates_applied=updates_applied,
-                    neurons_created=neurons_created,
-                    eval_overall=eval_overall,
-                    eval_text=eval_text or None,
-                    refine_reasoning=reasoning or None,
-                    cost_usd=total_cost,
-                    status="cancelled",
-                )
-                sc.add(run)
-                await sc.commit()
-        except Exception:
-            pass
-        return AutopilotTickResponse(status="cancelled", message="Tick cancelled by user")
+        return await _handle_cancelled(generated_query, total_cost, run_fields)
 
     except Exception as e:
-        _tick_running = False
-        _current_step = ""
-        _current_detail = ""
-        try:
-            async with async_session() as se:
-                run = AutopilotRun(
-                    generated_query=generated_query,
-                    directive=directive,
-                    focus_neuron_label=focus_label,
-                    gap_source=gap_source,
-                    gap_target=gap_target_desc,
-                    neurons_activated=0,
-                    updates_applied=0,
-                    neurons_created=0,
-                    eval_overall=0,
-                    cost_usd=total_cost,
-                    status="error",
-                    error_message=f"{type(e).__name__}: {e}\n{traceback.format_exc()[-500:]}",
-                )
-                se.add(run)
-                await se.commit()
-        except Exception:
-            pass
-        return AutopilotTickResponse(status="error", message=str(e))
+        return await _handle_error(e, generated_query, total_cost, run_fields)
 
 
 class _CancelledError(Exception):
@@ -908,6 +900,109 @@ async def _refine(
     return reasoning, updates_raw, new_neurons_raw, result["cost_usd"]
 
 
+async def _apply_neuron_update(
+    db: AsyncSession, query: Query, u: dict
+) -> bool:
+    """Apply a single neuron update. Returns True if applied."""
+    neuron = await db.get(Neuron, u.get("neuron_id"))
+    if not neuron:
+        return False
+    field = u.get("field", "")
+    new_val = str(u.get("new_value", ""))
+    old_val = str(u.get("old_value", ""))
+    if field == "content":
+        neuron.content = new_val
+    elif field == "summary":
+        neuron.summary = new_val
+    elif field == "label":
+        neuron.label = new_val
+    elif field == "is_active":
+        neuron.is_active = new_val.lower() in ("true", "1", "yes")
+    else:
+        return False
+    if field in ("content", "summary"):
+        from app.services.reference_hooks import populate_external_references
+        populate_external_references(neuron)
+    db.add(NeuronRefinement(
+        query_id=query.id,
+        neuron_id=u["neuron_id"],
+        action="update",
+        field=field,
+        old_value=old_val,
+        new_value=new_val,
+        reason=u.get("reason", "autopilot"),
+    ))
+    return True
+
+
+async def _resolve_chain_depth_parent(
+    db: AsyncSession, parent_id: int, created_parent_ids: set[int], n: dict
+) -> int:
+    """Redirect parent_id to avoid extending single-child chains. Returns resolved parent_id."""
+    parent_child_count = (await db.execute(
+        select(func.count(Neuron.id)).where(
+            Neuron.parent_id == parent_id, Neuron.is_active == True
+        )
+    )).scalar() or 0
+    tick_siblings = sum(1 for pid in created_parent_ids if pid == parent_id)
+    effective_children = parent_child_count + tick_siblings
+
+    if effective_children != 0:
+        return parent_id
+
+    parent_neuron = await db.get(Neuron, parent_id)
+    if not parent_neuron or not parent_neuron.parent_id:
+        return parent_id
+
+    grandparent_child_count = (await db.execute(
+        select(func.count(Neuron.id)).where(
+            Neuron.parent_id == parent_neuron.parent_id, Neuron.is_active == True
+        )
+    )).scalar() or 0
+    if grandparent_child_count == 1:
+        import logging
+        logging.getLogger(__name__).info(
+            f"AUTOPILOT: Redirecting neuron from parent #{parent_id} to "
+            f"#{parent_neuron.parent_id} to avoid single-child chain"
+        )
+        n["layer"] = parent_neuron.layer
+        return parent_neuron.parent_id
+    return parent_id
+
+
+async def _create_neuron_from_spec(
+    db: AsyncSession, query: Query, n: dict,
+    parent_id: int | None, total_queries: int
+) -> None:
+    """Create a single neuron from a spec dict and record the refinement."""
+    from app.services.reference_hooks import populate_external_references
+    neuron = Neuron(
+        parent_id=parent_id,
+        layer=n.get("layer", 3),
+        node_type=n.get("node_type", "knowledge"),
+        label=n.get("label", ""),
+        content=n.get("content", ""),
+        summary=n.get("summary", ""),
+        department=n.get("department"),
+        role_key=n.get("role_key"),
+        is_active=True,
+        created_at_query_count=total_queries,
+        source_origin="autopilot",
+    )
+    populate_external_references(neuron)
+    db.add(neuron)
+    await db.flush()
+    db.add(NeuronRefinement(
+        query_id=query.id,
+        neuron_id=neuron.id,
+        action="create",
+        field=None,
+        old_value=None,
+        new_value=n.get("label", ""),
+        reason=n.get("reason", "autopilot"),
+    ))
+
+
 async def _apply_all(
     db: AsyncSession, query: Query,
     updates: list[dict], new_neurons: list[dict]
@@ -915,101 +1010,20 @@ async def _apply_all(
     """Apply all update and new_neuron suggestions. Returns (updated_count, created_count)."""
     updated_count = 0
     for u in updates:
-        neuron = await db.get(Neuron, u.get("neuron_id"))
-        if not neuron:
-            continue
-        field = u.get("field", "")
-        new_val = str(u.get("new_value", ""))
-        old_val = str(u.get("old_value", ""))
-        if field == "content":
-            neuron.content = new_val
-        elif field == "summary":
-            neuron.summary = new_val
-        elif field == "label":
-            neuron.label = new_val
-        elif field == "is_active":
-            neuron.is_active = new_val.lower() in ("true", "1", "yes")
-        else:
-            continue
-        if field in ("content", "summary"):
-            from app.services.reference_hooks import populate_external_references
-            populate_external_references(neuron)
-        db.add(NeuronRefinement(
-            query_id=query.id,
-            neuron_id=u["neuron_id"],
-            action="update",
-            field=field,
-            old_value=old_val,
-            new_value=new_val,
-            reason=u.get("reason", "autopilot"),
-        ))
-        updated_count += 1
+        if await _apply_neuron_update(db, query, u):
+            updated_count += 1
 
     created_count = 0
-    created_parent_ids: set[int] = set()  # Track parents we've already added children to this tick
+    created_parent_ids: set[int] = set()
     state = await get_system_state(db)
     for n in new_neurons:
         parent_id = n.get("parent_id")
-
-        # Chain-depth guard: don't extend single-child chains
         if parent_id:
-            # Check if parent already has exactly 0 children AND its grandparent
-            # also has exactly 1 child (the parent) — this would create a thin chain
-            parent_child_count = (await db.execute(
-                select(func.count(Neuron.id)).where(
-                    Neuron.parent_id == parent_id, Neuron.is_active == True
-                )
-            )).scalar() or 0
-            # Also count children we're creating this tick under the same parent
-            tick_siblings = sum(1 for pid in created_parent_ids if pid == parent_id)
-            effective_children = parent_child_count + tick_siblings
-
-            if effective_children == 0:
-                # Parent has no children — check if parent itself is a lone child
-                parent_neuron = await db.get(Neuron, parent_id)
-                if parent_neuron and parent_neuron.parent_id:
-                    grandparent_child_count = (await db.execute(
-                        select(func.count(Neuron.id)).where(
-                            Neuron.parent_id == parent_neuron.parent_id, Neuron.is_active == True
-                        )
-                    )).scalar() or 0
-                    if grandparent_child_count == 1:
-                        # This would extend a single-child chain — redirect to be a sibling instead
-                        import logging
-                        logging.getLogger(__name__).info(
-                            f"AUTOPILOT: Redirecting neuron from parent #{parent_id} to "
-                            f"#{parent_neuron.parent_id} to avoid single-child chain"
-                        )
-                        parent_id = parent_neuron.parent_id
-                        n["layer"] = parent_neuron.layer  # Same layer as would-be parent
-
+            parent_id = await _resolve_chain_depth_parent(
+                db, parent_id, created_parent_ids, n
+            )
         created_parent_ids.add(parent_id or 0)
-        neuron = Neuron(
-            parent_id=parent_id,
-            layer=n.get("layer", 3),
-            node_type=n.get("node_type", "knowledge"),
-            label=n.get("label", ""),
-            content=n.get("content", ""),
-            summary=n.get("summary", ""),
-            department=n.get("department"),
-            role_key=n.get("role_key"),
-            is_active=True,
-            created_at_query_count=state.total_queries,
-            source_origin="autopilot",
-        )
-        from app.services.reference_hooks import populate_external_references
-        populate_external_references(neuron)
-        db.add(neuron)
-        await db.flush()
-        db.add(NeuronRefinement(
-            query_id=query.id,
-            neuron_id=neuron.id,
-            action="create",
-            field=None,
-            old_value=None,
-            new_value=n.get("label", ""),
-            reason=n.get("reason", "autopilot"),
-        ))
+        await _create_neuron_from_spec(db, query, n, parent_id, state.total_queries)
         created_count += 1
 
     await db.flush()

@@ -193,34 +193,38 @@ async def list_queries(db: AsyncSession = Depends(get_db)):
     ]
 
 
-@router.get("/queries/{query_id}", response_model=QueryDetail)
-async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
-    """Retrieve full detail for a single query including neuron hits, slots, eval scores, and refinements."""
-    query = await db.get(Query, query_id)
-    if not query:
-        raise HTTPException(status_code=404, detail="Query not found")
-
-    neuron_ids = json.loads(query.selected_neuron_ids) if query.selected_neuron_ids else []
-
+async def _load_neurons_by_ids(db: AsyncSession, neuron_ids: list[int]) -> list:
     neurons = []
     for nid in neuron_ids:
         neuron = await db.get(Neuron, nid)
         if neuron:
             neurons.append(neuron)
+    assert isinstance(neurons, list), "neurons must be a list"
+    assert len(neurons) <= len(neuron_ids), "cannot load more neurons than IDs given"
+    return neurons
 
-    # Use cached scores from execution time; fall back to re-scoring for old queries
-    score_map: dict[int, dict] = {}
+
+async def _build_score_map(
+    db: AsyncSession, query: Query, neurons: list,
+) -> dict[int, dict]:
     if query.neuron_scores_json:
+        score_map = {}
         for s in json.loads(query.neuron_scores_json):
             score_map[s["neuron_id"]] = s
-    elif neurons:
+        assert isinstance(score_map, dict), "score_map must be a dict"
+        return score_map
+    if neurons:
         state = await get_system_state(db)
         keywords_list = json.loads(query.classified_keywords) if query.classified_keywords else []
         scored = await score_candidates(db, neurons, state.total_queries, keywords_list)
-        score_map = {s.neuron_id: {"combined": s.combined, "burst": s.burst,
-                     "impact": s.impact, "precision": s.precision, "novelty": s.novelty,
-                     "recency": s.recency, "relevance": s.relevance} for s in scored}
+        assert isinstance(scored, list), "scored candidates must be a list"
+        return {s.neuron_id: {"combined": s.combined, "burst": s.burst,
+                "impact": s.impact, "precision": s.precision, "novelty": s.novelty,
+                "recency": s.recency, "relevance": s.relevance} for s in scored}
+    return {}
 
+
+def _build_neuron_hits(neurons: list, score_map: dict[int, dict]) -> list[NeuronHit]:
     hits = []
     for neuron in neurons:
         s = score_map.get(neuron.id, {})
@@ -232,11 +236,14 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
             novelty=s.get("novelty", 0), recency=s.get("recency", 0),
             relevance=s.get("relevance", 0), spread_boost=s.get("spread_boost", 0),
         ))
+    assert len(hits) == len(neurons), "must produce one hit per neuron"
+    return hits
 
-    slots = _parse_slots(query)
 
-    # Load eval scores
-    eval_scores_result = await db.execute(
+async def _load_eval_scores(
+    db: AsyncSession, query_id: int, eval_text: str | None,
+) -> tuple[list[EvalScoreOut], str | None]:
+    result = await db.execute(
         select(EvalScore).where(EvalScore.query_id == query_id).order_by(EvalScore.answer_label)
     )
     eval_scores = [
@@ -249,23 +256,25 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
             faithfulness=es.faithfulness,
             overall=es.overall,
         )
-        for es in eval_scores_result.scalars()
+        for es in result.scalars()
     ]
-    # Determine winner from verdict text
     eval_winner = None
-    if eval_scores and query.eval_text:
-        # Try to find winner from stored scores
+    if eval_scores and eval_text:
         best = max(eval_scores, key=lambda s: s.overall)
         if eval_scores.count(best) == 1:
             eval_winner = best.answer_label
+    assert isinstance(eval_scores, list), "eval_scores must be a list"
+    return eval_scores, eval_winner
 
-    # Load refinements for this query
-    refinement_result = await db.execute(
+
+async def _load_refinements(
+    db: AsyncSession, query_id: int,
+) -> list[RefinementOut]:
+    result = await db.execute(
         select(NeuronRefinement).where(NeuronRefinement.query_id == query_id).order_by(NeuronRefinement.id)
     )
-    refinement_rows = refinement_result.scalars().all()
     refinements = []
-    for r in refinement_rows:
+    for r in result.scalars().all():
         neuron = await db.get(Neuron, r.neuron_id)
         refinements.append(RefinementOut(
             id=r.id,
@@ -277,15 +286,38 @@ async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
             reason=r.reason,
             neuron_label=neuron.label if neuron else None,
         ))
+    assert isinstance(refinements, list), "refinements must be a list"
+    return refinements
 
-    # Parse pending (unapplied) refine suggestions if present
-    pending_refine = None
-    if query.refine_json:
-        try:
-            pending_refine = json.loads(query.refine_json)
-        except json.JSONDecodeError:
-            pass
 
+def _parse_pending_refine(refine_json: str | None) -> dict | None:
+    if not refine_json:
+        return None
+    try:
+        parsed = json.loads(refine_json)
+        assert parsed is None or isinstance(parsed, dict), "pending_refine must be dict or None"
+        return parsed
+    except json.JSONDecodeError:
+        return None
+
+
+@router.get("/queries/{query_id}", response_model=QueryDetail)
+async def get_query_detail(query_id: int, db: AsyncSession = Depends(get_db)):
+    """Retrieve full detail for a single query including neuron hits, slots, eval scores, and refinements."""
+    query = await db.get(Query, query_id)
+    if not query:
+        raise HTTPException(status_code=404, detail="Query not found")
+
+    neuron_ids = json.loads(query.selected_neuron_ids) if query.selected_neuron_ids else []
+    neurons = await _load_neurons_by_ids(db, neuron_ids)
+    score_map = await _build_score_map(db, query, neurons)
+    hits = _build_neuron_hits(neurons, score_map)
+    slots = _parse_slots(query)
+    eval_scores, eval_winner = await _load_eval_scores(db, query_id, query.eval_text)
+    refinements = await _load_refinements(db, query_id)
+    pending_refine = _parse_pending_refine(query.refine_json)
+
+    assert query.id is not None, "query must have a valid ID"
     return QueryDetail(
         id=query.id,
         user_message=query.user_message,
@@ -460,44 +492,31 @@ async def post_query_stream(req: QueryRequest, db: AsyncSession = Depends(get_db
     )
 
 
-@router.post("/query/{query_id}/evaluate", response_model=EvalResponse)
-async def evaluate_query(
-    query_id: int, req: EvalRequest, db: AsyncSession = Depends(get_db)
-):
-    """Run blind LLM evaluation comparing multiple response slots for a query."""
-    query = await db.get(Query, query_id)
-    if not query:
-        raise HTTPException(status_code=404, detail="Query not found")
+def _eval_slot_label(slot: SlotResult) -> str:
+    if slot.label:
+        return slot.label
+    parts = [slot.model.title()]
+    if slot.neurons:
+        parts.append("+ Neurons")
+    if slot.token_budget is not None and slot.neurons:
+        parts.append(f"@ {slot.token_budget // 1000}K")
+    return " ".join(parts)
 
-    slots = _parse_slots(query)
-    if len(slots) < 2:
-        raise HTTPException(status_code=400, detail="Need at least two responses to compare")
-    # JPL Rule 5: postcondition — after passing the guard, we must have enough slots for comparison
-    assert len(slots) >= 2, f"evaluate_query requires >= 2 slots, got {len(slots)}"
 
-    # Build answer labels
-    def _slot_label(slot: SlotResult) -> str:
-        if slot.label:
-            return slot.label
-        parts = [slot.model.title()]
-        if slot.neurons:
-            parts.append("+ Neurons")
-        if slot.token_budget is not None and slot.neurons:
-            parts.append(f"@ {slot.token_budget // 1000}K")
-        return " ".join(parts)
-
-    answer_map: list[tuple[str, SlotResult]] = []  # (letter, slot)
-    sections = [f"User's question:\n{query.user_message}"]
+def _build_eval_prompts(
+    user_message: str, slots: list[SlotResult],
+) -> tuple[str, str, list[tuple[str, SlotResult]]]:
+    answer_map: list[tuple[str, SlotResult]] = []
+    sections = [f"User's question:\n{user_message}"]
     for i, slot in enumerate(slots):
-        label = _slot_label(slot)
+        label = _eval_slot_label(slot)
         letter = chr(65 + i)
         answer_map.append((letter, slot))
         sections.append(f"Answer {letter} ({label}):\n{slot.response}")
 
-    # Build the answer keys for the JSON template
     score_template = []
     for letter, slot in answer_map:
-        label = _slot_label(slot)
+        label = _eval_slot_label(slot)
         score_template.append(
             f'  {{"answer": "{letter}", "label": "{label}", '
             f'"accuracy": <1-5>, "completeness": <1-5>, "clarity": <1-5>, '
@@ -505,6 +524,7 @@ async def evaluate_query(
         )
 
     eval_prompt = "\n\n---\n\n".join(sections)
+    assert len(sections) >= 3, "eval prompt must include question + at least 2 answers"
 
     eval_system = (
         "You are a blind evaluator comparing AI responses. You have NO prior context — "
@@ -526,17 +546,16 @@ async def evaluate_query(
         "```\n\n"
         "No other text outside the JSON block. Use the answer labels (A, B, etc.) in your verdict."
     )
+    assert eval_system and eval_prompt, "eval prompts must be non-empty"
 
-    result = await claude_chat(eval_system, eval_prompt, max_tokens=2048, model=req.model)
+    return eval_system, eval_prompt, answer_map
 
-    raw_text = result["text"].strip()
 
-    # Parse structured scores
-    parsed_scores = []
+def _parse_eval_response(raw_text: str) -> tuple[list[dict], str, str | None]:
+    parsed_scores: list[dict] = []
     verdict_text = raw_text
     winner = None
     try:
-        # Extract JSON from code block or raw
         json_str = raw_text
         if "```" in json_str:
             json_str = json_str.split("```")[1]
@@ -548,29 +567,30 @@ async def evaluate_query(
         verdict_text = parsed.get("verdict", raw_text)
         winner = parsed.get("winner")
     except (json.JSONDecodeError, KeyError, TypeError, IndexError):
-        pass  # Fall back to raw text
+        pass
+    assert isinstance(parsed_scores, list), "parsed_scores must be a list"
+    return parsed_scores, verdict_text, winner
 
-    # Delete old eval scores for this query
+
+async def _save_eval_scores(
+    db: AsyncSession, query_id: int, model: str,
+    parsed_scores: list[dict], verdict_text: str,
+    answer_map: list[tuple[str, SlotResult]],
+) -> list[EvalScoreOut]:
     old_scores = await db.execute(
         select(EvalScore).where(EvalScore.query_id == query_id)
     )
     for old in old_scores.scalars():
         await db.delete(old)
 
-    # Save new scores
-    score_rows = []
+    answer_lookup = {letter: slot for letter, slot in answer_map}
+    score_rows: list[EvalScoreOut] = []
     for ps in parsed_scores:
         letter = ps.get("answer", "?")
-        # Find the matching slot
-        slot_match = None
-        for a_letter, a_slot in answer_map:
-            if a_letter == letter:
-                slot_match = a_slot
-                break
-
+        slot_match = answer_lookup.get(letter)
         row = EvalScore(
             query_id=query_id,
-            eval_model=req.model,
+            eval_model=model,
             answer_mode=slot_match.mode if slot_match else letter,
             answer_label=letter,
             accuracy=_clamp(ps.get("accuracy", 3)),
@@ -590,6 +610,34 @@ async def evaluate_query(
             faithfulness=row.faithfulness,
             overall=row.overall,
         ))
+    assert len(score_rows) == len(parsed_scores), "all parsed scores must produce output rows"
+    return score_rows
+
+
+@router.post("/query/{query_id}/evaluate", response_model=EvalResponse)
+async def evaluate_query(
+    query_id: int, req: EvalRequest, db: AsyncSession = Depends(get_db)
+):
+    """Run blind LLM evaluation comparing multiple response slots for a query."""
+    query = await db.get(Query, query_id)
+    if not query:
+        raise HTTPException(status_code=404, detail="Query not found")
+
+    slots = _parse_slots(query)
+    if len(slots) < 2:
+        raise HTTPException(status_code=400, detail="Need at least two responses to compare")
+    assert len(slots) >= 2, f"evaluate_query requires >= 2 slots, got {len(slots)}"
+
+    eval_system, eval_prompt, answer_map = _build_eval_prompts(query.user_message, slots)
+    assert len(answer_map) >= 2, "answer_map must have at least 2 entries"
+
+    result = await claude_chat(eval_system, eval_prompt, max_tokens=2048, model=req.model)
+    raw_text = result["text"].strip()
+
+    parsed_scores, verdict_text, winner = _parse_eval_response(raw_text)
+    score_rows = await _save_eval_scores(
+        db, query_id, req.model, parsed_scores, verdict_text, answer_map,
+    )
 
     query.eval_text = verdict_text
     query.eval_model = req.model
@@ -670,16 +718,13 @@ async def rate_query(
     return RatingResponse(query_id=query_id, utility=req.utility, neurons_updated=updated)
 
 
-@router.post("/query/{query_id}/refine", response_model=RefineResponse)
-async def refine_query(
-    query_id: int, req: RefineRequest, db: AsyncSession = Depends(get_db)
-):
-    """Generate LLM-driven neuron update and creation suggestions based on eval results."""
+async def _load_refine_prerequisites(
+    query_id: int, db: AsyncSession
+) -> tuple["Query", list, list]:
     query = await db.get(Query, query_id)
     if not query:
         raise HTTPException(status_code=404, detail="Query not found")
 
-    # Need eval scores
     eval_result = await db.execute(
         select(EvalScore).where(EvalScore.query_id == query_id).order_by(EvalScore.answer_label)
     )
@@ -687,7 +732,6 @@ async def refine_query(
     if not eval_scores:
         raise HTTPException(status_code=400, detail="Run evaluation first before refining neurons")
 
-    # Load activated neurons
     neuron_ids = json.loads(query.selected_neuron_ids) if query.selected_neuron_ids else []
     if not neuron_ids:
         raise HTTPException(status_code=400, detail="No neurons were activated for this query")
@@ -700,39 +744,11 @@ async def refine_query(
     # JPL Rule 5: neurons list must be non-empty before building the refinement prompt
     assert len(neurons) > 0, "refine_query requires at least one loaded neuron to build prompt"
 
-    # Find the neuron-enhanced response from slots
-    slots = _parse_slots(query)
-    neuron_response = None
-    for slot in slots:
-        if slot.neurons:
-            neuron_response = slot.response
-            break
+    return query, eval_scores, neurons
 
-    # Build neuron details section
-    neuron_sections = []
-    for n in neurons:
-        neuron_sections.append(
-            f"Neuron #{n.id} (L{n.layer} {n.node_type})\n"
-            f"  Label: {n.label}\n"
-            f"  Department: {n.department or 'none'}\n"
-            f"  Role Key: {n.role_key or 'none'}\n"
-            f"  Summary: {n.summary or 'none'}\n"
-            f"  Content:\n{n.content or '(empty)'}\n"
-            f"  Invocations: {n.invocations}, Avg Utility: {n.avg_utility:.3f}, Active: {n.is_active}"
-        )
 
-    # Build eval summary
-    eval_lines = []
-    for es in eval_scores:
-        eval_lines.append(
-            f"  {es.answer_label} ({es.answer_mode}): "
-            f"accuracy={es.accuracy} completeness={es.completeness} "
-            f"clarity={es.clarity} faithfulness={es.faithfulness} overall={es.overall}"
-        )
-    eval_summary = "\n".join(eval_lines)
-    verdict = query.eval_text or "No verdict"
-
-    system_prompt = (
+def _build_refine_system_prompt() -> str:
+    return (
         "You are a neuron graph architect. You analyze evaluation results and suggest "
         "concrete improvements to the neuron knowledge graph.\n\n"
         "Your goal: improve the quality of neuron-enhanced responses by refining neuron content, "
@@ -766,7 +782,36 @@ async def refine_query(
         "No text outside the JSON block."
     )
 
-    user_prompt = (
+
+def _build_refine_user_prompt(
+    query: "Query", neurons: list, eval_scores: list, user_context: str | None
+) -> str:
+    neuron_sections = []
+    for n in neurons:
+        neuron_sections.append(
+            f"Neuron #{n.id} (L{n.layer} {n.node_type})\n"
+            f"  Label: {n.label}\n"
+            f"  Department: {n.department or 'none'}\n"
+            f"  Role Key: {n.role_key or 'none'}\n"
+            f"  Summary: {n.summary or 'none'}\n"
+            f"  Content:\n{n.content or '(empty)'}\n"
+            f"  Invocations: {n.invocations}, Avg Utility: {n.avg_utility:.3f}, Active: {n.is_active}"
+        )
+
+    eval_lines = []
+    for es in eval_scores:
+        eval_lines.append(
+            f"  {es.answer_label} ({es.answer_mode}): "
+            f"accuracy={es.accuracy} completeness={es.completeness} "
+            f"clarity={es.clarity} faithfulness={es.faithfulness} overall={es.overall}"
+        )
+    eval_summary = "\n".join(eval_lines)
+    verdict = query.eval_text or "No verdict"
+
+    slots = _parse_slots(query)
+    neuron_response = next((s.response for s in slots if s.neurons), None)
+
+    prompt = (
         f"## User Question\n{query.user_message}\n\n"
         f"## Eval Scores\n{eval_summary}\n\n"
         f"## Eval Verdict\n{verdict}\n\n"
@@ -774,24 +819,23 @@ async def refine_query(
         + "\n---\n".join(neuron_sections)
     )
     if neuron_response:
-        user_prompt += f"\n\n## Neuron-Enhanced Response\n{neuron_response}"
-
-    if req.user_context and req.user_context.strip():
-        user_prompt += (
+        prompt += f"\n\n## Neuron-Enhanced Response\n{neuron_response}"
+    if user_context and user_context.strip():
+        prompt += (
             f"\n\n## Additional Context from User\n"
             f"The user has provided the following information to help guide refinement. "
             f"Use this to fill knowledge gaps, correct inaccuracies, or better define "
-            f"neuron content:\n\n{req.user_context.strip()}"
+            f"neuron content:\n\n{user_context.strip()}"
         )
+    return prompt
 
-    result = await claude_chat(system_prompt, user_prompt, max_tokens=req.max_tokens, model=req.model)
 
-    raw_text = result["text"].strip()
-
-    # Parse JSON
+def _parse_refine_response(
+    raw_text: str,
+) -> tuple[str, list[NeuronUpdateSuggestion], list[NewNeuronSuggestion]]:
     reasoning = ""
-    updates = []
-    new_neurons = []
+    updates: list[NeuronUpdateSuggestion] = []
+    new_neurons: list[NewNeuronSuggestion] = []
     try:
         json_str = raw_text
         if "```" in json_str:
@@ -822,7 +866,22 @@ async def refine_query(
                 reason=n.get("reason", ""),
             ))
     except (json.JSONDecodeError, KeyError, TypeError):
-        reasoning = raw_text  # Fallback: show raw text as reasoning
+        reasoning = raw_text
+    return reasoning, updates, new_neurons
+
+
+@router.post("/query/{query_id}/refine", response_model=RefineResponse)
+async def refine_query(
+    query_id: int, req: RefineRequest, db: AsyncSession = Depends(get_db)
+):
+    """Generate LLM-driven neuron update and creation suggestions based on eval results."""
+    query, eval_scores, neurons = await _load_refine_prerequisites(query_id, db)
+
+    system_prompt = _build_refine_system_prompt()
+    user_prompt = _build_refine_user_prompt(query, neurons, eval_scores, req.user_context)
+
+    result = await claude_chat(system_prompt, user_prompt, max_tokens=req.max_tokens, model=req.model)
+    reasoning, updates, new_neurons = _parse_refine_response(result["text"].strip())
 
     response = RefineResponse(
         query_id=query_id,
@@ -834,7 +893,6 @@ async def refine_query(
         new_neurons=new_neurons,
     )
 
-    # Store for later apply
     query.refine_json = response.model_dump_json()
     await db.commit()
 

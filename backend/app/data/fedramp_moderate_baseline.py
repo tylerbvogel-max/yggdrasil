@@ -13,8 +13,10 @@ Status values:
   - "inherited": Control inherited from cloud/hosting provider (IaaS/PaaS)
 """
 
+from types import MappingProxyType
+
 # Control families with descriptions
-CONTROL_FAMILIES = {
+CONTROL_FAMILIES = MappingProxyType({
     "AC": "Access Control",
     "AT": "Awareness and Training",
     "AU": "Audit and Accountability",
@@ -35,7 +37,7 @@ CONTROL_FAMILIES = {
     "SI": "System and Information Integrity",
     "SR": "Supply Chain Risk Management",
     "PT": "PII Processing and Transparency",
-}
+})
 
 # FedRAMP Moderate baseline controls (NIST 800-53 Rev 5)
 # Each entry: (control_id, title, status, detail)

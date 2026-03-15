@@ -6,6 +6,7 @@ import math
 import os
 import re
 from datetime import datetime, timedelta
+from types import MappingProxyType
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy import select, func, delete, text
@@ -203,6 +204,75 @@ async def dismiss_queue_entry(
     return {"status": "dismissed", "id": entry_id}
 
 
+def _build_citation_lookup(neurons) -> dict[str, int]:
+    citation_lookup: dict[str, int] = {}
+    for n in neurons:
+        if n.citation and n.source_type in ("regulatory_primary", "technical_primary"):
+            citation_lookup[n.citation] = n.id
+    return citation_lookup
+
+
+def _resolve_reference(ref: dict, citation_lookup: dict[str, int]) -> int | None:
+    for cit, nid in citation_lookup.items():
+        if ref["pattern"] in cit or cit in ref["pattern"]:
+            return nid
+    return None
+
+
+async def _enqueue_unresolved_reference(
+    db: AsyncSession, ref: dict, neuron_id: int,
+) -> tuple[int, int]:
+    existing = (await db.execute(
+        select(EmergentQueue).where(EmergentQueue.citation_pattern == ref["pattern"])
+    )).scalar_one_or_none()
+
+    if existing:
+        if existing.status != "resolved":
+            existing.detection_count += 1
+            existing.last_detected_at = datetime.now()
+            ids = json.loads(existing.detected_in_neuron_ids or "[]")
+            if neuron_id not in ids:
+                ids.append(neuron_id)
+                existing.detected_in_neuron_ids = json.dumps(ids)
+            return 0, 1
+        return 0, 0
+
+    db.add(EmergentQueue(
+        citation_pattern=ref["pattern"],
+        domain=ref["domain"],
+        family=ref["family"],
+        detection_count=1,
+        detected_in_neuron_ids=json.dumps([neuron_id]),
+    ))
+    return 1, 0
+
+
+async def _process_neuron_references(
+    db: AsyncSession, neuron, refs: list[dict], citation_lookup: dict[str, int],
+    family_counts: dict[str, int],
+) -> tuple[int, int, int, int]:
+    resolved = 0
+    unresolved = 0
+    new_queue = 0
+    incremented_queue = 0
+
+    for ref in refs:
+        matched_id = _resolve_reference(ref, citation_lookup)
+        if matched_id:
+            ref["resolved_neuron_id"] = matched_id
+            ref["resolved_at"] = datetime.now().isoformat()
+            resolved += 1
+        else:
+            unresolved += 1
+            family_counts[ref["family"]] = family_counts.get(ref["family"], 0) + 1
+            nq, iq = await _enqueue_unresolved_reference(db, ref, neuron.id)
+            new_queue += nq
+            incremented_queue += iq
+
+    neuron.external_references = json.dumps(refs)
+    return resolved, unresolved, new_queue, incremented_queue
+
+
 @router.post("/scan-references")
 async def scan_references(db: AsyncSession = Depends(get_db)):
     """Retroactive scan: detect external references in all neurons and seed the emergent queue."""
@@ -219,12 +289,7 @@ async def scan_references(db: AsyncSession = Depends(get_db)):
     new_queue = 0
     incremented_queue = 0
     family_counts: dict[str, int] = {}
-
-    # Build a lookup of existing citations -> neuron IDs for resolution
-    citation_lookup: dict[str, int] = {}
-    for n in neurons:
-        if n.citation and n.source_type in ("regulatory_primary", "technical_primary"):
-            citation_lookup[n.citation] = n.id
+    citation_lookup = _build_citation_lookup(neurons)
 
     for neuron in neurons:
         neurons_scanned += 1
@@ -235,50 +300,13 @@ async def scan_references(db: AsyncSession = Depends(get_db)):
 
         neurons_with_refs += 1
         total_refs += len(refs)
-
-        # Check resolution for each reference
-        for ref in refs:
-            # Try to match against known citations
-            matched_id = None
-            for cit, nid in citation_lookup.items():
-                if ref["pattern"] in cit or cit in ref["pattern"]:
-                    matched_id = nid
-                    break
-
-            if matched_id:
-                ref["resolved_neuron_id"] = matched_id
-                ref["resolved_at"] = datetime.now().isoformat()
-                resolved += 1
-            else:
-                unresolved += 1
-                family_counts[ref["family"]] = family_counts.get(ref["family"], 0) + 1
-
-                # Check emergent queue
-                existing = (await db.execute(
-                    select(EmergentQueue).where(EmergentQueue.citation_pattern == ref["pattern"])
-                )).scalar_one_or_none()
-
-                if existing:
-                    if existing.status != "resolved":
-                        existing.detection_count += 1
-                        existing.last_detected_at = datetime.now()
-                        # Add neuron ID to tracking
-                        ids = json.loads(existing.detected_in_neuron_ids or "[]")
-                        if neuron.id not in ids:
-                            ids.append(neuron.id)
-                            existing.detected_in_neuron_ids = json.dumps(ids)
-                        incremented_queue += 1
-                else:
-                    db.add(EmergentQueue(
-                        citation_pattern=ref["pattern"],
-                        domain=ref["domain"],
-                        family=ref["family"],
-                        detection_count=1,
-                        detected_in_neuron_ids=json.dumps([neuron.id]),
-                    ))
-                    new_queue += 1
-
-        neuron.external_references = json.dumps(refs)
+        r, u, nq, iq = await _process_neuron_references(
+            db, neuron, refs, citation_lookup, family_counts,
+        )
+        resolved += r
+        unresolved += u
+        new_queue += nq
+        incremented_queue += iq
 
     await db.commit()
 
@@ -298,6 +326,70 @@ async def scan_references(db: AsyncSession = Depends(get_db)):
     }
 
 
+def _extract_pdf_pages(
+    pdf_bytes: bytes, page_start: int, page_end: int | None,
+) -> tuple[str, int, int, int]:
+    import tempfile
+    import fitz
+    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=True) as tmp:
+        tmp.write(pdf_bytes)
+        tmp.flush()
+        doc = fitz.open(tmp.name)
+        total_pages = len(doc)
+        end = min(page_end or total_pages, total_pages)
+        start = max(page_start - 1, 0)
+        pages_text = []
+        for i in range(start, end):
+            page_text = doc[i].get_text()
+            if page_text.strip():
+                pages_text.append(f"--- Page {i + 1} ---\n{page_text}")
+        doc.close()
+    return "\n\n".join(pages_text), total_pages, start + 1, end
+
+
+async def _extract_from_file(
+    file: UploadFile, page_start: int, page_end: int | None,
+) -> tuple[str, int, str]:
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    if file.filename.lower().endswith('.pdf'):
+        text, total_pages, start_disp, end_disp = _extract_pdf_pages(
+            content, page_start, page_end,
+        )
+        source_info = f"PDF: {file.filename} (pages {start_disp}-{end_disp} of {total_pages})"
+        return text, total_pages, source_info
+
+    text = content.decode('utf-8', errors='replace')
+    return text, 0, f"File: {file.filename}"
+
+
+async def _extract_from_url(
+    url: str, page_start: int, page_end: int | None,
+) -> tuple[str, int, str]:
+    import httpx
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+            resp = await client.get(url, headers={
+                'User-Agent': 'Mozilla/5.0 (compatible; Yggdrasil/1.0)',
+            })
+            resp.raise_for_status()
+
+            content_type = resp.headers.get('content-type', '')
+            if 'pdf' in content_type or url.lower().endswith('.pdf'):
+                text, total_pages, start_disp, end_disp = _extract_pdf_pages(
+                    resp.content, page_start, page_end,
+                )
+                return text, total_pages, f"PDF from URL (pages {start_disp}-{end_disp} of {total_pages})"
+
+            return resp.text, 0, f"URL: {url}"
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"URL returned {e.response.status_code}. Site may block automated access — try downloading the file and uploading it instead.")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {e}")
+
+
 @router.post("/extract-source")
 async def extract_source(
     url: str | None = None,
@@ -313,76 +405,10 @@ async def extract_source(
       - Page range selection for large PDFs
     Returns extracted text, page count, and character count.
     """
-    import tempfile
-
-    text = ""
-    total_pages = 0
-    source_info = ""
-
     if file and file.filename:
-        # PDF file upload
-        content = await file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file")
-
-        if file.filename.lower().endswith('.pdf'):
-            import fitz
-            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=True) as tmp:
-                tmp.write(content)
-                tmp.flush()
-                doc = fitz.open(tmp.name)
-                total_pages = len(doc)
-                end = min(page_end or total_pages, total_pages)
-                start = max(page_start - 1, 0)  # 0-indexed
-                pages_text = []
-                for i in range(start, end):
-                    page_text = doc[i].get_text()
-                    if page_text.strip():
-                        pages_text.append(f"--- Page {i + 1} ---\n{page_text}")
-                doc.close()
-                text = "\n\n".join(pages_text)
-                source_info = f"PDF: {file.filename} (pages {start + 1}-{end} of {total_pages})"
-        else:
-            # Plain text file
-            text = content.decode('utf-8', errors='replace')
-            source_info = f"File: {file.filename}"
-
+        text, total_pages, source_info = await _extract_from_file(file, page_start, page_end)
     elif url:
-        # URL fetch
-        import httpx
-        try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-                resp = await client.get(url, headers={
-                    'User-Agent': 'Mozilla/5.0 (compatible; Yggdrasil/1.0)',
-                })
-                resp.raise_for_status()
-
-                content_type = resp.headers.get('content-type', '')
-                if 'pdf' in content_type or url.lower().endswith('.pdf'):
-                    import fitz
-                    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=True) as tmp:
-                        tmp.write(resp.content)
-                        tmp.flush()
-                        doc = fitz.open(tmp.name)
-                        total_pages = len(doc)
-                        end = min(page_end or total_pages, total_pages)
-                        start = max(page_start - 1, 0)
-                        pages_text = []
-                        for i in range(start, end):
-                            page_text = doc[i].get_text()
-                            if page_text.strip():
-                                pages_text.append(f"--- Page {i + 1} ---\n{page_text}")
-                        doc.close()
-                        text = "\n\n".join(pages_text)
-                        source_info = f"PDF from URL (pages {start + 1}-{end} of {total_pages})"
-                else:
-                    # HTML / plain text
-                    text = resp.text
-                    source_info = f"URL: {url}"
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=502, detail=f"URL returned {e.response.status_code}. Site may block automated access — try downloading the file and uploading it instead.")
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {e}")
+        text, total_pages, source_info = await _extract_from_url(url, page_start, page_end)
     else:
         raise HTTPException(status_code=400, detail="Provide either a file upload or a URL")
 
@@ -394,25 +420,7 @@ async def extract_source(
     }
 
 
-@router.post("/ingest-source")
-async def ingest_source(
-    body: dict,
-    db: AsyncSession = Depends(get_db),
-):
-    """Accept source text + metadata and use LLM to segment into neuron proposals.
-
-    Request body:
-      - source_text: str (the raw source content to segment)
-      - citation: str (e.g. "FAR 31.205-6")
-      - source_type: str ("regulatory_primary" | "regulatory_interpretive" | "technical_primary" | "technical_pattern")
-      - source_url: str | None
-      - effective_date: str | None (YYYY-MM-DD)
-      - department: str | None (target department)
-      - role_key: str | None (target role)
-      - queue_entry_id: int | None (if resolving an emergent queue entry)
-    """
-    from app.services.claude_cli import claude_chat
-
+def _validate_ingest_body(body: dict) -> tuple[str, str, str, str | None, str | None, int | None]:
     source_text = body.get("source_text", "").strip()
     citation = body.get("citation", "").strip()
     source_type = body.get("source_type", "regulatory_primary")
@@ -427,7 +435,10 @@ async def ingest_source(
     if not department:
         raise HTTPException(status_code=400, detail="department is required — neurons without a department become orphaned")
 
-    # Find the target parent neuron (role or department level) for placement
+    return source_text, citation, source_type, department, role_key, queue_entry_id
+
+
+async def _find_parent_neuron(db: AsyncSession, role_key: str | None, department: str | None):
     parent_neuron = None
     if role_key:
         result = await db.execute(
@@ -439,22 +450,31 @@ async def ingest_source(
             select(Neuron).where(Neuron.department == department, Neuron.layer == 0, Neuron.is_active == True)
         )
         parent_neuron = result.scalar_one_or_none()
+    return parent_neuron
 
-    # Build context about the existing graph structure for better placement
-    context_info = ""
-    if parent_neuron:
-        children_result = await db.execute(
-            select(Neuron.id, Neuron.label, Neuron.layer, Neuron.node_type)
-            .where(Neuron.parent_id == parent_neuron.id, Neuron.is_active == True)
-            .order_by(Neuron.layer, Neuron.label)
-            .limit(30)
-        )
-        children = children_result.all()
-        if children:
-            context_info = f"\n\nExisting children of '{parent_neuron.label}' (layer {parent_neuron.layer}):\n"
-            for c in children:
-                context_info += f"  - [{c.node_type} L{c.layer}] {c.label} (id={c.id})\n"
 
+async def _build_parent_context(db: AsyncSession, parent_neuron) -> str:
+    if not parent_neuron:
+        return ""
+    children_result = await db.execute(
+        select(Neuron.id, Neuron.label, Neuron.layer, Neuron.node_type)
+        .where(Neuron.parent_id == parent_neuron.id, Neuron.is_active == True)
+        .order_by(Neuron.layer, Neuron.label)
+        .limit(30)
+    )
+    children = children_result.all()
+    if not children:
+        return ""
+    context_info = f"\n\nExisting children of '{parent_neuron.label}' (layer {parent_neuron.layer}):\n"
+    for c in children:
+        context_info += f"  - [{c.node_type} L{c.layer}] {c.label} (id={c.id})\n"
+    return context_info
+
+
+def _build_ingest_prompts(
+    citation: str, source_type: str, department: str | None,
+    role_key: str | None, source_text: str, context_info: str,
+) -> tuple[str, str]:
     system_prompt = f"""You are a knowledge graph architect for Yggdrasil, a 6-layer neuron hierarchy:
 L0=Department, L1=Role, L2=Task, L3=System, L4=Decision, L5=Output.
 
@@ -491,26 +511,29 @@ Source material to segment into neurons:
 
 {source_text[:8000]}"""
 
-    try:
-        result = await claude_chat(system_prompt, user_msg, max_tokens=8192, model="sonnet")
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"LLM call failed: {e}")
+    return system_prompt, user_msg
 
-    # Parse the proposals from the LLM response
-    response_text = result["text"].strip()
-    # Extract JSON array from response (handle markdown code blocks)
+
+def _parse_proposals(response_text: str) -> list[dict]:
     json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
     if not json_match:
-        raise HTTPException(status_code=500, detail=f"LLM did not return valid JSON array. Response starts with: {response_text[:300]}")
-
+        raise HTTPException(
+            status_code=500,
+            detail=f"LLM did not return valid JSON array. Response starts with: {response_text[:300]}",
+        )
     try:
-        proposals = json.loads(json_match.group())
+        return json.loads(json_match.group())
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse proposals JSON: {e}. Raw starts with: {json_match.group()[:300]}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to parse proposals JSON: {e}. Raw starts with: {json_match.group()[:300]}",
+        )
 
-    # Enrich proposals with metadata
+
+def _enrich_proposals(
+    proposals: list[dict], department: str | None, role_key: str | None,
+    parent_neuron, source_type: str, citation: str, body: dict,
+) -> None:
     for p in proposals:
         p["department"] = department
         p["role_key"] = role_key
@@ -519,6 +542,43 @@ Source material to segment into neurons:
         p["citation"] = citation
         p["source_url"] = body.get("source_url")
         p["effective_date"] = body.get("effective_date")
+
+
+@router.post("/ingest-source")
+async def ingest_source(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept source text + metadata and use LLM to segment into neuron proposals.
+
+    Request body:
+      - source_text: str (the raw source content to segment)
+      - citation: str (e.g. "FAR 31.205-6")
+      - source_type: str ("regulatory_primary" | "regulatory_interpretive" | "technical_primary" | "technical_pattern")
+      - source_url: str | None
+      - effective_date: str | None (YYYY-MM-DD)
+      - department: str | None (target department)
+      - role_key: str | None (target role)
+      - queue_entry_id: int | None (if resolving an emergent queue entry)
+    """
+    from app.services.claude_cli import claude_chat
+
+    source_text, citation, source_type, department, role_key, queue_entry_id = _validate_ingest_body(body)
+    parent_neuron = await _find_parent_neuron(db, role_key, department)
+    context_info = await _build_parent_context(db, parent_neuron)
+    system_prompt, user_msg = _build_ingest_prompts(
+        citation, source_type, department, role_key, source_text, context_info,
+    )
+
+    try:
+        result = await claude_chat(system_prompt, user_msg, max_tokens=8192, model="sonnet")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"LLM call failed: {e}")
+
+    proposals = _parse_proposals(result["text"].strip())
+    _enrich_proposals(proposals, department, role_key, parent_neuron, source_type, citation, body)
 
     return {
         "proposals": proposals,
@@ -538,26 +598,7 @@ Source material to segment into neurons:
     }
 
 
-@router.post("/ingest-source/apply")
-async def apply_ingest_source(
-    body: dict,
-    db: AsyncSession = Depends(get_db),
-):
-    """Apply approved neuron proposals from ingest-source.
-
-    Request body:
-      - proposals: list of approved neuron proposals (from ingest-source response)
-      - queue_entry_id: int | None (emergent queue entry to resolve)
-    """
-    from app.services.reference_hooks import populate_external_references
-
-    proposals = body.get("proposals", [])
-    queue_entry_id = body.get("queue_entry_id")
-
-    if not proposals:
-        raise HTTPException(status_code=400, detail="No proposals to apply")
-
-    # ── Placement validation: reject orphaned neurons ──
+def _validate_proposal_placements(proposals: list[dict]) -> None:
     unplaced = []
     for i, p in enumerate(proposals):
         missing = []
@@ -576,9 +617,11 @@ async def apply_ingest_source(
             "unplaced": unplaced,
         })
 
-    # Get current query count for created_at_query_count
-    state = (await db.execute(select(SystemState).where(SystemState.id == 1))).scalar_one_or_none()
-    query_count = state.total_queries if state else 0
+
+async def _create_neurons_from_proposals(
+    db: AsyncSession, proposals: list[dict], query_count: int,
+) -> list[int]:
+    from app.services.reference_hooks import populate_external_references
 
     created_ids = []
     for p in proposals:
@@ -611,7 +654,6 @@ async def apply_ingest_source(
         await db.flush()
         created_ids.append(neuron.id)
 
-        # Record the refinement
         db.add(NeuronRefinement(
             neuron_id=neuron.id,
             action="create",
@@ -620,41 +662,78 @@ async def apply_ingest_source(
             new_value=p.get("label", ""),
             reason=f"Ingested from {p.get('citation', 'unknown source')}",
         ))
+    return created_ids
 
-    # Resolve the emergent queue entry if specified
-    if queue_entry_id and created_ids:
-        entry = await db.get(EmergentQueue, queue_entry_id)
-        if entry:
-            entry.status = "resolved"
-            entry.resolved_neuron_id = created_ids[0]
-            entry.resolved_at = datetime.now()
-            entry.notes = f"Resolved via ingest: created {len(created_ids)} neurons"
 
-    # Create edges between new neurons and neurons that reference this citation
+async def _resolve_queue_entry(
+    db: AsyncSession, queue_entry_id: int, created_ids: list[int],
+) -> None:
+    entry = await db.get(EmergentQueue, queue_entry_id)
+    if entry:
+        entry.status = "resolved"
+        entry.resolved_neuron_id = created_ids[0]
+        entry.resolved_at = datetime.now()
+        entry.notes = f"Resolved via ingest: created {len(created_ids)} neurons"
+
+
+async def _create_referencing_edges(
+    db: AsyncSession, queue_entry_id: int, created_ids: list[int], query_count: int,
+) -> int:
+    entry = await db.get(EmergentQueue, queue_entry_id)
+    if not entry:
+        return 0
+
     edges_created = 0
-    if queue_entry_id:
-        entry = await db.get(EmergentQueue, queue_entry_id)
-        if entry:
-            referencing_ids = json.loads(entry.detected_in_neuron_ids or "[]")
-            for ref_id in referencing_ids:
-                for new_id in created_ids:
-                    if ref_id != new_id:
-                        # Check if edge already exists
-                        existing = await db.execute(
-                            select(NeuronEdge).where(
-                                NeuronEdge.source_id == ref_id,
-                                NeuronEdge.target_id == new_id,
-                            )
-                        )
-                        if not existing.scalar_one_or_none():
-                            db.add(NeuronEdge(
-                                source_id=ref_id,
-                                target_id=new_id,
-                                co_fire_count=1,
-                                weight=0.3,
-                                last_updated_query=query_count,
-                            ))
-                            edges_created += 1
+    referencing_ids = json.loads(entry.detected_in_neuron_ids or "[]")
+    for ref_id in referencing_ids:
+        for new_id in created_ids:
+            if ref_id != new_id:
+                existing = await db.execute(
+                    select(NeuronEdge).where(
+                        NeuronEdge.source_id == ref_id,
+                        NeuronEdge.target_id == new_id,
+                    )
+                )
+                if not existing.scalar_one_or_none():
+                    db.add(NeuronEdge(
+                        source_id=ref_id,
+                        target_id=new_id,
+                        co_fire_count=1,
+                        weight=0.3,
+                        last_updated_query=query_count,
+                    ))
+                    edges_created += 1
+    return edges_created
+
+
+@router.post("/ingest-source/apply")
+async def apply_ingest_source(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply approved neuron proposals from ingest-source.
+
+    Request body:
+      - proposals: list of approved neuron proposals (from ingest-source response)
+      - queue_entry_id: int | None (emergent queue entry to resolve)
+    """
+    proposals = body.get("proposals", [])
+    queue_entry_id = body.get("queue_entry_id")
+
+    if not proposals:
+        raise HTTPException(status_code=400, detail="No proposals to apply")
+
+    _validate_proposal_placements(proposals)
+
+    state = (await db.execute(select(SystemState).where(SystemState.id == 1))).scalar_one_or_none()
+    query_count = state.total_queries if state else 0
+
+    created_ids = await _create_neurons_from_proposals(db, proposals, query_count)
+
+    edges_created = 0
+    if queue_entry_id and created_ids:
+        await _resolve_queue_entry(db, queue_entry_id, created_ids)
+        edges_created = await _create_referencing_edges(db, queue_entry_id, created_ids, query_count)
 
     await db.commit()
 
@@ -689,171 +768,8 @@ def _chunk_text(text: str, chunk_size: int = 18000, overlap: int = 300) -> list[
     return [c for c in chunks if c]
 
 
-async def _update_batch_job(job_id: str, **kwargs):
-    """Update batch job fields in the database."""
-    async with async_session() as db:
-        job = await db.get(BatchJob, job_id)
-        if job:
-            for k, v in kwargs.items():
-                setattr(job, k, v)
-            await db.commit()
-
-
-async def _run_batch_ingest(job_id: str, start_chunk: int = 0):
-    """Background task: process chunks sequentially through the chosen model."""
-    from app.services.claude_cli import claude_chat
-
-    # Load job state from DB
-    async with async_session() as db:
-        job = await db.get(BatchJob, job_id)
-        if not job:
-            return
-        chunks = json.loads(job.chunks_json or "[]")
-        system_prompt = job.system_prompt or ""
-        citation = job.citation
-        source_type = job.source_type
-        department = job.department
-        role_key = job.role_key
-        parent_id = job.parent_id
-        source_url = job.source_url
-        effective_date = job.effective_date
-        model = job.model
-        all_proposals = json.loads(job.proposals_json or "[]")
-        errors = json.loads(job.errors_json or "[]")
-        total_cost = job.cost_usd
-        total_input = job.input_tokens
-        total_output = job.output_tokens
-
-    labels_so_far = [p.get("label", "") for p in all_proposals]
-
-    for i in range(start_chunk, len(chunks)):
-        if _batch_cancel_flags.get(job_id):
-            await _update_batch_job(job_id, status="cancelled", step=f"Cancelled at chunk {i + 1}/{len(chunks)}")
-            _batch_cancel_flags.pop(job_id, None)
-            return
-
-        await _update_batch_job(
-            job_id,
-            current_chunk=i + 1,
-            step=f"Processing chunk {i + 1} of {len(chunks)}",
-            status="running",
-        )
-
-        chunk = chunks[i]
-
-        # Include labels of already-generated proposals to avoid duplication
-        dedup_hint = ""
-        if labels_so_far:
-            dedup_hint = "\n\nNeurons already created from earlier chunks (DO NOT duplicate):\n"
-            for lbl in labels_so_far[-30:]:  # last 30 to stay within budget
-                dedup_hint += f"  - {lbl}\n"
-
-        user_msg = f"""Citation: {citation}
-Source type: {source_type}
-Department: {department or 'unspecified'}
-Role: {role_key or 'unspecified'}
-Chunk {i + 1} of {len(chunks)}
-{dedup_hint}
-Source material to segment into neurons:
-
-{chunk}"""
-
-        try:
-            result = await claude_chat(system_prompt, user_msg, max_tokens=8192, model=model)
-            response_text = result["text"].strip()
-            json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
-            if json_match:
-                proposals = json.loads(json_match.group())
-                for p in proposals:
-                    p["department"] = department
-                    p["role_key"] = role_key
-                    p["parent_id"] = parent_id
-                    p["source_type"] = source_type
-                    p["citation"] = citation
-                    p["source_url"] = source_url
-                    p["effective_date"] = effective_date
-                    labels_so_far.append(p.get("label", ""))
-                all_proposals.extend(proposals)
-            total_cost += result["cost_usd"]
-            total_input += result["input_tokens"]
-            total_output += result["output_tokens"]
-        except Exception as e:
-            errors.append(f"Chunk {i + 1}: {str(e)[:200]}")
-
-        # Persist progress after each chunk
-        await _update_batch_job(
-            job_id,
-            proposals_json=json.dumps(all_proposals),
-            errors_json=json.dumps(errors),
-            cost_usd=total_cost,
-            input_tokens=total_input,
-            output_tokens=total_output,
-        )
-
-    await _update_batch_job(
-        job_id,
-        status="done",
-        step=f"Complete: {len(all_proposals)} proposals from {len(chunks)} chunks",
-    )
-
-
-@router.post("/ingest-source/batch")
-async def start_batch_ingest(
-    body: dict,
-    db: AsyncSession = Depends(get_db),
-):
-    """Start a background batch ingestion job that processes large source texts in chunks.
-
-    Request body: same as ingest-source, but source_text can be arbitrarily large.
-    Returns a job_id to poll for progress.
-    """
-    import uuid
-
-    source_text = body.get("source_text", "").strip()
-    citation = body.get("citation", "").strip()
-    source_type = body.get("source_type", "regulatory_primary")
-    department = body.get("department")
-    role_key = body.get("role_key")
-    queue_entry_id = body.get("queue_entry_id")
-    model = body.get("model", "haiku")
-    chunk_size = body.get("chunk_size", 18000)
-
-    if not source_text:
-        raise HTTPException(status_code=400, detail="source_text is required")
-    if not citation:
-        raise HTTPException(status_code=400, detail="citation is required")
-    if not department:
-        raise HTTPException(status_code=400, detail="department is required — neurons without a department become orphaned")
-
-    # Find parent neuron
-    parent_neuron = None
-    if role_key:
-        result = await db.execute(
-            select(Neuron).where(Neuron.role_key == role_key, Neuron.layer == 1, Neuron.is_active == True)
-        )
-        parent_neuron = result.scalar_one_or_none()
-    if not parent_neuron and department:
-        result = await db.execute(
-            select(Neuron).where(Neuron.department == department, Neuron.layer == 0, Neuron.is_active == True)
-        )
-        parent_neuron = result.scalar_one_or_none()
-
-    # Build context
-    context_info = ""
-    if parent_neuron:
-        children_result = await db.execute(
-            select(Neuron.id, Neuron.label, Neuron.layer, Neuron.node_type)
-            .where(Neuron.parent_id == parent_neuron.id, Neuron.is_active == True)
-            .order_by(Neuron.layer, Neuron.label)
-            .limit(30)
-        )
-        children = children_result.all()
-        if children:
-            context_info = f"\n\nExisting children of '{parent_neuron.label}' (layer {parent_neuron.layer}):\n"
-            for c in children:
-                context_info += f"  - [{c.node_type} L{c.layer}] {c.label} (id={c.id})\n"
-
-    system_prompt = f"""You are a knowledge graph architect for Yggdrasil, a 6-layer neuron hierarchy:
+def _build_batch_system_prompt(context_info: str) -> str:
+    return f"""You are a knowledge graph architect for Yggdrasil, a 6-layer neuron hierarchy:
 L0=Department, L1=Role, L2=Task, L3=System, L4=Decision, L5=Output.
 
 Your job is to segment source material into neuron proposals that fit the hierarchy.
@@ -881,11 +797,22 @@ Respond with a JSON array of neuron proposals. Each proposal:
 
 Output ONLY the JSON array, no other text."""
 
-    chunks = _chunk_text(source_text, chunk_size=chunk_size)
-    job_id = str(uuid.uuid4())[:8]
 
-    # Persist job to database
-    batch_job = BatchJob(
+def _create_batch_job_record(
+    job_id: str,
+    chunks: list[str],
+    source_text: str,
+    citation: str,
+    source_type: str,
+    department: str | None,
+    role_key: str | None,
+    parent_neuron,
+    queue_entry_id: int | None,
+    model: str,
+    body: dict,
+    system_prompt: str,
+) -> BatchJob:
+    return BatchJob(
         id=job_id,
         status="running",
         step="Starting...",
@@ -903,6 +830,169 @@ Output ONLY the JSON array, no other text."""
         source_url=body.get("source_url"),
         effective_date=body.get("effective_date"),
         chunks_json=json.dumps(chunks),
+        system_prompt=system_prompt,
+    )
+
+
+async def _update_batch_job(job_id: str, **kwargs):
+    """Update batch job fields in the database."""
+    async with async_session() as db:
+        job = await db.get(BatchJob, job_id)
+        if job:
+            for k, v in kwargs.items():
+                setattr(job, k, v)
+            await db.commit()
+
+
+async def _load_batch_job_state(job_id: str) -> dict | None:
+    async with async_session() as db:
+        job = await db.get(BatchJob, job_id)
+        if not job:
+            return None
+        return {
+            "chunks": json.loads(job.chunks_json or "[]"),
+            "system_prompt": job.system_prompt or "",
+            "citation": job.citation,
+            "source_type": job.source_type,
+            "department": job.department,
+            "role_key": job.role_key,
+            "parent_id": job.parent_id,
+            "source_url": job.source_url,
+            "effective_date": job.effective_date,
+            "model": job.model,
+            "all_proposals": json.loads(job.proposals_json or "[]"),
+            "errors": json.loads(job.errors_json or "[]"),
+            "total_cost": job.cost_usd,
+            "total_input": job.input_tokens,
+            "total_output": job.output_tokens,
+        }
+
+
+def _build_batch_chunk_user_msg(
+    state: dict, chunk: str, chunk_idx: int, total_chunks: int,
+    labels_so_far: list[str],
+) -> str:
+    dedup_hint = ""
+    if labels_so_far:
+        dedup_hint = "\n\nNeurons already created from earlier chunks (DO NOT duplicate):\n"
+        for lbl in labels_so_far[-30:]:
+            dedup_hint += f"  - {lbl}\n"
+
+    return f"""Citation: {state['citation']}
+Source type: {state['source_type']}
+Department: {state['department'] or 'unspecified'}
+Role: {state['role_key'] or 'unspecified'}
+Chunk {chunk_idx + 1} of {total_chunks}
+{dedup_hint}
+Source material to segment into neurons:
+
+{chunk}"""
+
+
+def _enrich_batch_proposals(proposals: list[dict], state: dict) -> None:
+    for p in proposals:
+        p["department"] = state["department"]
+        p["role_key"] = state["role_key"]
+        p["parent_id"] = state["parent_id"]
+        p["source_type"] = state["source_type"]
+        p["citation"] = state["citation"]
+        p["source_url"] = state["source_url"]
+        p["effective_date"] = state["effective_date"]
+
+
+async def _run_batch_ingest(job_id: str, start_chunk: int = 0):
+    """Background task: process chunks sequentially through the chosen model."""
+    from app.services.claude_cli import claude_chat
+
+    state = await _load_batch_job_state(job_id)
+    if not state:
+        return
+
+    chunks = state["chunks"]
+    all_proposals = state["all_proposals"]
+    errors = state["errors"]
+    total_cost = state["total_cost"]
+    total_input = state["total_input"]
+    total_output = state["total_output"]
+    labels_so_far = [p.get("label", "") for p in all_proposals]
+
+    for i in range(start_chunk, len(chunks)):
+        if _batch_cancel_flags.get(job_id):
+            await _update_batch_job(job_id, status="cancelled", step=f"Cancelled at chunk {i + 1}/{len(chunks)}")
+            _batch_cancel_flags.pop(job_id, None)
+            return
+
+        await _update_batch_job(
+            job_id, current_chunk=i + 1,
+            step=f"Processing chunk {i + 1} of {len(chunks)}", status="running",
+        )
+
+        user_msg = _build_batch_chunk_user_msg(state, chunks[i], i, len(chunks), labels_so_far)
+
+        try:
+            result = await claude_chat(state["system_prompt"], user_msg, max_tokens=8192, model=state["model"])
+            json_match = re.search(r'\[.*\]', result["text"].strip(), re.DOTALL)
+            if json_match:
+                proposals = json.loads(json_match.group())
+                _enrich_batch_proposals(proposals, state)
+                for p in proposals:
+                    labels_so_far.append(p.get("label", ""))
+                all_proposals.extend(proposals)
+            total_cost += result["cost_usd"]
+            total_input += result["input_tokens"]
+            total_output += result["output_tokens"]
+        except Exception as e:
+            errors.append(f"Chunk {i + 1}: {str(e)[:200]}")
+
+        await _update_batch_job(
+            job_id, proposals_json=json.dumps(all_proposals),
+            errors_json=json.dumps(errors), cost_usd=total_cost,
+            input_tokens=total_input, output_tokens=total_output,
+        )
+
+    await _update_batch_job(
+        job_id, status="done",
+        step=f"Complete: {len(all_proposals)} proposals from {len(chunks)} chunks",
+    )
+
+
+@router.post("/ingest-source/batch")
+async def start_batch_ingest(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a background batch ingestion job that processes large source texts in chunks.
+
+    Request body: same as ingest-source, but source_text can be arbitrarily large.
+    Returns a job_id to poll for progress.
+    """
+    import uuid
+
+    source_text, citation, source_type, department, role_key, queue_entry_id = (
+        _validate_ingest_body(body)
+    )
+    model = body.get("model", "haiku")
+    chunk_size = body.get("chunk_size", 18000)
+
+    parent_neuron = await _find_parent_neuron(db, role_key, department)
+    context_info = await _build_parent_context(db, parent_neuron)
+    system_prompt = _build_batch_system_prompt(context_info)
+
+    chunks = _chunk_text(source_text, chunk_size=chunk_size)
+    job_id = str(uuid.uuid4())[:8]
+
+    batch_job = _create_batch_job_record(
+        job_id=job_id,
+        chunks=chunks,
+        source_text=source_text,
+        citation=citation,
+        source_type=source_type,
+        department=department,
+        role_key=role_key,
+        parent_neuron=parent_neuron,
+        queue_entry_id=queue_entry_id,
+        model=model,
+        body=body,
         system_prompt=system_prompt,
     )
     db.add(batch_job)
@@ -1232,13 +1322,13 @@ async def scoring_health(
 # ── Health Check: automated drift alerting + circuit breaker + quality monitoring ──
 
 # Go/no-go thresholds (configurable)
-CIRCUIT_BREAKER_THRESHOLDS = {
+CIRCUIT_BREAKER_THRESHOLDS = MappingProxyType({
     "min_avg_eval_overall": 2.5,       # Below this → circuit breaker trips
     "min_avg_user_rating": 0.3,        # Below this → circuit breaker trips
     "max_zero_hit_pct": 0.40,          # >40% zero-hit queries → warning
     "drift_z_threshold": 2.0,          # Z-score threshold for drift alerts
     "eval_window": 20,                 # Number of recent queries to evaluate
-}
+})
 
 
 async def _maybe_create_alert(

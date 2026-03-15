@@ -198,21 +198,10 @@ def _apply_crop(frame_bytes: bytes, app_id: str) -> bytes:
     return buf.getvalue()
 
 
-async def process_frame(
-    frame_bytes: bytes,
-    timestamp: str,
-    width: int,
-    height: int,
-) -> dict:
-    """Process an incoming frame: OCR, classify, dedup, accumulate for interpretation."""
-    capture_state.latest_frame_bytes = frame_bytes
-    capture_state._frames_since_interpretation += 1
-
-    # Full OCR for app classification (needs URL bar)
+def _classify_and_crop(frame_bytes: bytes) -> tuple[str, bytes, str]:
     full_ocr_text = extract_text(frame_bytes)
     app_id = classify_app(full_ocr_text)
 
-    # Crop if we have a region for this app
     if app_id and app_id in capture_state.crop_regions:
         cropped_bytes = _apply_crop(frame_bytes, app_id)
         ocr_text = extract_text(cropped_bytes)
@@ -223,95 +212,129 @@ async def process_frame(
     if app_id is None:
         app_id = "other"
 
-    app_switched = capture_state._last_app_id is not None and app_id != capture_state._last_app_id
+    return app_id, cropped_bytes, ocr_text
+
+
+def _track_app_switch(app_id: str) -> bool:
+    app_switched = (
+        capture_state._last_app_id is not None
+        and app_id != capture_state._last_app_id
+    )
     capture_state._last_app_id = app_id
 
-    # Track time in current app for interrupt intelligence
     if app_switched or capture_state._current_app_id_for_time != app_id:
         capture_state._current_app_start = time.time()
         capture_state._current_app_id_for_time = app_id
 
-    # Dedup — use image hash in vision mode, text similarity in text mode
-    is_duplicate = False
+    return app_switched
+
+
+def _check_duplicate(app_id: str, cropped_bytes: bytes, ocr_text: str) -> bool:
     if capture_state.interpretation_mode == "vision":
         cropped_hash = image_phash(cropped_bytes)
         last_hash = capture_state._last_hash_by_app.get(app_id)
-        if last_hash is not None:
-            is_duplicate = image_similar(last_hash, cropped_hash, IMAGE_DEDUP_THRESHOLD)
+        is_dup = last_hash is not None and image_similar(
+            last_hash, cropped_hash, IMAGE_DEDUP_THRESHOLD
+        )
         capture_state._last_hash_by_app[app_id] = cropped_hash
-    else:
-        last_text = capture_state._last_text_by_app.get(app_id, "")
-        if last_text:
-            similarity = text_similarity(last_text, ocr_text)
-            if similarity > SIMILARITY_THRESHOLD:
-                is_duplicate = True
+        return is_dup
 
-    # Compute text similarity for novelty scoring (even in vision mode)
-    text_sim = text_similarity(capture_state._last_text_by_app.get(app_id, ""), ocr_text) if capture_state._last_text_by_app.get(app_id) else 0.0
-    _update_novelty(is_duplicate, app_switched, text_sim)
+    last_text = capture_state._last_text_by_app.get(app_id, "")
+    if last_text:
+        similarity = text_similarity(last_text, ocr_text)
+        if similarity > SIMILARITY_THRESHOLD:
+            return True
+    return False
 
-    capture_state._last_text_by_app[app_id] = ocr_text
 
-    # Always keep latest frame for time-cap fallback (vision mode)
+async def _accumulate_pending(
+    is_duplicate: bool, timestamp: str, app_id: str,
+    cropped_bytes: bytes, ocr_text: str,
+):
     if capture_state.interpretation_mode == "vision":
         capture_state._latest_frame_for_interp = {
-            "timestamp": timestamp,
-            "app_id": app_id,
-            "image_bytes": cropped_bytes,
-            "ocr_text": ocr_text,
+            "timestamp": timestamp, "app_id": app_id,
+            "image_bytes": cropped_bytes, "ocr_text": ocr_text,
         }
 
-    # Accumulate for interpretation (both modes), with bounded growth
-    if not is_duplicate:
-        async with capture_state.lock:
-            if capture_state.interpretation_mode == "vision":
-                capture_state._pending_images.append({
-                    "timestamp": timestamp,
-                    "app_id": app_id,
-                    "image_bytes": cropped_bytes,
-                    "ocr_text": ocr_text,
-                })
-                while len(capture_state._pending_images) > MAX_PENDING:
-                    capture_state._pending_images.pop(0)
-            else:
-                diff_text = _compute_diff(capture_state._last_text_by_app.get(app_id, ""), ocr_text)
-                if diff_text.strip():
-                    capture_state._pending_diffs.append({
-                        "timestamp": timestamp,
-                        "app_id": app_id,
-                        "diff_text": diff_text,
-                    })
-                    while len(capture_state._pending_diffs) > MAX_PENDING:
-                        capture_state._pending_diffs.pop(0)
+    if is_duplicate:
+        return
 
-    # Store OCR text in database (always, for dashboard log)
-    capture_id = None
+    async with capture_state.lock:
+        if capture_state.interpretation_mode == "vision":
+            capture_state._pending_images.append({
+                "timestamp": timestamp, "app_id": app_id,
+                "image_bytes": cropped_bytes, "ocr_text": ocr_text,
+            })
+            while len(capture_state._pending_images) > MAX_PENDING:
+                capture_state._pending_images.pop(0)
+        else:
+            diff_text = _compute_diff(
+                capture_state._last_text_by_app.get(app_id, ""), ocr_text,
+            )
+            if diff_text.strip():
+                capture_state._pending_diffs.append({
+                    "timestamp": timestamp, "app_id": app_id,
+                    "diff_text": diff_text,
+                })
+                while len(capture_state._pending_diffs) > MAX_PENDING:
+                    capture_state._pending_diffs.pop(0)
+
+
+async def _store_capture(
+    timestamp: str, app_id: str, ocr_text: str,
+    width: int, height: int, is_duplicate: bool,
+) -> int | None:
     async with async_session() as db:
         cap = CorvusCapture(
-            timestamp=timestamp,
-            app_id=app_id,
-            ocr_text=ocr_text,
-            width=width,
-            height=height,
-            is_duplicate=is_duplicate,
+            timestamp=timestamp, app_id=app_id, ocr_text=ocr_text,
+            width=width, height=height, is_duplicate=is_duplicate,
         )
         db.add(cap)
         await db.flush()
         capture_id = cap.id
         await db.commit()
+    return capture_id
 
-    # Extract and store entities (non-duplicate frames only)
+
+async def _extract_and_alert(
+    is_duplicate: bool, ocr_text: str, app_id: str,
+    timestamp: str, capture_id: int | None,
+) -> list[dict]:
     if not is_duplicate:
         entities = extract_entities(ocr_text)
         if entities:
             await store_entities(entities, app_id, timestamp, capture_id)
 
-    # Evaluate alert rules against OCR text
     alerts = await _check_alert_rules(ocr_text, app_id)
-
-    # Set alert flag for interrupt intelligence
     if alerts:
         capture_state.last_alert_fired = True
+    return alerts
+
+
+async def process_frame(
+    frame_bytes: bytes,
+    timestamp: str,
+    width: int,
+    height: int,
+) -> dict:
+    """Process an incoming frame: OCR, classify, dedup, accumulate for interpretation."""
+    capture_state.latest_frame_bytes = frame_bytes
+    capture_state._frames_since_interpretation += 1
+
+    app_id, cropped_bytes, ocr_text = _classify_and_crop(frame_bytes)
+    app_switched = _track_app_switch(app_id)
+    is_duplicate = _check_duplicate(app_id, cropped_bytes, ocr_text)
+
+    text_sim = text_similarity(
+        capture_state._last_text_by_app.get(app_id, ""), ocr_text,
+    ) if capture_state._last_text_by_app.get(app_id) else 0.0
+    _update_novelty(is_duplicate, app_switched, text_sim)
+    capture_state._last_text_by_app[app_id] = ocr_text
+
+    await _accumulate_pending(is_duplicate, timestamp, app_id, cropped_bytes, ocr_text)
+    capture_id = await _store_capture(timestamp, app_id, ocr_text, width, height, is_duplicate)
+    alerts = await _extract_and_alert(is_duplicate, ocr_text, app_id, timestamp, capture_id)
 
     return {
         "status": "duplicate" if is_duplicate else "stored",

@@ -437,10 +437,8 @@ async def _seed_evidence_data(db: AsyncSession) -> dict:
     return {"status": "seeded", "count": len(seed)}
 
 
-def _get_evidence_seed() -> list[dict]:
-    """All known requirement-to-evidence mappings."""
+def _get_nist_ai_rmf_seed() -> list[dict]:
     return [
-        # NIST AI RMF
         {"framework": "nist_ai_rmf", "requirement_id": "GOV-1.3", "requirement_name": "Risk Tolerance & Prioritization",
          "status": "addressed", "evidence_type": "document", "evidence_location": "docs/governance.md",
          "verification_query": "grep -l 'risk tolerance' docs/governance.md"},
@@ -467,8 +465,11 @@ def _get_evidence_seed() -> list[dict]:
         {"framework": "nist_ai_rmf", "requirement_id": "MEA-2.11", "requirement_name": "Fairness & Bias",
          "status": "addressed", "evidence_type": "endpoint", "evidence_location": "/admin/compliance-audit",
          "verification_query": "Fairness analysis in compliance audit"},
+    ]
 
-        # AIUC-1 key items
+
+def _get_aiuc1_seed() -> list[dict]:
+    return [
         {"framework": "aiuc_1", "requirement_id": "A006", "requirement_name": "Prevent PII Leakage",
          "status": "addressed", "evidence_type": "endpoint", "evidence_location": "/admin/compliance-audit",
          "verification_query": "PII scan in compliance audit"},
@@ -485,8 +486,11 @@ def _get_evidence_seed() -> list[dict]:
          "status": "addressed", "evidence_type": "table", "evidence_location": "queries"},
         {"framework": "aiuc_1", "requirement_id": "C008", "requirement_name": "Monitor AI Risk Categories",
          "status": "addressed", "evidence_type": "endpoint", "evidence_location": "/admin/scoring-health"},
+    ]
 
-        # ISO 42001 key items
+
+def _get_iso42001_seed() -> list[dict]:
+    return [
         {"framework": "iso_42001", "requirement_id": "5.1", "requirement_name": "Leadership & Commitment",
          "status": "addressed", "evidence_type": "document", "evidence_location": "docs/governance.md"},
         {"framework": "iso_42001", "requirement_id": "9.1", "requirement_name": "Monitoring & Evaluation",
@@ -505,8 +509,11 @@ def _get_evidence_seed() -> list[dict]:
          "status": "addressed", "evidence_type": "endpoint", "evidence_location": "/admin/compliance-snapshots"},
         {"framework": "iso_42001", "requirement_id": "A.9.4", "requirement_name": "Management Review of AIMS",
          "status": "addressed", "evidence_type": "review_log", "evidence_location": "management_reviews"},
+    ]
 
-        # FedRAMP Moderate (NIST 800-53 Rev 5)
+
+def _get_fedramp_moderate_seed() -> list[dict]:
+    return [
         {"framework": "fedramp_moderate", "requirement_id": "AC", "requirement_name": "Access Control",
          "status": "gap", "evidence_type": "code", "evidence_location": "backend/app/routers/",
          "notes": "No authentication layer. Must implement RBAC, session management, least privilege."},
@@ -537,8 +544,11 @@ def _get_evidence_seed() -> list[dict]:
         {"framework": "fedramp_moderate", "requirement_id": "CA", "requirement_name": "Security Assessment & Authorization",
          "status": "gap", "evidence_type": "document", "evidence_location": "docs/",
          "notes": "No SSP, SAR, POA&M, or ATO. Required for FedRAMP authorization."},
+    ]
 
-        # SOC 2 Type II (Trust Services Criteria)
+
+def _get_soc2_type2_seed() -> list[dict]:
+    return [
         {"framework": "soc2_type2", "requirement_id": "CC3", "requirement_name": "Risk Assessment",
          "status": "addressed", "evidence_type": "document", "evidence_location": "docs/risk-map.md",
          "verification_query": "Risk register with treatment plans and quarterly reassessment"},
@@ -566,8 +576,11 @@ def _get_evidence_seed() -> list[dict]:
         {"framework": "soc2_type2", "requirement_id": "P1", "requirement_name": "Privacy",
          "status": "partial", "evidence_type": "endpoint", "evidence_location": "/admin/compliance-audit",
          "notes": "PII scanning exists; missing privacy notice, consent management, retention policy"},
+    ]
 
-        # CMMC Level 2 (NIST 800-171r2 — 110 CUI security requirements)
+
+def _get_cmmc_level2_seed() -> list[dict]:
+    return [
         {"framework": "cmmc_level2", "requirement_id": "3.1", "requirement_name": "Access Control (22 practices)",
          "status": "gap", "evidence_type": "code", "evidence_location": "backend/app/",
          "notes": "No authentication. Must implement RBAC, MFA, least privilege for CUI handling."},
@@ -592,6 +605,18 @@ def _get_evidence_seed() -> list[dict]:
         {"framework": "cmmc_level2", "requirement_id": "3.14", "requirement_name": "System & Info Integrity (7 practices)",
          "status": "partial", "evidence_type": "code", "evidence_location": "backend/app/services/input_guard.py",
          "verification_query": "Input validation, PII detection, scoring health monitoring"},
+    ]
+
+
+def _get_evidence_seed() -> list[dict]:
+    """All known requirement-to-evidence mappings."""
+    return [
+        *_get_nist_ai_rmf_seed(),
+        *_get_aiuc1_seed(),
+        *_get_iso42001_seed(),
+        *_get_fedramp_moderate_seed(),
+        *_get_soc2_type2_seed(),
+        *_get_cmmc_level2_seed(),
     ]
 
 
@@ -741,7 +766,7 @@ def _render_report_html(report: dict) -> str:
 
 # ── Code Review Checklist (NASA Standards) ──
 
-NASA_CODE_REVIEW_CHECKLIST = [
+NASA_CODE_REVIEW_CHECKLIST = (
     {
         "id": "CR-01",
         "category": "Software Safety",
@@ -883,7 +908,7 @@ NASA_CODE_REVIEW_CHECKLIST = [
             "Chrome extension URLs point to integrated backend (port 8002)",
         ],
     },
-]
+)
 
 
 @router.get("/code-review")

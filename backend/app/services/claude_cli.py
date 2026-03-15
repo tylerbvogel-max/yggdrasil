@@ -56,24 +56,7 @@ DEFAULT_MODEL = "opus"  # CLI default on personal subscription
 CLAUDE_BIN = "/home/tylerbvogel/.config/nvm/versions/node/v20.20.0/bin/claude"
 
 
-async def claude_chat(
-    system_prompt: str,
-    user_message: str,
-    max_tokens: int = 2048,
-    model: str | None = None,
-) -> dict:
-    """Call the Claude CLI and return {"text": ..., "input_tokens": ..., "output_tokens": ...}.
-
-    `model` should be a MODEL_REGISTRY key ("haiku", "sonnet", "opus") or None for default.
-    """
-    # JPL Rule 5: at least one of system_prompt or user_message must be non-empty
-    assert (system_prompt and system_prompt.strip()) or (user_message and user_message.strip()), \
-        "claude_chat requires a non-empty system_prompt or user_message"
-
-    # Must unset CLAUDECODE to avoid nesting guard
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-
-    # Resolve model info
+def _build_cli_command(system_prompt: str, model: str | None) -> list[str]:
     model_info = MODEL_REGISTRY.get(model or DEFAULT_MODEL)
     cli_model_arg = model_info.cli_arg if model_info else model
 
@@ -86,7 +69,14 @@ async def claude_chat(
     if system_prompt:
         cmd.extend(["--system-prompt", system_prompt])
 
-    prompt = user_message
+    assert len(cmd) >= 4, "CLI command must have at least base args"
+    assert cmd[0] == CLAUDE_BIN, "CLI command must start with claude binary"
+    return cmd
+
+
+async def _run_cli_subprocess(cmd: list[str], prompt: str) -> tuple[bytes, bytes]:
+    # Must unset CLAUDECODE to avoid nesting guard
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -111,6 +101,12 @@ async def claude_chat(
             err_msg = stdout.decode()[:500].strip()
         raise RuntimeError(f"Claude CLI failed ({proc.returncode}): {err_msg}")
 
+    assert len(stdout) > 0, "CLI returned empty stdout on success"
+    assert proc.returncode == 0, "Expected zero return code"
+    return stdout, stderr
+
+
+def _parse_cli_response(stdout: bytes, model: str | None) -> dict:
     data = json.loads(stdout.decode())
 
     text = data.get("result", "")
@@ -119,16 +115,8 @@ async def claude_chat(
     cache_create = usage.get("cache_creation_input_tokens", 0)
     cache_read = usage.get("cache_read_input_tokens", 0)
     output_tokens = usage.get("output_tokens", 0)
-    # Total tokens for display (all input tokens regardless of cache status)
     input_tokens = base_input + cache_create + cache_read
-
-    # Capture model version string if available
     model_version = data.get("model", None)
-
-    # Calculate cost with proper cache pricing:
-    # - base input: full price
-    # - cache creation: 1.25x price
-    # - cache read: 0.10x price
     cost_usd = estimate_cost_with_cache(model, base_input, cache_create, cache_read, output_tokens)
 
     result = {
@@ -139,13 +127,30 @@ async def claude_chat(
         "model_version": model_version,
     }
 
-    # JPL Rule 5: postcondition — return dict has required keys and sane token counts
     assert "text" in result and "input_tokens" in result and "output_tokens" in result, \
         "claude_chat result missing required keys"
     assert result["input_tokens"] >= 0, f"input_tokens must be non-negative, got {result['input_tokens']}"
     assert result["output_tokens"] >= 0, f"output_tokens must be non-negative, got {result['output_tokens']}"
-
     return result
+
+
+async def claude_chat(
+    system_prompt: str,
+    user_message: str,
+    max_tokens: int = 2048,
+    model: str | None = None,
+) -> dict:
+    """Call the Claude CLI and return {"text": ..., "input_tokens": ..., "output_tokens": ...}.
+
+    `model` should be a MODEL_REGISTRY key ("haiku", "sonnet", "opus") or None for default.
+    """
+    # JPL Rule 5: at least one of system_prompt or user_message must be non-empty
+    assert (system_prompt and system_prompt.strip()) or (user_message and user_message.strip()), \
+        "claude_chat requires a non-empty system_prompt or user_message"
+
+    cmd = _build_cli_command(system_prompt, model)
+    stdout, _stderr = await _run_cli_subprocess(cmd, user_message)
+    return _parse_cli_response(stdout, model)
 
 
 def estimate_cost(model: str | None, input_tokens: int, output_tokens: int) -> float:

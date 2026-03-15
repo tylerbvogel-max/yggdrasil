@@ -80,6 +80,93 @@ async def _run_provider(provider: EvidenceProvider) -> EvidenceResult:
         )
 
 
+async def _emit_progress(
+    on_progress: Callable[[dict[str, Any]], Any] | None,
+    msg: dict[str, Any],
+) -> None:
+    if on_progress:
+        try:
+            await on_progress(msg) if asyncio.iscoroutinefunction(on_progress) else on_progress(msg)
+        except Exception:
+            pass
+
+
+async def _execute_buckets(
+    buckets: dict[str, list[EvidenceProvider]],
+    total: int,
+    on_progress: Callable[[dict[str, Any]], Any] | None,
+) -> list[EvidenceResult]:
+    results: list[EvidenceResult] = []
+    completed = 0
+
+    for bucket_name in ("http", "config", "artifact", "static", "manual"):
+        bucket = buckets[bucket_name]
+        if not bucket:
+            continue
+
+        await _emit_progress(on_progress, {"stage": bucket_name, "count": len(bucket), "completed": completed, "total": total})
+
+        if bucket_name == "http":
+            # Run HTTP tests in batches for concurrency
+            for i in range(0, len(bucket), HTTP_BATCH_SIZE):
+                batch = bucket[i:i + HTTP_BATCH_SIZE]
+                batch_results = await asyncio.gather(*[_run_provider(p) for p in batch])
+                results.extend(batch_results)
+                completed += len(batch_results)
+                await _emit_progress(on_progress, {"stage": bucket_name, "completed": completed, "total": total})
+        elif bucket_name == "static":
+            for p in bucket:
+                r = await _run_provider(p)
+                results.append(r)
+                completed += 1
+                await _emit_progress(on_progress, {"stage": bucket_name, "completed": completed, "total": total})
+        else:
+            for p in bucket:
+                r = await _run_provider(p)
+                results.append(r)
+                completed += 1
+
+    return results
+
+
+def _finalize_run_record(
+    run_record: ComplianceSuiteRun,
+    results: list[EvidenceResult],
+    started_at: datetime,
+) -> None:
+    elapsed_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
+    passed = sum(1 for r in results if r.passed)
+    failed = sum(1 for r in results if not r.passed and not r.detail.get("skipped"))
+    skipped = sum(1 for r in results if r.detail.get("skipped"))
+
+    run_record.completed_at = datetime.now(timezone.utc)
+    run_record.passed = passed
+    run_record.failed = failed
+    run_record.skipped = skipped
+    run_record.duration_ms = elapsed_ms
+
+
+async def _persist_run(
+    run_record: ComplianceSuiteRun,
+    results: list[EvidenceResult],
+) -> None:
+    async with async_session() as db:
+        db.add(run_record)
+        await db.flush()
+
+        for r in results:
+            db.add(ComplianceProviderResult(
+                run_id=run_record.id,
+                provider_id=r.provider_id,
+                passed=r.passed,
+                detail=json.dumps(r.detail),
+                duration_ms=r.duration_ms,
+                collected_at=r.collected_at,
+            ))
+        await db.commit()
+        await db.refresh(run_record)
+
+
 class SuiteRunner:
     async def run(
         self,
@@ -104,75 +191,9 @@ class SuiteRunner:
             triggered_by=triggered_by,
         )
 
-        results: list[EvidenceResult] = []
-        completed = 0
+        results = await _execute_buckets(buckets, total, on_progress)
+        _finalize_run_record(run_record, results, started_at)
+        await _persist_run(run_record, results)
 
-        async def _emit(msg: dict[str, Any]) -> None:
-            if on_progress:
-                try:
-                    await on_progress(msg) if asyncio.iscoroutinefunction(on_progress) else on_progress(msg)
-                except Exception:
-                    pass
-
-        for bucket_name in ("http", "config", "artifact", "static", "manual"):
-            bucket = buckets[bucket_name]
-            if not bucket:
-                continue
-
-            await _emit({"stage": bucket_name, "count": len(bucket), "completed": completed, "total": total})
-
-            if bucket_name == "http":
-                # Run HTTP tests in batches for concurrency
-                for i in range(0, len(bucket), HTTP_BATCH_SIZE):
-                    batch = bucket[i:i + HTTP_BATCH_SIZE]
-                    batch_results = await asyncio.gather(*[_run_provider(p) for p in batch])
-                    results.extend(batch_results)
-                    completed += len(batch_results)
-                    await _emit({"stage": bucket_name, "completed": completed, "total": total})
-            elif bucket_name == "static":
-                # Run static analysis in executor
-                loop = asyncio.get_running_loop()
-                for p in bucket:
-                    r = await _run_provider(p)
-                    results.append(r)
-                    completed += 1
-                    await _emit({"stage": bucket_name, "completed": completed, "total": total})
-            else:
-                for p in bucket:
-                    r = await _run_provider(p)
-                    results.append(r)
-                    completed += 1
-
-        elapsed_ms = int((time.monotonic() - (started_at.timestamp() - time.time() + time.monotonic())) * 1000)
-        # Simpler elapsed calc
-        elapsed_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
-
-        passed = sum(1 for r in results if r.passed)
-        failed = sum(1 for r in results if not r.passed and not r.detail.get("skipped"))
-        skipped = sum(1 for r in results if r.detail.get("skipped"))
-
-        run_record.completed_at = datetime.now(timezone.utc)
-        run_record.passed = passed
-        run_record.failed = failed
-        run_record.skipped = skipped
-        run_record.duration_ms = elapsed_ms
-
-        # Persist to database
-        async with async_session() as db:
-            db.add(run_record)
-            await db.flush()
-
-            for r in results:
-                db.add(ComplianceProviderResult(
-                    run_id=run_record.id,
-                    provider_id=r.provider_id,
-                    passed=r.passed,
-                    detail=json.dumps(r.detail),
-                    duration_ms=r.duration_ms,
-                    collected_at=r.collected_at,
-                ))
-            await db.commit()
-            await db.refresh(run_record)
-
-        await _emit({"stage": "complete", "completed": total, "total": total, "run_id": run_record.id})
+        await _emit_progress(on_progress, {"stage": "complete", "completed": total, "total": total, "run_id": run_record.id})
         return run_record

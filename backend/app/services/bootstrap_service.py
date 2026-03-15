@@ -373,33 +373,9 @@ async def purge_bootstrap(db: AsyncSession) -> dict:
     }
 
 
-async def intra_department_bridge(
+async def _load_dept_neurons_with_embeddings(
     db: AsyncSession,
-    similarity_threshold: float = 0.45,
-    min_weight: float = 0.20,
-    max_weight: float = 0.45,
-    dry_run: bool = False,
-) -> dict:
-    """Bridge role clusters within the same department using embedding similarity.
-
-    For each department, computes pairwise cosine similarity between neurons in
-    different roles. Creates edges where similarity exceeds threshold, with weight
-    proportional to similarity. This prevents intra-department role fragmentation
-    where e.g. Finance/cost_estimator and Finance/financial_analyst form isolated
-    sub-clusters despite covering related topics.
-
-    Only considers L1-L4 neurons (role through decision layers) to avoid
-    combinatorial explosion at output layer.
-
-    Args:
-        similarity_threshold: Minimum cosine similarity to create an edge (0-1).
-        min_weight: Minimum edge weight assigned.
-        max_weight: Maximum edge weight assigned.
-        dry_run: If True, compute stats but don't write.
-
-    Returns summary dict with per-department bridge counts.
-    """
-    # Load all neurons with embeddings, grouped by department
+) -> dict[str, list[dict]]:
     result = await db.execute(text("""
         SELECT id, department, role_key, layer, label, embedding
         FROM neurons
@@ -413,7 +389,6 @@ async def intra_department_bridge(
     """))
     rows = result.all()
 
-    # Group by department
     by_dept: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         try:
@@ -424,78 +399,107 @@ async def intra_department_bridge(
             "id": r[0], "department": r[1], "role_key": r[2],
             "layer": r[3], "label": r[4], "embedding": np.array(emb, dtype=np.float32),
         })
+    return by_dept
+
+
+def _find_cross_role_edges(
+    dept_neurons: list[dict],
+    similarity_threshold: float,
+    min_weight: float,
+    max_weight: float,
+) -> list[dict]:
+    roles = list({n["role_key"] for n in dept_neurons})
+    if len(roles) < 2:
+        return []
+
+    by_role: dict[str, list[dict]] = defaultdict(list)
+    for n in dept_neurons:
+        by_role[n["role_key"]].append(n)
+
+    edges = []
+    for i, role_a in enumerate(roles):
+        for role_b in roles[i + 1:]:
+            neurons_a = by_role[role_a]
+            neurons_b = by_role[role_b]
+
+            embs_a = np.array([n["embedding"] for n in neurons_a])
+            embs_b = np.array([n["embedding"] for n in neurons_b])
+            sim_matrix = embs_a @ embs_b.T
+
+            pairs = np.argwhere(sim_matrix >= similarity_threshold)
+            for idx_a, idx_b in pairs:
+                sim = float(sim_matrix[idx_a, idx_b])
+                weight = min_weight + (sim - similarity_threshold) / (1.0 - similarity_threshold) * (max_weight - min_weight)
+                weight = round(min(max_weight, max(min_weight, weight)), 4)
+
+                na = neurons_a[idx_a]
+                nb = neurons_b[idx_b]
+                edges.append({
+                    "src": min(na["id"], nb["id"]),
+                    "tgt": max(na["id"], nb["id"]),
+                    "weight": weight,
+                    "sim": round(sim, 3),
+                })
+    return edges
+
+
+async def _write_bridge_edges(db: AsyncSession, edges: list[dict]) -> int:
+    created = 0
+    for edge in edges:
+        co_fire = max(1, round(edge["weight"] * 10))
+        r = await db.execute(text(
+            "INSERT INTO neuron_edges (source_id, target_id, co_fire_count, weight, "
+            "  last_updated_query, edge_type, source, last_adjusted) "
+            "VALUES (:src, :tgt, :cfc, :w, 0, 'stellate', 'bootstrap', now()) "
+            "ON CONFLICT (source_id, target_id) DO UPDATE SET "
+            "  weight = GREATEST(neuron_edges.weight, :w), "
+            "  source = CASE WHEN neuron_edges.source = 'organic' THEN neuron_edges.source ELSE 'bootstrap' END, "
+            "  last_adjusted = now() "
+            "WHERE neuron_edges.source != 'organic'"
+        ), {"src": edge["src"], "tgt": edge["tgt"], "cfc": co_fire, "w": edge["weight"]})
+        if r.rowcount > 0:
+            created += 1
+    return created
+
+
+async def intra_department_bridge(
+    db: AsyncSession,
+    similarity_threshold: float = 0.45,
+    min_weight: float = 0.20,
+    max_weight: float = 0.45,
+    dry_run: bool = False,
+) -> dict:
+    """Bridge role clusters within the same department using embedding similarity.
+
+    Computes pairwise cosine similarity between L1-L4 neurons in different roles
+    within each department. Creates edges where similarity exceeds threshold, with
+    weight proportional to similarity. Prevents intra-department role fragmentation.
+
+    Returns summary dict with per-department bridge counts.
+    """
+    by_dept = await _load_dept_neurons_with_embeddings(db)
 
     dept_results = {}
     total_edges = 0
     total_created = 0
 
     for dept, dept_neurons in by_dept.items():
-        # Get unique roles in this department
-        roles = list({n["role_key"] for n in dept_neurons})
-        if len(roles) < 2:
-            continue
-
-        # Group neurons by role
-        by_role: dict[str, list[dict]] = defaultdict(list)
-        for n in dept_neurons:
-            by_role[n["role_key"]].append(n)
-
-        # For each pair of roles, find semantically similar cross-role pairs
-        edges_for_dept = []
-        for i, role_a in enumerate(roles):
-            for role_b in roles[i + 1:]:
-                neurons_a = by_role[role_a]
-                neurons_b = by_role[role_b]
-
-                # Build embedding matrices for batch similarity
-                embs_a = np.array([n["embedding"] for n in neurons_a])
-                embs_b = np.array([n["embedding"] for n in neurons_b])
-
-                # Compute all pairwise cosine similarities (normalized embeddings → dot product)
-                sim_matrix = embs_a @ embs_b.T
-
-                # Find pairs above threshold
-                pairs = np.argwhere(sim_matrix >= similarity_threshold)
-                for idx_a, idx_b in pairs:
-                    sim = float(sim_matrix[idx_a, idx_b])
-                    # Scale similarity to weight range
-                    weight = min_weight + (sim - similarity_threshold) / (1.0 - similarity_threshold) * (max_weight - min_weight)
-                    weight = round(min(max_weight, max(min_weight, weight)), 4)
-
-                    na = neurons_a[idx_a]
-                    nb = neurons_b[idx_b]
-                    edges_for_dept.append({
-                        "src": min(na["id"], nb["id"]),
-                        "tgt": max(na["id"], nb["id"]),
-                        "weight": weight,
-                        "sim": round(sim, 3),
-                    })
-
+        edges_for_dept = _find_cross_role_edges(
+            dept_neurons, similarity_threshold, min_weight, max_weight,
+        )
         if not edges_for_dept:
             continue
 
         created = 0
         if not dry_run:
-            for edge in edges_for_dept:
-                co_fire = max(1, round(edge["weight"] * 10))
-                r = await db.execute(text(
-                    "INSERT INTO neuron_edges (source_id, target_id, co_fire_count, weight, "
-                    "  last_updated_query, edge_type, source, last_adjusted) "
-                    "VALUES (:src, :tgt, :cfc, :w, 0, 'stellate', 'bootstrap', now()) "
-                    "ON CONFLICT (source_id, target_id) DO UPDATE SET "
-                    "  weight = GREATEST(neuron_edges.weight, :w), "
-                    "  source = CASE WHEN neuron_edges.source = 'organic' THEN neuron_edges.source ELSE 'bootstrap' END, "
-                    "  last_adjusted = now() "
-                    "WHERE neuron_edges.source != 'organic'"
-                ), {"src": edge["src"], "tgt": edge["tgt"], "cfc": co_fire, "w": edge["weight"]})
-                if r.rowcount > 0:
-                    created += 1
+            created = await _write_bridge_edges(db, edges_for_dept)
 
+        roles = list({n["role_key"] for n in dept_neurons})
         dept_results[dept] = {
             "role_pairs": len(roles) * (len(roles) - 1) // 2,
             "candidate_edges": len(edges_for_dept),
             "edges_written": created,
-            "avg_similarity": round(sum(e["sim"] for e in edges_for_dept) / len(edges_for_dept), 3) if edges_for_dept else 0,
+            "avg_similarity": round(sum(e["sim"] for e in edges_for_dept) / len(edges_for_dept), 3),
         }
         total_edges += len(edges_for_dept)
         total_created += created

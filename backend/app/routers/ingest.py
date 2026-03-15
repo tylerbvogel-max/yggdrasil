@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime
+from types import MappingProxyType
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -39,13 +40,102 @@ class ObservationResponse(BaseModel):
 
 
 # Map observation types to neuron layers
-OBSERVATION_LAYER_MAP = {
+OBSERVATION_LAYER_MAP = MappingProxyType({
     "decision": 4,    # L4 = Decision
     "process": 3,     # L3 = System/Process
     "entity": 5,      # L5 = Output/Communication
     "pattern": 3,     # L3 = System/Process
     "digest": 5,      # L5 = Output/Communication
-}
+})
+
+
+def _create_observation_record(
+    req: ObservationRequest,
+    department: str | None,
+    role_key: str | None,
+    proposed_layer: int,
+    similar_neuron: Neuron | None,
+    similarity: float | None,
+    status: str,
+) -> ObservationQueue:
+    return ObservationQueue(
+        source=req.source,
+        user_id=req.user_id,
+        observation_type=req.observation_type,
+        text=req.text[:2000],
+        entities_json=json.dumps(req.entities[:20]),
+        app_context=req.app_context,
+        project_path=req.project_path,
+        proposed_department=department,
+        proposed_role_key=role_key,
+        proposed_layer=proposed_layer,
+        similar_neuron_id=similar_neuron.id if similar_neuron else None,
+        similarity_score=similarity,
+        status=status,
+    )
+
+
+async def _handle_duplicate(
+    db: AsyncSession,
+    req: ObservationRequest,
+    similar_neuron: Neuron,
+    similarity: float,
+    department: str | None,
+    role_key: str | None,
+    proposed_layer: int,
+) -> ObservationResponse:
+    edges_strengthened = await _strengthen_entity_edges(db, req.entities, similar_neuron.id)
+    similar_neuron.invocations = (similar_neuron.invocations or 0) + 1
+
+    obs = _create_observation_record(
+        req, department, role_key, proposed_layer, similar_neuron, similarity, "duplicate",
+    )
+    db.add(obs)
+    await db.commit()
+
+    return ObservationResponse(
+        observation_id=obs.id,
+        status="edge_strengthened" if edges_strengthened > 0 else "duplicate",
+        proposed_department=department,
+        proposed_layer=proposed_layer,
+        similar_neuron_id=similar_neuron.id,
+        similar_neuron_label=similar_neuron.label,
+        similarity_score=similarity,
+        edges_strengthened=edges_strengthened,
+    )
+
+
+async def _handle_novel(
+    db: AsyncSession,
+    req: ObservationRequest,
+    similar_neuron: Neuron | None,
+    similarity: float | None,
+    department: str | None,
+    role_key: str | None,
+    proposed_layer: int,
+) -> ObservationResponse:
+    obs = _create_observation_record(
+        req, department, role_key, proposed_layer, similar_neuron, similarity, "queued",
+    )
+    db.add(obs)
+    await db.flush()
+
+    edges_strengthened = 0
+    if req.entities:
+        edges_strengthened = await _strengthen_entity_edges(db, req.entities)
+
+    await db.commit()
+
+    return ObservationResponse(
+        observation_id=obs.id,
+        status="queued",
+        proposed_department=department,
+        proposed_layer=proposed_layer,
+        similar_neuron_id=similar_neuron.id if similar_neuron else None,
+        similar_neuron_label=similar_neuron.label if similar_neuron else None,
+        similarity_score=similarity,
+        edges_strengthened=edges_strengthened,
+    )
 
 
 @router.post("/observation", response_model=ObservationResponse)
@@ -61,86 +151,16 @@ async def ingest_observation(req: ObservationRequest, db: AsyncSession = Depends
     """
     proposed_layer = OBSERVATION_LAYER_MAP.get(req.observation_type, 3)
 
-    # Step 1: Classify via Haiku (lightweight)
     department, role_key = await _classify_observation(req.text, req.observation_type, req.app_context)
-
-    # Step 2: Find semantically similar neurons
     similar_neuron, similarity = await _find_similar_neuron(db, req.text, department)
 
-    # Step 3: Decide action based on similarity
-    edges_strengthened = 0
-
     if similar_neuron and similarity and similarity >= 0.85:
-        # Duplicate or near-duplicate — strengthen edges, don't create
-        edges_strengthened = await _strengthen_entity_edges(db, req.entities, similar_neuron.id)
-
-        # Update recency on the similar neuron
-        similar_neuron.invocations = (similar_neuron.invocations or 0) + 1
-
-        # Record in observation queue for audit
-        obs = ObservationQueue(
-            source=req.source,
-            user_id=req.user_id,
-            observation_type=req.observation_type,
-            text=req.text[:2000],
-            entities_json=json.dumps(req.entities[:20]),
-            app_context=req.app_context,
-            project_path=req.project_path,
-            proposed_department=department,
-            proposed_role_key=role_key,
-            proposed_layer=proposed_layer,
-            similar_neuron_id=similar_neuron.id,
-            similarity_score=similarity,
-            status="duplicate",
-        )
-        db.add(obs)
-        await db.commit()
-
-        return ObservationResponse(
-            observation_id=obs.id,
-            status="edge_strengthened" if edges_strengthened > 0 else "duplicate",
-            proposed_department=department,
-            proposed_layer=proposed_layer,
-            similar_neuron_id=similar_neuron.id,
-            similar_neuron_label=similar_neuron.label,
-            similarity_score=similarity,
-            edges_strengthened=edges_strengthened,
+        return await _handle_duplicate(
+            db, req, similar_neuron, similarity, department, role_key, proposed_layer,
         )
 
-    # Novel enough — queue for review
-    obs = ObservationQueue(
-        source=req.source,
-        user_id=req.user_id,
-        observation_type=req.observation_type,
-        text=req.text[:2000],
-        entities_json=json.dumps(req.entities[:20]),
-        app_context=req.app_context,
-        project_path=req.project_path,
-        proposed_department=department,
-        proposed_role_key=role_key,
-        proposed_layer=proposed_layer,
-        similar_neuron_id=similar_neuron.id if similar_neuron else None,
-        similarity_score=similarity,
-        status="queued",
-    )
-    db.add(obs)
-    await db.flush()
-
-    # Strengthen entity edges even for new observations
-    if req.entities:
-        edges_strengthened = await _strengthen_entity_edges(db, req.entities)
-
-    await db.commit()
-
-    return ObservationResponse(
-        observation_id=obs.id,
-        status="queued",
-        proposed_department=department,
-        proposed_layer=proposed_layer,
-        similar_neuron_id=similar_neuron.id if similar_neuron else None,
-        similar_neuron_label=similar_neuron.label if similar_neuron else None,
-        similarity_score=similarity,
-        edges_strengthened=edges_strengthened,
+    return await _handle_novel(
+        db, req, similar_neuron, similarity, department, role_key, proposed_layer,
     )
 
 
@@ -327,107 +347,127 @@ async def get_observation_detail(obs_id: int, db: AsyncSession = Depends(get_db)
     }
 
 
-@router.post("/observations/{obs_id}/evaluate")
-async def evaluate_observation(
-    obs_id: int, req: ObservationEvalRequest, db: AsyncSession = Depends(get_db)
-):
-    """LLM-evaluate an observation and propose neuron actions."""
-    obs = await db.get(ObservationQueue, obs_id)
-    if not obs:
-        raise HTTPException(status_code=404, detail="Observation not found")
-    if obs.status not in ("queued", "evaluated"):
-        raise HTTPException(status_code=400, detail=f"Observation is {obs.status}, must be queued or evaluated")
-    # JPL Rule 5: observation must have text content to evaluate
-    assert obs.text and len(obs.text.strip()) > 0, "Observation text must be non-empty for evaluation"
+async def _build_similar_neuron_context(
+    db: AsyncSession, obs: ObservationQueue
+) -> str:
+    if not obs.similar_neuron_id:
+        return ""
+    sn = await db.get(Neuron, obs.similar_neuron_id)
+    if not sn:
+        return ""
 
-    # Gather context: similar neuron + parent chain
-    similar_context = ""
-    if obs.similar_neuron_id:
-        sn = await db.get(Neuron, obs.similar_neuron_id)
-        if sn:
-            similar_context = (
-                f"\n## Most Similar Neuron (similarity: {obs.similarity_score:.2f})\n"
-                f"ID: {sn.id} | Layer: L{sn.layer} | Type: {sn.node_type}\n"
-                f"Label: {sn.label}\n"
-                f"Department: {sn.department} | Role: {sn.role_key}\n"
-                f"Invocations: {sn.invocations} | Utility: {sn.avg_utility:.2f}\n"
-                f"Summary: {sn.summary or '(none)'}\n"
-                f"Content: {(sn.content or '(none)')[:1000]}\n"
-            )
-            # Parent chain (up 2 levels)
-            parent = await db.get(Neuron, sn.parent_id) if sn.parent_id else None
-            if parent:
-                similar_context += f"\nParent: [{parent.id}] L{parent.layer} {parent.label}\n"
-                grandparent = await db.get(Neuron, parent.parent_id) if parent.parent_id else None
-                if grandparent:
-                    similar_context += f"Grandparent: [{grandparent.id}] L{grandparent.layer} {grandparent.label}\n"
+    context = (
+        f"\n## Most Similar Neuron (similarity: {obs.similarity_score:.2f})\n"
+        f"ID: {sn.id} | Layer: L{sn.layer} | Type: {sn.node_type}\n"
+        f"Label: {sn.label}\n"
+        f"Department: {sn.department} | Role: {sn.role_key}\n"
+        f"Invocations: {sn.invocations} | Utility: {sn.avg_utility:.2f}\n"
+        f"Summary: {sn.summary or '(none)'}\n"
+        f"Content: {(sn.content or '(none)')[:1000]}\n"
+    )
 
-            # Siblings
-            sibling_result = await db.execute(
-                select(Neuron.id, Neuron.label, Neuron.layer).where(
-                    Neuron.parent_id == sn.parent_id,
-                    Neuron.id != sn.id,
-                    Neuron.is_active == True,
-                ).limit(5)
-            )
-            siblings = sibling_result.all()
-            if siblings:
-                similar_context += "\nSiblings:\n"
-                for sid, slabel, slayer in siblings:
-                    similar_context += f"  [{sid}] L{slayer} {slabel}\n"
+    parent = await db.get(Neuron, sn.parent_id) if sn.parent_id else None
+    if parent:
+        context += f"\nParent: [{parent.id}] L{parent.layer} {parent.label}\n"
+        grandparent = await db.get(Neuron, parent.parent_id) if parent.parent_id else None
+        if grandparent:
+            context += f"Grandparent: [{grandparent.id}] L{grandparent.layer} {grandparent.label}\n"
 
-    # Nearby neurons in same department
-    nearby_context = ""
-    if obs.proposed_department:
-        q = select(Neuron).where(
+    sibling_result = await db.execute(
+        select(Neuron.id, Neuron.label, Neuron.layer).where(
+            Neuron.parent_id == sn.parent_id,
+            Neuron.id != sn.id,
             Neuron.is_active == True,
-            Neuron.department == obs.proposed_department,
-        ).order_by(Neuron.layer, Neuron.invocations.desc()).limit(10)
-        if obs.similar_neuron_id:
-            q = q.where(Neuron.id != obs.similar_neuron_id)
-        result = await db.execute(q)
-        nearby_neurons = result.scalars().all()
-        if nearby_neurons:
-            nearby_context = "\n## Nearby Neurons in Department\n"
-            for n in nearby_neurons:
-                nearby_context += (
-                    f"  [{n.id}] L{n.layer} {n.label} "
-                    f"(inv:{n.invocations}, util:{n.avg_utility:.2f}) "
-                    f"— {(n.summary or '')[:100]}\n"
-                )
+        ).limit(5)
+    )
+    siblings = sibling_result.all()
+    if siblings:
+        context += "\nSiblings:\n"
+        for sid, slabel, slayer in siblings:
+            context += f"  [{sid}] L{slayer} {slabel}\n"
 
-    # Entities
-    entities_text = ""
+    return context
+
+
+async def _build_nearby_neuron_context(
+    db: AsyncSession, obs: ObservationQueue
+) -> str:
+    if not obs.proposed_department:
+        return ""
+
+    q = select(Neuron).where(
+        Neuron.is_active == True,
+        Neuron.department == obs.proposed_department,
+    ).order_by(Neuron.layer, Neuron.invocations.desc()).limit(10)
+    if obs.similar_neuron_id:
+        q = q.where(Neuron.id != obs.similar_neuron_id)
+
+    result = await db.execute(q)
+    nearby_neurons = result.scalars().all()
+    if not nearby_neurons:
+        return ""
+
+    context = "\n## Nearby Neurons in Department\n"
+    for n in nearby_neurons:
+        context += (
+            f"  [{n.id}] L{n.layer} {n.label} "
+            f"(inv:{n.invocations}, util:{n.avg_utility:.2f}) "
+            f"— {(n.summary or '')[:100]}\n"
+        )
+    return context
+
+
+def _build_entities_text(obs: ObservationQueue) -> str:
     try:
         entities = json.loads(obs.entities_json) if obs.entities_json else []
         if entities:
-            entities_text = "\nEntities: " + ", ".join(
+            return "\nEntities: " + ", ".join(
                 f"{e.get('type','?')}:{e.get('value','?')}" for e in entities[:10]
             )
     except Exception:
         pass
+    return ""
 
-    # LLM PROMPT INTENT: Evaluate a Corvus screen-capture observation and propose a single action
-    #   (create, update, merge, or dismiss) to integrate the observation into the neuron knowledge
-    #   graph. The LLM acts as a graph architect deciding how new operational knowledge should be
-    #   incorporated relative to existing neurons.
-    # INPUT: User message contains the observation text, type, app context, proposed department/role,
-    #   extracted entities, the most similar existing neuron with its parent chain and siblings, and
-    #   nearby neurons in the same department. All formatted as labeled markdown sections.
-    # OUTPUT FORMAT: Raw JSON object (no markdown fences):
-    #   {"reasoning": str, "action": "create|update|merge|dismiss",
-    #    "updates": [{"neuron_id": int, "field": str, "old_value": str, "new_value": str, "reason": str}],
-    #    "new_neurons": [{"parent_id": int, "layer": int, "node_type": str, "label": str,
-    #     "content": str, "summary": str, "department": str, "role_key": str, "reason": str}],
-    #    "merge_target_id": int|null, "merge_content_delta": str|null}
-    #   Only the fields relevant to the chosen action should be populated.
-    # FAILURE MODES: If the LLM returns non-JSON, a regex fallback attempts to extract the outermost
-    #   JSON object. If that also fails, a 500 HTTP error is raised. If the LLM returns an invalid
-    #   action value, the assertion on line 478 will raise an AssertionError (caught as 500). If the
-    #   LLM proposes a nonexistent parent_id for new neurons, the neuron is created with a dangling
-    #   parent reference. Proposals are stored but NOT applied until explicit human approval via
-    #   the /apply endpoint — this is a safety gate per Corvus development rules.
-    system_prompt = """You are a neuron graph architect reviewing a screen-capture observation for potential ingestion into a knowledge graph.
+
+def _parse_eval_response(response_text: str) -> dict:
+    import re
+
+    try:
+        eval_data = json.loads(response_text)
+    except json.JSONDecodeError:
+        match = re.search(r'\{[\s\S]*\}', response_text)
+        if match:
+            eval_data = json.loads(match.group())
+        else:
+            raise HTTPException(status_code=500, detail="LLM response was not valid JSON")
+
+    assert isinstance(eval_data, dict), "LLM eval response must parse to a dict"
+    assert eval_data.get("action") in ("create", "update", "merge", "dismiss"), \
+        f"eval action must be create/update/merge/dismiss, got {eval_data.get('action')!r}"
+    return eval_data
+
+
+# LLM PROMPT INTENT: Evaluate a Corvus screen-capture observation and propose a single action
+#   (create, update, merge, or dismiss) to integrate the observation into the neuron knowledge
+#   graph. The LLM acts as a graph architect deciding how new operational knowledge should be
+#   incorporated relative to existing neurons.
+# INPUT: User message contains the observation text, type, app context, proposed department/role,
+#   extracted entities, the most similar existing neuron with its parent chain and siblings, and
+#   nearby neurons in the same department. All formatted as labeled markdown sections.
+# OUTPUT FORMAT: Raw JSON object (no markdown fences):
+#   {"reasoning": str, "action": "create|update|merge|dismiss",
+#    "updates": [{"neuron_id": int, "field": str, "old_value": str, "new_value": str, "reason": str}],
+#    "new_neurons": [{"parent_id": int, "layer": int, "node_type": str, "label": str,
+#     "content": str, "summary": str, "department": str, "role_key": str, "reason": str}],
+#    "merge_target_id": int|null, "merge_content_delta": str|null}
+#   Only the fields relevant to the chosen action should be populated.
+# FAILURE MODES: If the LLM returns non-JSON, a regex fallback attempts to extract the outermost
+#   JSON object. If that also fails, a 500 HTTP error is raised. If the LLM returns an invalid
+#   action value, the assertion will raise an AssertionError (caught as 500). If the
+#   LLM proposes a nonexistent parent_id for new neurons, the neuron is created with a dangling
+#   parent reference. Proposals are stored but NOT applied until explicit human approval via
+#   the /apply endpoint — this is a safety gate per Corvus development rules.
+_EVAL_SYSTEM_PROMPT = """You are a neuron graph architect reviewing a screen-capture observation for potential ingestion into a knowledge graph.
 
 The graph has 6 layers:
 - L0: Department (organizational unit)
@@ -461,6 +501,23 @@ Respond with ONLY a JSON object (no markdown fences):
 
 Only populate the relevant array/fields for your chosen action. Leave others empty/null."""
 
+
+@router.post("/observations/{obs_id}/evaluate")
+async def evaluate_observation(
+    obs_id: int, req: ObservationEvalRequest, db: AsyncSession = Depends(get_db)
+):
+    """LLM-evaluate an observation and propose neuron actions."""
+    obs = await db.get(ObservationQueue, obs_id)
+    if not obs:
+        raise HTTPException(status_code=404, detail="Observation not found")
+    if obs.status not in ("queued", "evaluated"):
+        raise HTTPException(status_code=400, detail=f"Observation is {obs.status}, must be queued or evaluated")
+    assert obs.text and len(obs.text.strip()) > 0, "Observation text must be non-empty for evaluation"
+
+    similar_context = await _build_similar_neuron_context(db, obs)
+    nearby_context = await _build_nearby_neuron_context(db, obs)
+    entities_text = _build_entities_text(obs)
+
     user_message = (
         f"## Observation\n"
         f"Type: {obs.observation_type}\n"
@@ -473,32 +530,15 @@ Only populate the relevant array/fields for your chosen action. Leave others emp
         f"{nearby_context}"
     )
 
-    # Call LLM
     result = await claude_chat(
-        system_prompt=system_prompt,
+        system_prompt=_EVAL_SYSTEM_PROMPT,
         user_message=user_message,
         max_tokens=4096,
         model=req.model,
     )
 
-    # Parse response
-    try:
-        eval_data = json.loads(result["text"])
-    except json.JSONDecodeError:
-        # Try to extract JSON from response
-        import re
-        match = re.search(r'\{[\s\S]*\}', result["text"])
-        if match:
-            eval_data = json.loads(match.group())
-        else:
-            raise HTTPException(status_code=500, detail="LLM response was not valid JSON")
+    eval_data = _parse_eval_response(result["text"])
 
-    # JPL Rule 5: eval_data must have a valid action before persisting
-    assert isinstance(eval_data, dict), "LLM eval response must parse to a dict"
-    assert eval_data.get("action") in ("create", "update", "merge", "dismiss"), \
-        f"eval action must be create/update/merge/dismiss, got {eval_data.get('action')!r}"
-
-    # Store evaluation
     obs.eval_json = json.dumps(eval_data)
     obs.eval_model = req.model
     obs.eval_input_tokens = result.get("input_tokens", 0)
@@ -538,37 +578,21 @@ async def evaluate_observation_batch(
     return results
 
 
-@router.post("/observations/{obs_id}/apply")
-async def apply_observation(
-    obs_id: int, req: ObservationApplyRequest, db: AsyncSession = Depends(get_db)
-):
-    """Apply evaluated proposals: create neurons, update fields, merge content."""
-    obs = await db.get(ObservationQueue, obs_id)
-    if not obs:
-        raise HTTPException(status_code=404, detail="Observation not found")
-    if obs.status != "evaluated":
-        raise HTTPException(status_code=400, detail=f"Observation is {obs.status}, must be evaluated first")
-    if not obs.eval_json:
-        raise HTTPException(status_code=400, detail="No evaluation data found")
-
+def _validate_and_parse_eval(obs: ObservationQueue) -> dict:
+    assert obs.eval_json, "No evaluation data found"
     eval_data = json.loads(obs.eval_json)
-    # JPL Rule 5: eval_data must be a well-formed dict with a valid action
     assert isinstance(eval_data, dict), "Stored eval_json must deserialize to a dict"
     action = eval_data.get("action", "dismiss")
     assert action in ("create", "update", "merge", "dismiss"), \
         f"eval action must be create/update/merge/dismiss, got {action!r}"
-    updates_list = eval_data.get("updates", [])
-    new_neurons_list = eval_data.get("new_neurons", [])
-    merge_target_id = eval_data.get("merge_target_id")
-    merge_content_delta = eval_data.get("merge_content_delta")
+    return eval_data
 
+
+async def _apply_selected_updates(
+    db: AsyncSession, updates_list: list[dict], indices: list[int], obs_id: int
+) -> int:
     updated_count = 0
-    created_count = 0
-    merged_count = 0
-    created_neuron_ids = []
-
-    # Apply selected updates
-    for idx in req.update_indices:
+    for idx in indices:
         if idx < 0 or idx >= len(updates_list):
             continue
         u = updates_list[idx]
@@ -592,12 +616,19 @@ async def apply_observation(
             field=field,
             old_value=str(old_val),
             new_value=str(new_val),
-            reason=u.get("reason", f"Corvus observation #{obs.id}"),
+            reason=u.get("reason", f"Corvus observation #{obs_id}"),
         ))
         updated_count += 1
+    return updated_count
 
-    # Apply selected new neurons
-    for idx in req.new_neuron_indices:
+
+async def _apply_selected_new_neurons(
+    db: AsyncSession, new_neurons_list: list[dict], indices: list[int],
+    obs: ObservationQueue,
+) -> tuple[int, list[int]]:
+    created_count = 0
+    created_neuron_ids = []
+    for idx in indices:
         if idx < 0 or idx >= len(new_neurons_list):
             continue
         n = new_neurons_list[idx]
@@ -626,34 +657,76 @@ async def apply_observation(
             reason=n.get("reason", f"Corvus observation #{obs.id}"),
         ))
         created_count += 1
+    return created_count, created_neuron_ids
 
-    # Apply merge if action was merge and no specific indices were selected
-    if action == "merge" and merge_target_id and merge_content_delta:
-        if not req.update_indices and not req.new_neuron_indices:
-            # Default merge behavior when no specific selections made
-            target = await db.get(Neuron, merge_target_id)
-            if target:
-                old_content = target.content or ""
-                target.content = old_content + "\n\n" + merge_content_delta
-                populate_external_references(target)
-                db.add(NeuronRefinement(
-                    neuron_id=merge_target_id,
-                    action="update",
-                    field="content",
-                    old_value=old_content[:500],
-                    new_value=target.content[:500],
-                    reason=f"Merged from Corvus observation #{obs.id}",
-                ))
-                merged_count += 1
 
-    # Strengthen entity edges
+async def _apply_merge(
+    db: AsyncSession, merge_target_id: int, merge_content_delta: str, obs_id: int
+) -> int:
+    target = await db.get(Neuron, merge_target_id)
+    if not target:
+        return 0
+    old_content = target.content or ""
+    target.content = old_content + "\n\n" + merge_content_delta
+    populate_external_references(target)
+    db.add(NeuronRefinement(
+        neuron_id=merge_target_id,
+        action="update",
+        field="content",
+        old_value=old_content[:500],
+        new_value=target.content[:500],
+        reason=f"Merged from Corvus observation #{obs_id}",
+    ))
+    return 1
+
+
+async def _strengthen_observation_entity_edges(
+    db: AsyncSession, obs: ObservationQueue,
+    created_neuron_ids: list[int], merge_target_id: int | None,
+) -> None:
     try:
         entities = json.loads(obs.entities_json) if obs.entities_json else []
         if entities:
-            anchor_id = created_neuron_ids[0] if created_neuron_ids else (merge_target_id or obs.similar_neuron_id)
+            anchor_id = (
+                created_neuron_ids[0] if created_neuron_ids
+                else (merge_target_id or obs.similar_neuron_id)
+            )
             await _strengthen_entity_edges(db, entities, anchor_id)
     except Exception:
         pass
+
+
+@router.post("/observations/{obs_id}/apply")
+async def apply_observation(
+    obs_id: int, req: ObservationApplyRequest, db: AsyncSession = Depends(get_db)
+):
+    """Apply evaluated proposals: create neurons, update fields, merge content."""
+    obs = await db.get(ObservationQueue, obs_id)
+    if not obs:
+        raise HTTPException(status_code=404, detail="Observation not found")
+    if obs.status != "evaluated":
+        raise HTTPException(status_code=400, detail=f"Observation is {obs.status}, must be evaluated first")
+    if not obs.eval_json:
+        raise HTTPException(status_code=400, detail="No evaluation data found")
+
+    eval_data = _validate_and_parse_eval(obs)
+    action = eval_data.get("action", "dismiss")
+
+    updated_count = await _apply_selected_updates(
+        db, eval_data.get("updates", []), req.update_indices, obs.id,
+    )
+    created_count, created_neuron_ids = await _apply_selected_new_neurons(
+        db, eval_data.get("new_neurons", []), req.new_neuron_indices, obs,
+    )
+
+    merged_count = 0
+    merge_target_id = eval_data.get("merge_target_id")
+    merge_content_delta = eval_data.get("merge_content_delta")
+    if action == "merge" and merge_target_id and merge_content_delta:
+        if not req.update_indices and not req.new_neuron_indices:
+            merged_count = await _apply_merge(db, merge_target_id, merge_content_delta, obs.id)
+
+    await _strengthen_observation_entity_edges(db, obs, created_neuron_ids, merge_target_id)
 
     obs.status = "approved"
     if created_neuron_ids:

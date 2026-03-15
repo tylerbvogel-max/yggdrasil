@@ -1,9 +1,10 @@
 import re
 import json
+from types import MappingProxyType
 
 # URL patterns — definitive identification. If a URL matches, that's the app.
 # These are checked first and override everything else.
-URL_PATTERNS = {
+URL_PATTERNS = MappingProxyType({
     "teams": [
         r"teams\.microsoft\.\w+",
         r"gov\.teams\.microsoft",
@@ -21,11 +22,11 @@ URL_PATTERNS = {
         r"databricks\.com",
         r"\.cloud\.databricks\.\w+",
     ],
-}
+})
 
 # Fallback text patterns — only used if no URL matched.
 # These are weaker signals and require multiple matches to be confident.
-FALLBACK_PATTERNS = {
+FALLBACK_PATTERNS = MappingProxyType({
     "teams": [
         r"microsoft teams",
         r"(?:chat|activity|calendar|calls)\s+(?:chat|activity|calendar|calls)",
@@ -46,7 +47,7 @@ FALLBACK_PATTERNS = {
         r"(?:workspace|clusters|jobs|sql\s+editor|notebooks)",
         r"(?:spark|delta|lakehouse)",
     ],
-}
+})
 
 # Minimum fallback matches required to classify (prevents false positives)
 FALLBACK_MIN_MATCHES = 2

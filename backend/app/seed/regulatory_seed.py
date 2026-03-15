@@ -22,7 +22,7 @@ def _cross_ref(depts: list[str]) -> str:
 # Each task: (label, summary, content, cross_ref_depts | None, systems)
 # Each system: (label, summary, content)
 
-REGULATORY_TREE = [
+REGULATORY_TREE = (
     # ── AS9100 Rev D ──
     ("AS9100 Rev D", "as9100d",
      ["Engineering", "Manufacturing & Operations", "Contracts & Compliance", "Administrative & Support", "Program Management", "Finance"],
@@ -472,7 +472,7 @@ REGULATORY_TREE = [
          "Recertification options: (1) Re-examination (written general + specific + practical) at 5-year intervals, or (2) performance-based (documented evidence of continued satisfactory performance + current visual acuity). Lapse provisions: certification lapses if recertification not completed by expiration date. If lapsed <180 days, may recertify by examination only. If lapsed >180 days, must complete additional training + re-examination. Employer may impose more stringent requirements. Records retained for duration of certification + one certification period.",
          None, []),
      ]),
-]
+)
 
 
 def _get_pg_dsn() -> str:

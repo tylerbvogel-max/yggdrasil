@@ -1,18 +1,19 @@
 """Entity extraction and cross-app linking for Corvus (PostgreSQL)."""
 
 import re
+from types import MappingProxyType
 from sqlalchemy import select, text as sql_text, func
 from app.database import async_session
 from app.models_corvus import CorvusEntity
 
 # Regex patterns for entity extraction
-ENTITY_PATTERNS = {
+ENTITY_PATTERNS = MappingProxyType({
     "ticket": r"\b(?!ERR|ERROR|WARN|FATAL)[A-Z][A-Z0-9]{1,9}-\d+\b",
     "email": r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b",
     "url": r"https?://[^\s<>\"']+",
     "mention": r"(?<!\w)@[\w][\w.-]*(?![\w@.])",
     "error_code": r"\b(?:ERR|ERROR|WARN|FATAL)[-_]?\d{3,}\b",
-}
+})
 
 
 def extract_entities(text: str) -> list[dict]:

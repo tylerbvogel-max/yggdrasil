@@ -28,6 +28,198 @@ from app.models import InhibitoryRegulator, Neuron
 from app.services.scoring_engine import NeuronScoreBreakdown
 
 
+async def _load_neuron_metadata(
+    db: AsyncSession, neuron_ids: list[int],
+) -> tuple[dict[int, str], dict[int, str], dict[int, list[float]], dict[int, list[str]]]:
+    meta_result = await db.execute(
+        select(Neuron.id, Neuron.department, Neuron.role_key, Neuron.embedding, Neuron.cross_ref_departments)
+        .where(Neuron.id.in_(neuron_ids))
+    )
+    dept_map: dict[int, str] = {}
+    role_map: dict[int, str] = {}
+    emb_map: dict[int, list[float]] = {}
+    cross_ref_map: dict[int, list[str]] = {}
+
+    for nid, dept, role, emb_json, xref in meta_result.all():
+        dept_map[nid] = dept or ""
+        role_map[nid] = role or ""
+        if emb_json:
+            try:
+                emb_map[nid] = json.loads(emb_json)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if xref:
+            try:
+                cross_ref_map[nid] = json.loads(xref)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    return dept_map, role_map, emb_map, cross_ref_map
+
+
+async def _load_region_regulators(db: AsyncSession) -> dict[str, InhibitoryRegulator]:
+    reg_result = await db.execute(
+        select(InhibitoryRegulator).where(InhibitoryRegulator.is_active == True)
+    )
+    region_regulators: dict[str, InhibitoryRegulator] = {}
+    for reg in reg_result.scalars().all():
+        region_regulators[f"{reg.region_type}:{reg.region_value}"] = reg
+    return region_regulators
+
+
+def _apply_density_suppression(
+    top_k: list[NeuronScoreBreakdown],
+    dept_map: dict[int, str],
+    region_regulators: dict[str, InhibitoryRegulator],
+) -> tuple[list[NeuronScoreBreakdown], set[int]]:
+    # --- Pass 1: Regional density suppression (basket cell) ---
+    suppressed_ids: set[int] = set()
+
+    dept_groups: dict[str, list[NeuronScoreBreakdown]] = {}
+    for s in top_k:
+        dept = dept_map.get(s.neuron_id, "")
+        dept_groups.setdefault(dept, []).append(s)
+
+    for dept, group in dept_groups.items():
+        reg = region_regulators.get(f"department:{dept}")
+        threshold = reg.activation_threshold if reg else settings.inhibition_default_threshold
+        max_surv = reg.max_survivors if reg else settings.inhibition_default_max_survivors
+
+        if len(group) > threshold:
+            group.sort(key=lambda s: s.combined, reverse=True)
+            for s in group[max_surv:]:
+                suppressed_ids.add(s.neuron_id)
+
+            if reg:
+                reg.total_activations += 1
+                reg.total_suppressions += len(group) - max_surv
+
+    survivors = [s for s in top_k if s.neuron_id not in suppressed_ids]
+    return survivors, suppressed_ids
+
+
+def _apply_redundancy_suppression(
+    survivors: list[NeuronScoreBreakdown],
+    dept_map: dict[int, str],
+    emb_map: dict[int, list[float]],
+) -> tuple[list[NeuronScoreBreakdown], set[int]]:
+    # --- Pass 2: Redundancy suppression (chandelier cell) ---
+    redundant_ids: set[int] = set()
+
+    dept_surv_groups: dict[str, list[NeuronScoreBreakdown]] = {}
+    for s in survivors:
+        dept_surv_groups.setdefault(dept_map.get(s.neuron_id, ""), []).append(s)
+
+    for dept, group in dept_surv_groups.items():
+        if len(group) < 2:
+            continue
+
+        group_embs = []
+        group_ids = []
+        for s in group:
+            if s.neuron_id in emb_map:
+                group_embs.append(emb_map[s.neuron_id])
+                group_ids.append(s.neuron_id)
+
+        if len(group_embs) < 2:
+            continue
+
+        _suppress_redundant_in_group(group_ids, group_embs, redundant_ids)
+
+    survivors = [s for s in survivors if s.neuron_id not in redundant_ids]
+    return survivors, redundant_ids
+
+
+def _suppress_redundant_in_group(
+    group_ids: list[int],
+    group_embs: list[list[float]],
+    redundant_ids: set[int],
+) -> None:
+    mat = np.array(group_embs, dtype=np.float32)
+    sims = mat @ mat.T
+
+    cosine_threshold = settings.inhibition_redundancy_cosine
+    for i in range(len(group_ids) - 1, 0, -1):
+        if group_ids[i] in redundant_ids:
+            continue
+        for j in range(i):
+            if group_ids[j] in redundant_ids:
+                continue
+            if sims[i][j] >= cosine_threshold:
+                redundant_ids.add(group_ids[i])
+                break
+
+
+def _apply_crossref_floor(
+    survivors: list[NeuronScoreBreakdown],
+    top_k: list[NeuronScoreBreakdown],
+    below: list[NeuronScoreBreakdown],
+    dept_map: dict[int, str],
+    cross_ref_map: dict[int, list[str]],
+    suppressed_ids: set[int],
+    redundant_ids: set[int],
+) -> list[NeuronScoreBreakdown]:
+    # --- Pass 3: Cross-reference floor guarantee (Martinotti cell) ---
+    cross_ref_depts: set[str] = set()
+    for s in survivors:
+        cross_ref_depts.update(cross_ref_map.get(s.neuron_id, []))
+
+    if not cross_ref_depts:
+        return survivors
+
+    surv_dept_counts: dict[str, int] = {}
+    for s in survivors:
+        dept = dept_map.get(s.neuron_id, "")
+        surv_dept_counts[dept] = surv_dept_counts.get(dept, 0) + 1
+
+    min_floor = settings.diversity_floor_min
+    surv_ids = {s.neuron_id for s in survivors}
+    additions: list[NeuronScoreBreakdown] = []
+    rejected_ids = suppressed_ids | redundant_ids
+
+    for dept in cross_ref_depts:
+        current = surv_dept_counts.get(dept, 0)
+        if current >= min_floor:
+            continue
+        needed = min_floor - current
+        all_below = below + [s for s in top_k if s.neuron_id in rejected_ids]
+        for s in all_below:
+            if s.neuron_id in surv_ids:
+                continue
+            if dept_map.get(s.neuron_id, "") == dept:
+                additions.append(s)
+                surv_ids.add(s.neuron_id)
+                needed -= 1
+                if needed <= 0:
+                    break
+
+    survivors = survivors + additions
+    return survivors
+
+
+def _reassemble_result(
+    survivors: list[NeuronScoreBreakdown],
+    top_k: list[NeuronScoreBreakdown],
+    below: list[NeuronScoreBreakdown],
+    suppressed_ids: set[int],
+    redundant_ids: set[int],
+    top_k_count: int,
+    input_length: int,
+) -> tuple[list[NeuronScoreBreakdown], int]:
+    survivors.sort(key=lambda s: s.combined, reverse=True)
+
+    surv_ids = {s.neuron_id for s in survivors}
+    remaining = [s for s in below if s.neuron_id not in surv_ids]
+    suppressed_below = [s for s in top_k if s.neuron_id in (suppressed_ids | redundant_ids) and s.neuron_id not in surv_ids]
+    suppressed_below.sort(key=lambda s: s.combined, reverse=True)
+
+    survivor_count = len(survivors)
+    assert survivor_count <= top_k_count, f"survivor_count {survivor_count} exceeds top_k_count {top_k_count}"
+    result_list = survivors + suppressed_below + remaining
+    assert len(result_list) >= input_length, f"Inhibition lost neurons: {len(result_list)} < {input_length}"
+    return result_list, survivor_count
+
+
 async def apply_inhibition(
     db: AsyncSession,
     scored: list[NeuronScoreBreakdown],
@@ -51,166 +243,17 @@ async def apply_inhibition(
     if not top_k:
         return scored
 
-    # Load neuron metadata for top-K
     top_ids = [s.neuron_id for s in top_k]
-    meta_result = await db.execute(
-        select(Neuron.id, Neuron.department, Neuron.role_key, Neuron.embedding, Neuron.cross_ref_departments)
-        .where(Neuron.id.in_(top_ids))
+    dept_map, role_map, emb_map, cross_ref_map = await _load_neuron_metadata(db, top_ids)
+    region_regulators = await _load_region_regulators(db)
+
+    survivors, suppressed_ids = _apply_density_suppression(top_k, dept_map, region_regulators)
+    survivors, redundant_ids = _apply_redundancy_suppression(survivors, dept_map, emb_map)
+    survivors = _apply_crossref_floor(
+        survivors, top_k, below, dept_map, cross_ref_map, suppressed_ids, redundant_ids,
     )
-    meta_rows = meta_result.all()
-    dept_map: dict[int, str] = {}
-    role_map: dict[int, str] = {}
-    emb_map: dict[int, list[float]] = {}
-    cross_ref_map: dict[int, list[str]] = {}
 
-    for nid, dept, role, emb_json, xref in meta_rows:
-        dept_map[nid] = dept or ""
-        role_map[nid] = role or ""
-        if emb_json:
-            try:
-                emb_map[nid] = json.loads(emb_json)
-            except (json.JSONDecodeError, TypeError):
-                pass
-        if xref:
-            try:
-                cross_ref_map[nid] = json.loads(xref)
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-    # Load active inhibitory regulators
-    reg_result = await db.execute(
-        select(InhibitoryRegulator).where(InhibitoryRegulator.is_active == True)
-    )
-    regulators = list(reg_result.scalars().all())
-
-    # Build region→regulator lookup
-    region_regulators: dict[str, InhibitoryRegulator] = {}
-    for reg in regulators:
-        key = f"{reg.region_type}:{reg.region_value}"
-        region_regulators[key] = reg
-
-    # --- Pass 1: Regional density suppression (basket cell) ---
-    survivors = list(top_k)
-    suppressed_ids: set[int] = set()
-
-    # Group by department
-    dept_groups: dict[str, list[NeuronScoreBreakdown]] = {}
-    for s in survivors:
-        dept = dept_map.get(s.neuron_id, "")
-        dept_groups.setdefault(dept, []).append(s)
-
-    for dept, group in dept_groups.items():
-        reg = region_regulators.get(f"department:{dept}")
-        threshold = reg.activation_threshold if reg else settings.inhibition_default_threshold
-        max_surv = reg.max_survivors if reg else settings.inhibition_default_max_survivors
-
-        if len(group) > threshold:
-            # Sort by score descending (already sorted, but be safe)
-            group.sort(key=lambda s: s.combined, reverse=True)
-            for s in group[max_surv:]:
-                suppressed_ids.add(s.neuron_id)
-
-            # Update regulator stats
-            if reg:
-                reg.total_activations += 1
-                reg.total_suppressions += len(group) - max_surv
-
-    survivors = [s for s in survivors if s.neuron_id not in suppressed_ids]
-
-    # --- Pass 2: Redundancy suppression (chandelier cell) ---
-    redundant_ids: set[int] = set()
-    # Only check pairs within each department to keep it O(n) per dept
-    dept_surv_groups: dict[str, list[NeuronScoreBreakdown]] = {}
-    for s in survivors:
-        dept = dept_map.get(s.neuron_id, "")
-        dept_surv_groups.setdefault(dept, []).append(s)
-
-    for dept, group in dept_surv_groups.items():
-        if len(group) < 2:
-            continue
-
-        # Get embeddings for this group
-        group_embs = []
-        group_ids = []
-        for s in group:
-            if s.neuron_id in emb_map:
-                group_embs.append(emb_map[s.neuron_id])
-                group_ids.append(s.neuron_id)
-
-        if len(group_embs) < 2:
-            continue
-
-        # Compute pairwise cosine similarities
-        mat = np.array(group_embs, dtype=np.float32)
-        sims = mat @ mat.T  # (n, n) cosine similarity matrix
-
-        cosine_threshold = settings.inhibition_redundancy_cosine
-        # Check from lowest-scoring to highest — suppress the weaker duplicate
-        for i in range(len(group_ids) - 1, 0, -1):
-            if group_ids[i] in redundant_ids:
-                continue
-            for j in range(i):
-                if group_ids[j] in redundant_ids:
-                    continue
-                if sims[i][j] >= cosine_threshold:
-                    # Suppress the lower-scoring one (i has lower score since group is sorted desc)
-                    redundant_ids.add(group_ids[i])
-                    break
-
-    survivors = [s for s in survivors if s.neuron_id not in redundant_ids]
-
-    # --- Pass 3: Cross-reference floor guarantee (Martinotti cell) ---
-    # Collect cross-referenced departments from surviving neurons
-    cross_ref_depts: set[str] = set()
-    for s in survivors:
-        xrefs = cross_ref_map.get(s.neuron_id, [])
-        cross_ref_depts.update(xrefs)
-
-    if cross_ref_depts:
-        # Count current representation per cross-ref dept
-        surv_dept_counts: dict[str, int] = {}
-        for s in survivors:
-            dept = dept_map.get(s.neuron_id, "")
-            surv_dept_counts[dept] = surv_dept_counts.get(dept, 0) + 1
-
-        # Pull from below-cutoff to fill underrepresented departments
-        min_floor = settings.diversity_floor_min
-        surv_ids = {s.neuron_id for s in survivors}
-        additions: list[NeuronScoreBreakdown] = []
-
-        for dept in cross_ref_depts:
-            current = surv_dept_counts.get(dept, 0)
-            if current < min_floor:
-                needed = min_floor - current
-                # Find best candidates from below_cutoff + suppressed
-                all_below = below + [s for s in top_k if s.neuron_id in suppressed_ids or s.neuron_id in redundant_ids]
-                for s in all_below:
-                    if s.neuron_id in surv_ids:
-                        continue
-                    if dept_map.get(s.neuron_id, "") == dept:
-                        additions.append(s)
-                        surv_ids.add(s.neuron_id)
-                        needed -= 1
-                        if needed <= 0:
-                            break
-
-        survivors.extend(additions)
-
-    # Re-sort survivors
-    survivors.sort(key=lambda s: s.combined, reverse=True)
-
-    # Rebuild full list: survivors + below_cutoff (excluding any promoted neurons)
-    surv_ids = {s.neuron_id for s in survivors}
-    remaining = [s for s in below if s.neuron_id not in surv_ids]
-    # Also add back suppressed/redundant that weren't promoted, below the survivors
-    suppressed_below = [s for s in top_k if s.neuron_id in (suppressed_ids | redundant_ids) and s.neuron_id not in surv_ids]
-    suppressed_below.sort(key=lambda s: s.combined, reverse=True)
-
-    survivor_count = len(survivors)
-    assert survivor_count <= top_k_count, f"survivor_count {survivor_count} exceeds top_k_count {top_k_count}"
-    result_list = survivors + suppressed_below + remaining
-    assert len(result_list) >= input_length, f"Inhibition lost neurons: {len(result_list)} < {input_length}"
-    return result_list, survivor_count
+    return _reassemble_result(survivors, top_k, below, suppressed_ids, redundant_ids, top_k_count, input_length)
 
 
 async def seed_inhibitory_regulators(db: AsyncSession) -> int:

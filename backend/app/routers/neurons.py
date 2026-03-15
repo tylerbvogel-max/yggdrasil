@@ -152,6 +152,92 @@ async def neuron_clusters(
     return {"cluster_count": len(clusters), "clusters": clusters}
 
 
+async def _chord_concept_layer(db: AsyncSession, min_weight: float) -> list[dict]:
+    stmt = text("""
+        SELECT c.label AS concept_label,
+               COALESCE(n2.department, 'Unknown') AS target_dept,
+               SUM(e.weight) AS total_weight, COUNT(*) AS edge_count
+        FROM neuron_edges e
+        JOIN neurons c ON (c.id = e.source_id OR c.id = e.target_id) AND c.node_type = 'concept'
+        JOIN neurons n2 ON n2.id = CASE WHEN c.id = e.source_id THEN e.target_id ELSE e.source_id END
+        WHERE e.edge_type = 'instantiates'
+          AND e.weight >= :min_weight
+          AND n2.node_type != 'concept'
+        GROUP BY c.label, n2.department
+        ORDER BY total_weight DESC
+    """)
+    result = await db.execute(stmt, {"min_weight": min_weight})
+    return [
+        {
+            "source_dept": r.concept_label,
+            "target_dept": r.target_dept,
+            "source_department": "Concepts",
+            "target_department": r.target_dept,
+            "total_weight": float(r.total_weight),
+            "edge_count": r.edge_count,
+        }
+        for r in result.fetchall()
+    ]
+
+
+async def _chord_role_layer(db: AsyncSession, min_weight: float) -> list[dict]:
+    stmt = text("""
+        SELECT r1.label AS source_label, r2.label AS target_label,
+               n1.role_key AS source_role, n2.role_key AS target_role,
+               n1.department AS source_dept, n2.department AS target_dept,
+               SUM(e.weight) AS total_weight, COUNT(*) AS edge_count
+        FROM neuron_edges e
+        JOIN neurons n1 ON e.source_id = n1.id
+        JOIN neurons n2 ON e.target_id = n2.id
+        LEFT JOIN neurons r1 ON r1.role_key = n1.role_key AND r1.layer = 1
+        LEFT JOIN neurons r2 ON r2.role_key = n2.role_key AND r2.layer = 1
+        WHERE e.weight >= :min_weight
+          AND n1.role_key IS NOT NULL
+          AND n2.role_key IS NOT NULL
+        GROUP BY n1.role_key, n2.role_key, n1.department, n2.department,
+                 r1.label, r2.label
+    """)
+    result = await db.execute(stmt, {"min_weight": min_weight})
+    return [
+        {
+            "source_dept": r.source_label or r.source_role,
+            "target_dept": r.target_label or r.target_role,
+            "source_department": r.source_dept,
+            "target_department": r.target_dept,
+            "total_weight": r.total_weight,
+            "edge_count": r.edge_count,
+        }
+        for r in result.fetchall()
+    ]
+
+
+async def _chord_generic_layer(db: AsyncSession, layer: int, min_weight: float) -> list[dict]:
+    stmt = text("""
+        SELECT n1.label AS source_label, n2.label AS target_label,
+               n1.department AS source_dept, n2.department AS target_dept,
+               SUM(e.weight) AS total_weight, COUNT(*) AS edge_count
+        FROM neuron_edges e
+        JOIN neurons n1 ON e.source_id = n1.id
+        JOIN neurons n2 ON e.target_id = n2.id
+        WHERE e.weight >= :min_weight
+          AND n1.layer = :layer AND n2.layer = :layer
+        GROUP BY n1.id, n2.id, n1.label, n2.label,
+                 n1.department, n2.department
+    """)
+    result = await db.execute(stmt, {"layer": layer, "min_weight": min_weight})
+    return [
+        {
+            "source_dept": r.source_label,
+            "target_dept": r.target_label,
+            "source_department": r.source_dept,
+            "target_department": r.target_dept,
+            "total_weight": r.total_weight,
+            "edge_count": r.edge_count,
+        }
+        for r in result.fetchall()
+    ]
+
+
 @router.get("/edges/department-chord")
 async def department_chord(layer: int = 1, min_weight: float = 0.15, db: AsyncSession = Depends(get_db)):
     """Aggregate co-firing edges grouped at a specific neuron layer.
@@ -159,32 +245,7 @@ async def department_chord(layer: int = 1, min_weight: float = 0.15, db: AsyncSe
     layer=-1 returns concept neuron instantiation edges grouped by concept × department.
     """
     if layer == -1:
-        # Concept neurons: show instantiation edges grouped as concept_label × department
-        stmt = text("""
-            SELECT c.label AS concept_label,
-                   COALESCE(n2.department, 'Unknown') AS target_dept,
-                   SUM(e.weight) AS total_weight, COUNT(*) AS edge_count
-            FROM neuron_edges e
-            JOIN neurons c ON (c.id = e.source_id OR c.id = e.target_id) AND c.node_type = 'concept'
-            JOIN neurons n2 ON n2.id = CASE WHEN c.id = e.source_id THEN e.target_id ELSE e.source_id END
-            WHERE e.edge_type = 'instantiates'
-              AND e.weight >= :min_weight
-              AND n2.node_type != 'concept'
-            GROUP BY c.label, n2.department
-            ORDER BY total_weight DESC
-        """)
-        result = await db.execute(stmt, {"min_weight": min_weight})
-        return [
-            {
-                "source_dept": r.concept_label,
-                "target_dept": r.target_dept,
-                "source_department": "Concepts",
-                "target_department": r.target_dept,
-                "total_weight": float(r.total_weight),
-                "edge_count": r.edge_count,
-            }
-            for r in result.fetchall()
-        ]
+        return await _chord_concept_layer(db, min_weight)
 
     if layer < 1 or layer > 5:
         raise HTTPException(status_code=400, detail="Layer must be 1-5")
@@ -192,61 +253,8 @@ async def department_chord(layer: int = 1, min_weight: float = 0.15, db: AsyncSe
         raise HTTPException(status_code=400, detail="min_weight must be 0-1")
 
     if layer == 1:
-        # Group by role_key, join to L1 neuron for human label
-        stmt = text("""
-            SELECT r1.label AS source_label, r2.label AS target_label,
-                   n1.role_key AS source_role, n2.role_key AS target_role,
-                   n1.department AS source_dept, n2.department AS target_dept,
-                   SUM(e.weight) AS total_weight, COUNT(*) AS edge_count
-            FROM neuron_edges e
-            JOIN neurons n1 ON e.source_id = n1.id
-            JOIN neurons n2 ON e.target_id = n2.id
-            LEFT JOIN neurons r1 ON r1.role_key = n1.role_key AND r1.layer = 1
-            LEFT JOIN neurons r2 ON r2.role_key = n2.role_key AND r2.layer = 1
-            WHERE e.weight >= :min_weight
-              AND n1.role_key IS NOT NULL
-              AND n2.role_key IS NOT NULL
-            GROUP BY n1.role_key, n2.role_key, n1.department, n2.department,
-                     r1.label, r2.label
-        """)
-        result = await db.execute(stmt, {"min_weight": min_weight})
-        return [
-            {
-                "source_dept": r.source_label or r.source_role,
-                "target_dept": r.target_label or r.target_role,
-                "source_department": r.source_dept,
-                "target_department": r.target_dept,
-                "total_weight": r.total_weight,
-                "edge_count": r.edge_count,
-            }
-            for r in result.fetchall()
-        ]
-    else:
-        # For L2-L5: edges where both neurons are at the requested layer
-        stmt = text("""
-            SELECT n1.label AS source_label, n2.label AS target_label,
-                   n1.department AS source_dept, n2.department AS target_dept,
-                   SUM(e.weight) AS total_weight, COUNT(*) AS edge_count
-            FROM neuron_edges e
-            JOIN neurons n1 ON e.source_id = n1.id
-            JOIN neurons n2 ON e.target_id = n2.id
-            WHERE e.weight >= :min_weight
-              AND n1.layer = :layer AND n2.layer = :layer
-            GROUP BY n1.id, n2.id, n1.label, n2.label,
-                     n1.department, n2.department
-        """)
-        result = await db.execute(stmt, {"layer": layer, "min_weight": min_weight})
-        return [
-            {
-                "source_dept": r.source_label,
-                "target_dept": r.target_label,
-                "source_department": r.source_dept,
-                "target_department": r.target_dept,
-                "total_weight": r.total_weight,
-                "edge_count": r.edge_count,
-            }
-            for r in result.fetchall()
-        ]
+        return await _chord_role_layer(db, min_weight)
+    return await _chord_generic_layer(db, layer, min_weight)
 
 
 @router.get("/edges/layer-flow")
@@ -307,20 +315,9 @@ async def layer_flow(min_weight: float = 0.15, db: AsyncSession = Depends(get_db
     }
 
 
-@router.get("/edges/spread-log")
-async def spread_log(limit: int = 100, db: AsyncSession = Depends(get_db)):
-    """Aggregate spread activation history across recent queries."""
-    result = await db.execute(
-        select(QueryModel)
-        .where(QueryModel.neuron_scores_json.isnot(None))
-        .order_by(QueryModel.created_at.desc())
-        .limit(limit)
-    )
-    queries = result.scalars().all()
-
-    # Fetch all neuron labels/departments in one query
+def _parse_spread_queries(queries) -> tuple[list[tuple], set[int]]:
     all_neuron_ids: set[int] = set()
-    parsed_queries: list[tuple] = []  # (query, scores_list)
+    parsed_queries: list[tuple] = []
     for q in queries:
         try:
             scores = json.loads(q.neuron_scores_json)
@@ -333,67 +330,73 @@ async def spread_log(limit: int = 100, db: AsyncSession = Depends(get_db)):
         for s in promoted:
             all_neuron_ids.add(s["neuron_id"])
         parsed_queries.append((q, scores, promoted))
+    return parsed_queries, all_neuron_ids
 
-    neuron_map: dict[int, dict] = {}
-    if all_neuron_ids:
-        n_result = await db.execute(
-            select(Neuron.id, Neuron.label, Neuron.department).where(
-                Neuron.id.in_(all_neuron_ids)
-            )
+
+async def _fetch_neuron_map(db: AsyncSession, neuron_ids: set[int]) -> dict[int, dict]:
+    if not neuron_ids:
+        return {}
+    n_result = await db.execute(
+        select(Neuron.id, Neuron.label, Neuron.department).where(
+            Neuron.id.in_(neuron_ids)
         )
-        for row in n_result.all():
-            neuron_map[row[0]] = {"label": row[1], "department": row[2]}
+    )
+    return {row[0]: {"label": row[1], "department": row[2]} for row in n_result.all()}
 
-    # Build per-query log entries
-    entries = []
-    # Track neuron-level spread frequency
-    neuron_spread_counts: dict[int, int] = {}
-    # Track department-pair corridors
-    dept_corridors: dict[str, int] = {}
 
-    for q, scores, promoted in parsed_queries:
-        # Departments of non-spread (source) neurons
-        source_depts: set[str] = set()
-        for s in scores:
-            if s.get("spread_boost", 0) == 0:
-                nid = s["neuron_id"]
-                if nid in neuron_map:
-                    source_depts.add(neuron_map[nid]["department"])
+def _build_spread_entry(
+    q, scores: list, promoted: list,
+    neuron_map: dict[int, dict],
+    neuron_spread_counts: dict[int, int],
+    dept_corridors: dict[str, int],
+) -> dict:
+    source_depts: set[str] = set()
+    for s in scores:
+        if s.get("spread_boost", 0) == 0:
+            nid = s["neuron_id"]
+            if nid in neuron_map:
+                source_depts.add(neuron_map[nid]["department"])
 
-        promoted_depts: set[str] = set()
-        promoted_neurons = []
-        for p in promoted:
-            nid = p["neuron_id"]
-            neuron_spread_counts[nid] = neuron_spread_counts.get(nid, 0) + 1
-            info = neuron_map.get(nid, {"label": f"#{nid}", "department": "Unknown"})
-            promoted_neurons.append({
-                "neuron_id": nid,
-                "label": info["label"],
-                "department": info["department"],
-                "boost": round(p["spread_boost"], 4),
-            })
-            promoted_depts.add(info["department"])
-
-        # Track cross-department corridors
-        cross_dept = bool(promoted_depts - source_depts) if source_depts else False
-        for sd in source_depts:
-            for pd in promoted_depts:
-                if sd != pd:
-                    key = " → ".join(sorted([sd, pd]))
-                    dept_corridors[key] = dept_corridors.get(key, 0) + 1
-
-        entries.append({
-            "query_id": q.id,
-            "user_message": q.user_message[:120],
-            "created_at": q.created_at.isoformat() if q.created_at else None,
-            "promoted_count": len(promoted),
-            "avg_boost": round(sum(p["spread_boost"] for p in promoted) / len(promoted), 4) if promoted else 0,
-            "max_boost": round(max((p["spread_boost"] for p in promoted), default=0), 4),
-            "cross_dept": cross_dept,
-            "promoted_neurons": promoted_neurons,
+    promoted_depts: set[str] = set()
+    promoted_neurons = []
+    for p in promoted:
+        nid = p["neuron_id"]
+        neuron_spread_counts[nid] = neuron_spread_counts.get(nid, 0) + 1
+        info = neuron_map.get(nid, {"label": f"#{nid}", "department": "Unknown"})
+        promoted_neurons.append({
+            "neuron_id": nid,
+            "label": info["label"],
+            "department": info["department"],
+            "boost": round(p["spread_boost"], 4),
         })
+        promoted_depts.add(info["department"])
 
-    # Top spread-promoted neurons
+    cross_dept = bool(promoted_depts - source_depts) if source_depts else False
+    for sd in source_depts:
+        for pd in promoted_depts:
+            if sd != pd:
+                key = " \u2192 ".join(sorted([sd, pd]))
+                dept_corridors[key] = dept_corridors.get(key, 0) + 1
+
+    return {
+        "query_id": q.id,
+        "user_message": q.user_message[:120],
+        "created_at": q.created_at.isoformat() if q.created_at else None,
+        "promoted_count": len(promoted),
+        "avg_boost": round(sum(p["spread_boost"] for p in promoted) / len(promoted), 4) if promoted else 0,
+        "max_boost": round(max((p["spread_boost"] for p in promoted), default=0), 4),
+        "cross_dept": cross_dept,
+        "promoted_neurons": promoted_neurons,
+    }
+
+
+def _build_spread_summary(
+    parsed_queries: list[tuple],
+    entries: list[dict],
+    neuron_spread_counts: dict[int, int],
+    dept_corridors: dict[str, int],
+    neuron_map: dict[int, dict],
+) -> dict:
     top_neurons = sorted(neuron_spread_counts.items(), key=lambda x: x[1], reverse=True)[:20]
     top_neuron_list = [
         {
@@ -404,13 +407,9 @@ async def spread_log(limit: int = 100, db: AsyncSession = Depends(get_db)):
         }
         for nid, count in top_neurons
     ]
-
-    # Top corridors
     top_corridors = sorted(dept_corridors.items(), key=lambda x: x[1], reverse=True)[:10]
-
     total_queries = len(parsed_queries)
     queries_with_spread = sum(1 for _, _, p in parsed_queries if p)
-
     return {
         "total_queries": total_queries,
         "queries_with_spread": queries_with_spread,
@@ -419,6 +418,36 @@ async def spread_log(limit: int = 100, db: AsyncSession = Depends(get_db)):
         "top_neurons": top_neuron_list,
         "top_corridors": [{"pair": k, "count": v} for k, v in top_corridors],
     }
+
+
+@router.get("/edges/spread-log")
+async def spread_log(limit: int = 100, db: AsyncSession = Depends(get_db)):
+    """Aggregate spread activation history across recent queries."""
+    result = await db.execute(
+        select(QueryModel)
+        .where(QueryModel.neuron_scores_json.isnot(None))
+        .order_by(QueryModel.created_at.desc())
+        .limit(limit)
+    )
+    queries = result.scalars().all()
+
+    parsed_queries, all_neuron_ids = _parse_spread_queries(queries)
+    neuron_map = await _fetch_neuron_map(db, all_neuron_ids)
+
+    entries = []
+    neuron_spread_counts: dict[int, int] = {}
+    dept_corridors: dict[str, int] = {}
+
+    for q, scores, promoted in parsed_queries:
+        entry = _build_spread_entry(
+            q, scores, promoted, neuron_map,
+            neuron_spread_counts, dept_corridors,
+        )
+        entries.append(entry)
+
+    return _build_spread_summary(
+        parsed_queries, entries, neuron_spread_counts, dept_corridors, neuron_map,
+    )
 
 
 @router.get("/edges/spread-trail")
@@ -489,30 +518,16 @@ async def spread_trail(query_id: int, db: AsyncSession = Depends(get_db)):
     }
 
 
-@router.get("/{neuron_id}/edges")
-async def neuron_edges(neuron_id: int, limit: int = 15, hops: int = 2, db: AsyncSession = Depends(get_db)):
-    """Multi-hop neighbors by edge weight for a neuron.
-
-    Returns neighbors with hop distance (1 = direct co-fire, 2+ = reached
-    through intermediate nodes).  Edges between all returned nodes are
-    included so the frontend can draw the full subgraph.
-    """
-    neuron = await get_neuron(db, neuron_id)
-    if not neuron:
-        raise HTTPException(status_code=404, detail="Neuron not found")
-
-    hops = min(hops, 3)  # cap at 3
-
-    # --- multi-hop BFS through edge graph ---
-    # node_id → (hop_distance, best_weight_product)
+async def _bfs_edge_graph(
+    db: AsyncSession, neuron_id: int, hops: int,
+) -> tuple[dict[int, tuple[int, float]], list[tuple[int, int, float, int]]]:
     discovered: dict[int, tuple[int, float]] = {neuron_id: (0, 1.0)}
     frontier = {neuron_id}
-    all_edge_pairs: list[tuple[int, int, float, int]] = []  # src, tgt, weight, co_fire
+    all_edge_pairs: list[tuple[int, int, float, int]] = []
 
     for hop in range(1, hops + 1):
         if not frontier:
             break
-        # fetch edges touching any frontier node
         frontier_list = list(frontier)
         result = await db.execute(
             select(NeuronEdge)
@@ -535,10 +550,14 @@ async def neuron_edges(neuron_id: int, limit: int = 15, hops: int = 2, db: Async
                     next_frontier.add(nid)
         frontier = next_frontier
 
-    # Remove center from neighbor list
+    return discovered, all_edge_pairs
+
+
+def _select_top_neighbors(
+    discovered: dict[int, tuple[int, float]], neuron_id: int, limit: int,
+) -> tuple[list[tuple], list[tuple], set[int]]:
     neighbor_entries = {nid: info for nid, info in discovered.items() if nid != neuron_id}
 
-    # Rank by hop then weight product, take top `limit` per hop
     hop1 = [(nid, info) for nid, info in neighbor_entries.items() if info[0] == 1]
     hop1.sort(key=lambda x: x[1][1], reverse=True)
     hop1 = hop1[:limit]
@@ -548,27 +567,24 @@ async def neuron_edges(neuron_id: int, limit: int = 15, hops: int = 2, db: Async
     hop2plus = hop2plus[:limit]
 
     keep_ids = {neuron_id} | {nid for nid, _ in hop1} | {nid for nid, _ in hop2plus}
+    return hop1, hop2plus, keep_ids
 
-    # Fetch neuron details for all kept nodes
-    if keep_ids:
-        n_result = await db.execute(select(Neuron).where(Neuron.id.in_(keep_ids)))
-        neuron_map = {n.id: n for n in n_result.scalars().all()}
-    else:
-        neuron_map = {}
 
+def _build_neighbor_list(
+    hop1: list[tuple], hop2plus: list[tuple],
+    neuron_map: dict, all_edge_pairs: list[tuple],
+) -> list[dict]:
     neighbors = []
     for nid, (hop_dist, weight_product) in list(hop1) + list(hop2plus):
         n = neuron_map.get(nid)
         if not n:
             continue
-        # Find best direct edge weight and co_fire_count for this neighbor
         best_weight = 0.0
         best_cofire = 0
         for src, tgt, w, cf in all_edge_pairs:
-            if (src == nid or tgt == nid):
-                if w > best_weight:
-                    best_weight = w
-                    best_cofire = cf
+            if (src == nid or tgt == nid) and w > best_weight:
+                best_weight = w
+                best_cofire = cf
         neighbors.append({
             "id": n.id,
             "label": n.label,
@@ -579,8 +595,12 @@ async def neuron_edges(neuron_id: int, limit: int = 15, hops: int = 2, db: Async
             "co_fire_count": best_cofire,
             "hop": hop_dist,
         })
+    return neighbors
 
-    # Build edge list between kept nodes only
+
+def _dedupe_subgraph_edges(
+    all_edge_pairs: list[tuple], keep_ids: set[int],
+) -> list[dict]:
     seen_edges: set[tuple[int, int]] = set()
     graph_edges = []
     for src, tgt, w, cf in all_edge_pairs:
@@ -589,11 +609,36 @@ async def neuron_edges(neuron_id: int, limit: int = 15, hops: int = 2, db: Async
             if key not in seen_edges:
                 seen_edges.add(key)
                 graph_edges.append({
-                    "source": src,
-                    "target": tgt,
-                    "weight": w,
-                    "co_fire_count": cf,
+                    "source": src, "target": tgt,
+                    "weight": w, "co_fire_count": cf,
                 })
+    return graph_edges
+
+
+@router.get("/{neuron_id}/edges")
+async def neuron_edges(neuron_id: int, limit: int = 15, hops: int = 2, db: AsyncSession = Depends(get_db)):
+    """Multi-hop neighbors by edge weight for a neuron.
+
+    Returns neighbors with hop distance (1 = direct co-fire, 2+ = reached
+    through intermediate nodes).  Edges between all returned nodes are
+    included so the frontend can draw the full subgraph.
+    """
+    neuron = await get_neuron(db, neuron_id)
+    if not neuron:
+        raise HTTPException(status_code=404, detail="Neuron not found")
+
+    hops = min(hops, 3)
+    discovered, all_edge_pairs = await _bfs_edge_graph(db, neuron_id, hops)
+    hop1, hop2plus, keep_ids = _select_top_neighbors(discovered, neuron_id, limit)
+
+    if keep_ids:
+        n_result = await db.execute(select(Neuron).where(Neuron.id.in_(keep_ids)))
+        neuron_map = {n.id: n for n in n_result.scalars().all()}
+    else:
+        neuron_map = {}
+
+    neighbors = _build_neighbor_list(hop1, hop2plus, neuron_map, all_edge_pairs)
+    graph_edges = _dedupe_subgraph_edges(all_edge_pairs, keep_ids)
 
     return {
         "center": {

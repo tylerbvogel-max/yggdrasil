@@ -2,6 +2,7 @@
 
 import math
 from decimal import Decimal
+from types import MappingProxyType
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,11 +25,11 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 # Pricing per million tokens (current Anthropic rates as of 2025)
 # Haiku 4.5, Sonnet 4.6, Opus 4.6
-PRICING = {
+PRICING = MappingProxyType({
     "haiku":  {"input": 1.00, "output": 5.00},
     "sonnet": {"input": 3.00, "output": 15.00},
     "opus":   {"input": 5.00, "output": 25.00},
-}
+})
 
 
 def _cohens_d(a: np.ndarray, b: np.ndarray) -> float:

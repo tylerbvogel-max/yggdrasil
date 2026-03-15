@@ -323,8 +323,7 @@ async def _migrate_create_queue_and_profiles(engine):
             logger.warning("Project profiles migration skipped: %s", e)
 
 
-async def _migrate_compliance_suite_tables(engine):
-    """Create compliance suite tables if missing: suite_runs, provider_results, attestations."""
+async def _create_suite_runs_table(engine):
     async with engine.begin() as conn:
         try:
             if not await _table_exists(conn, "compliance_suite_runs"):
@@ -348,6 +347,8 @@ async def _migrate_compliance_suite_tables(engine):
         except SQLAlchemyError as e:
             logger.warning("compliance_suite_runs migration skipped: %s", e)
 
+
+async def _create_provider_results_table(engine):
     async with engine.begin() as conn:
         try:
             if not await _table_exists(conn, "compliance_provider_results"):
@@ -368,6 +369,8 @@ async def _migrate_compliance_suite_tables(engine):
         except SQLAlchemyError as e:
             logger.warning("compliance_provider_results migration skipped: %s", e)
 
+
+async def _create_attestations_table(engine):
     async with engine.begin() as conn:
         try:
             if not await _table_exists(conn, "compliance_attestations"):
@@ -388,7 +391,8 @@ async def _migrate_compliance_suite_tables(engine):
         except SQLAlchemyError as e:
             logger.warning("compliance_attestations migration skipped: %s", e)
 
-    # Migrate TIMESTAMP → TIMESTAMPTZ for timezone-aware datetime support
+
+async def _migrate_compliance_timestamps(engine):
     async with engine.begin() as conn:
         try:
             for tbl, cols in [
@@ -403,7 +407,6 @@ async def _migrate_compliance_suite_tables(engine):
         except SQLAlchemyError:
             pass  # Already migrated or table doesn't exist yet
 
-    # Add provider_filter column for selective runs
     async with engine.begin() as conn:
         try:
             await conn.execute(text(
@@ -412,6 +415,14 @@ async def _migrate_compliance_suite_tables(engine):
             print("Migrated: added provider_filter column to compliance_suite_runs")
         except SQLAlchemyError:
             pass  # Already exists
+
+
+async def _migrate_compliance_suite_tables(engine):
+    """Create compliance suite tables if missing: suite_runs, provider_results, attestations."""
+    await _create_suite_runs_table(engine)
+    await _create_provider_results_table(engine)
+    await _create_attestations_table(engine)
+    await _migrate_compliance_timestamps(engine)
 
 
 async def _run_migrations(engine):

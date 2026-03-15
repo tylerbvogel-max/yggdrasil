@@ -3,6 +3,7 @@ import base64
 import datetime
 import json
 import time
+from types import MappingProxyType
 import anthropic
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -30,17 +31,17 @@ PRIOR_CONTEXT_COUNT = 8     # Recent interpretations for immediate detail
 MAX_ATTENTION_ITEMS = 100
 MAX_CHAT_HISTORY = 20
 
-EFFORT_PRESETS = {
+EFFORT_PRESETS = MappingProxyType({
     "low":    {"max_tokens": 120, "temperature": 0.3},
     "normal": {"max_tokens": 300, "temperature": 0.7},
     "high":   {"max_tokens": 600, "temperature": 0.9},
-}
+})
 
-EFFORT_SYSTEM_SUFFIX = {
+EFFORT_SYSTEM_SUFFIX = MappingProxyType({
     "low":    "\n\nOne sentence max. Only speak up if something is urgent or clearly worth flagging.",
     "normal": "",
     "high":   "\n\nThink deeply. Explore multiple angles, suggest concrete next steps, and connect dots across what you've seen.",
-}
+})
 
 
 TEXT_SYSTEM_PROMPT = """You are Corvus, a thinking partner who works alongside a user by watching

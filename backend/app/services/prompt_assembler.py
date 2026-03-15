@@ -4,6 +4,8 @@ Groups neurons by department > role for structural coherence.
 Score-ordered packing with fallback to summary-only if content doesn't fit.
 """
 
+from types import MappingProxyType
+
 from app.config import settings
 from app.models import Neuron
 from app.services.scoring_engine import NeuronScoreBreakdown
@@ -11,15 +13,15 @@ from app.services.scoring_engine import NeuronScoreBreakdown
 # Rough token estimation: ~4 chars per token
 CHARS_PER_TOKEN = 4
 
-AUTHORITY_TAG_MAP = {
+AUTHORITY_TAG_MAP = MappingProxyType({
     "binding_standard": "BINDING",
     "regulatory": "REGULATORY",
     "industry_practice": "INDUSTRY",
     "organizational": "ORG",
     "informational": "INFO",
-}
+})
 
-INTENT_VOICE_MAP = {
+INTENT_VOICE_MAP = MappingProxyType({
     "compliance": "You are a compliance and regulatory expert. Respond with precision, cite specific regulations (FAR, DFARS, CAS), and flag any risk areas.",
     "engineering": "You are a senior aerospace engineer. Provide technically rigorous analysis, reference applicable standards (MIL-STD, DO-178C, AS9100), and include specific methods.",
     "data_engineer": "You are a senior data engineer specializing in Databricks and Apache Spark. Provide concrete code examples, reference specific APIs and configurations, and explain when to use each pattern.",
@@ -36,7 +38,7 @@ INTENT_VOICE_MAP = {
     "executive": "You are a senior aerospace executive. Provide strategic analysis with actionable recommendations, balancing program priorities, risk, and resource constraints.",
     "regulatory": "You are an aerospace regulatory compliance expert. Reference specific standard clauses, cite exact requirements, and explain applicability across affected departments.",
     "general_query": "You are a knowledgeable aerospace defense contractor expert. Provide clear, actionable guidance drawing on organizational expertise.",
-}
+})
 
 
 def _estimate_tokens(text: str) -> int:
@@ -52,6 +54,100 @@ def _get_voice(intent: str) -> str:
     return INTENT_VOICE_MAP["general_query"]
 
 
+def _build_prompt_header(
+    intent: str,
+    scored_neurons: list[NeuronScoreBreakdown],
+    neuron_map: dict[int, Neuron],
+) -> tuple[list[str], int]:
+    header = _get_voice(intent)
+    parts = [header, "", "## Reference Knowledge", ""]
+
+    has_authority = any(
+        hasattr(neuron_map.get(s.neuron_id), "authority_level")
+        and getattr(neuron_map.get(s.neuron_id), "authority_level", None)
+        for s in scored_neurons
+    )
+    if has_authority:
+        legend = "Authority: [BINDING]=binding standard, [REGULATORY]=regulatory requirement, [INDUSTRY]=industry practice"
+        parts.append(legend)
+        parts.append("")
+
+    used_tokens = _estimate_tokens("\n".join(parts))
+    return parts, used_tokens
+
+
+def _partition_neurons(
+    scored_neurons: list[NeuronScoreBreakdown],
+    neuron_map: dict[int, Neuron],
+) -> tuple[list[tuple[NeuronScoreBreakdown, Neuron]], list[tuple[NeuronScoreBreakdown, Neuron]]]:
+    functional: list[tuple[NeuronScoreBreakdown, Neuron]] = []
+    regulatory: list[tuple[NeuronScoreBreakdown, Neuron]] = []
+    for score in scored_neurons:
+        neuron = neuron_map.get(score.neuron_id)
+        if not neuron:
+            continue
+        if neuron.department == "Regulatory":
+            regulatory.append((score, neuron))
+        else:
+            functional.append((score, neuron))
+    return functional, regulatory
+
+
+def _pack_functional_section(
+    parts: list[str],
+    functional: list[tuple[NeuronScoreBreakdown, Neuron]],
+    used_tokens: int,
+    budget: int,
+) -> int:
+    grouped: dict[str, dict[str, list[tuple[NeuronScoreBreakdown, Neuron]]]] = {}
+    for score, neuron in functional:
+        dept = neuron.department or "General"
+        role = neuron.role_key or "general"
+        grouped.setdefault(dept, {}).setdefault(role, []).append((score, neuron))
+
+    for dept, roles in grouped.items():
+        dept_header = f"### {dept}"
+        dept_tokens = _estimate_tokens(dept_header)
+        if used_tokens + dept_tokens > budget:
+            break
+        parts.append(dept_header)
+        used_tokens += dept_tokens
+
+        for role_key, items in roles.items():
+            items.sort(key=lambda x: x[0].combined, reverse=True)
+            for score, neuron in items:
+                used_tokens = _pack_neuron(parts, score, neuron, used_tokens, budget)
+    return used_tokens
+
+
+def _pack_regulatory_section(
+    parts: list[str],
+    regulatory: list[tuple[NeuronScoreBreakdown, Neuron]],
+    used_tokens: int,
+    budget: int,
+) -> int:
+    if not regulatory:
+        return used_tokens
+
+    reg_header = "\n## Regulatory Context"
+    reg_tokens = _estimate_tokens(reg_header)
+    if used_tokens + reg_tokens > budget:
+        return used_tokens
+    parts.append(reg_header)
+    used_tokens += reg_tokens
+
+    reg_grouped: dict[str, list[tuple[NeuronScoreBreakdown, Neuron]]] = {}
+    for score, neuron in regulatory:
+        rk = neuron.role_key or "general"
+        reg_grouped.setdefault(rk, []).append((score, neuron))
+
+    for role_key, items in reg_grouped.items():
+        items.sort(key=lambda x: x[0].combined, reverse=True)
+        for score, neuron in items:
+            used_tokens = _pack_neuron(parts, score, neuron, used_tokens, budget)
+    return used_tokens
+
+
 def assemble_prompt(
     intent: str,
     scored_neurons: list[NeuronScoreBreakdown],
@@ -65,76 +161,10 @@ def assemble_prompt(
     """
     budget = budget_tokens or settings.token_budget
 
-    # Header: intent-based voice framing
-    header = _get_voice(intent)
-    parts = [header, "", "## Reference Knowledge", ""]
-
-    # Add authority legend if any neurons have authority tags
-    has_authority = any(
-        hasattr(neuron_map.get(s.neuron_id), "authority_level")
-        and getattr(neuron_map.get(s.neuron_id), "authority_level", None)
-        for s in scored_neurons
-    )
-    if has_authority:
-        legend = "Authority: [BINDING]=binding standard, [REGULATORY]=regulatory requirement, [INDUSTRY]=industry practice"
-        parts.append(legend)
-        parts.append("")
-
-    used_tokens = _estimate_tokens("\n".join(parts))
-
-    # Partition neurons into functional vs regulatory
-    functional: list[tuple[NeuronScoreBreakdown, Neuron]] = []
-    regulatory: list[tuple[NeuronScoreBreakdown, Neuron]] = []
-    for score in scored_neurons:
-        neuron = neuron_map.get(score.neuron_id)
-        if not neuron:
-            continue
-        if neuron.department == "Regulatory":
-            regulatory.append((score, neuron))
-        else:
-            functional.append((score, neuron))
-
-    # Group functional neurons by department > role_key
-    grouped: dict[str, dict[str, list[tuple[NeuronScoreBreakdown, Neuron]]]] = {}
-    for score, neuron in functional:
-        dept = neuron.department or "General"
-        role = neuron.role_key or "general"
-        grouped.setdefault(dept, {}).setdefault(role, []).append((score, neuron))
-
-    # Pack functional neurons score-ordered within groups
-    for dept, roles in grouped.items():
-        dept_header = f"### {dept}"
-        dept_tokens = _estimate_tokens(dept_header)
-        if used_tokens + dept_tokens > budget:
-            break
-        parts.append(dept_header)
-        used_tokens += dept_tokens
-
-        for role_key, items in roles.items():
-            # Sort by score descending within role
-            items.sort(key=lambda x: x[0].combined, reverse=True)
-
-            for score, neuron in items:
-                used_tokens = _pack_neuron(parts, score, neuron, used_tokens, budget)
-
-    # Pack regulatory neurons in separate section
-    if regulatory:
-        reg_header = "\n## Regulatory Context"
-        reg_tokens = _estimate_tokens(reg_header)
-        if used_tokens + reg_tokens <= budget:
-            parts.append(reg_header)
-            used_tokens += reg_tokens
-
-            # Group regulatory by role_key (standard family)
-            reg_grouped: dict[str, list[tuple[NeuronScoreBreakdown, Neuron]]] = {}
-            for score, neuron in regulatory:
-                rk = neuron.role_key or "general"
-                reg_grouped.setdefault(rk, []).append((score, neuron))
-
-            for role_key, items in reg_grouped.items():
-                items.sort(key=lambda x: x[0].combined, reverse=True)
-                for score, neuron in items:
-                    used_tokens = _pack_neuron(parts, score, neuron, used_tokens, budget)
+    parts, used_tokens = _build_prompt_header(intent, scored_neurons, neuron_map)
+    functional, regulatory = _partition_neurons(scored_neurons, neuron_map)
+    used_tokens = _pack_functional_section(parts, functional, used_tokens, budget)
+    used_tokens = _pack_regulatory_section(parts, regulatory, used_tokens, budget)
 
     parts.append("")
     parts.append("Use the above knowledge to directly answer the user's question. Provide specific, actionable guidance with concrete examples and code where applicable.")
