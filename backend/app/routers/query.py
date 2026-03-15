@@ -108,7 +108,7 @@ async def simple_chat(req: ChatRequest):
 
     user_message = history_text + req.message if history_text else req.message
     result = await claude_chat(system_prompt, user_message, max_tokens=2048, model=req.model)
-    cost = estimate_cost(result["input_tokens"], result["output_tokens"], req.model)
+    cost = estimate_cost(req.model, result["input_tokens"], result["output_tokens"])
     return ChatResponse(
         response=result["text"],
         model=req.model,
