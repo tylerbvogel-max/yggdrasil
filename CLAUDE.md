@@ -45,6 +45,25 @@ All code contributions to this project MUST adhere to the following NASA softwar
 9. **Documentation**: Public-facing endpoints must have docstrings. Schema changes must include migration logic. LLM system prompts must document their intent and expected output format.
 10. **Safety-critical coding (Power of Ten)**: Simple control flow (no recursion/goto), bounded loops, no dynamic allocation after init, functions under 60 lines, 2+ assertions per function, smallest variable scope, mandatory static analysis, restricted pointer use, zero compiler warnings, development rigor matched to criticality.
 
+### Automated Enforcement (two tiers)
+
+The NASA linter (`scripts/nasa_lint.py`) runs automatically via two mechanisms:
+- **Claude Code hook**: runs after every Edit/Write on `backend/app/**/*.py`, giving immediate feedback
+- **Pre-commit hook**: runs on staged files, blocks commit on strict violations
+
+**Strict tier (blocks commit):**
+- JPL-1: No recursion — functions must not call themselves
+- JPL-2: Bounded loops — every `while` must have a comparison/bool test, a container drain pattern (`while stack:`), or a `break`
+- JPL-6: No mutable globals — module-level `UPPER_CASE` dicts must use `MappingProxyType`, lists must be tuples
+- NPR-3: No bare except — every `except` must name a specific exception type
+- JPL-4 hard limit: Functions must not exceed 100 lines
+
+**Guideline tier (warns, does not block):**
+- JPL-4: Functions should be under 60 lines. Refactor into helpers if exceeded.
+
+When the hook reports a strict violation after an edit, fix it immediately before continuing.
+When the hook reports a guideline warning, fix it if the function was just created or substantially modified. Leave existing violations for dedicated cleanup passes.
+
 ### Corvus Development-Specific Rules
 - Screen capture data is ephemeral — never persist raw screenshots beyond the processing pipeline
 - Observation-to-neuron flow must maintain provenance (source_origin="corvus", refinement records)
