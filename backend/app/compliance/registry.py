@@ -53,7 +53,7 @@ class ControlRegistry:
     def derive_control_status(self, framework: str, control_id: str, latest_results: dict[str, bool | None], attestations: dict[str, bool] | None = None) -> str:
         """Derive status from provider results and attestations.
 
-        Returns: passed, failed, partial, attested, untested
+        Returns: passed, failed, partial, attested, acknowledged, untested
         """
         key = f"{framework}:{control_id}"
         provider_ids = self._control_to_providers.get(key, [])
@@ -86,6 +86,13 @@ class ControlRegistry:
         if failed_count > 0:
             return "partial"
         if passed_count == len(statuses):
+            # All passed — check if any providers have rationales (adapted rules)
+            all_have_rationale = all(
+                self._providers.get(pid) and self._providers[pid].rationale
+                for pid in provider_ids if pid in latest_results
+            )
+            if all_have_rationale:
+                return "acknowledged"
             return "passed"
         # Some passed, rest untested — check if any are manual attestations
         if attestations:

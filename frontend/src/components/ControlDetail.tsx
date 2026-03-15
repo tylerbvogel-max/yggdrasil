@@ -102,6 +102,20 @@ export default function ControlDetail({ framework, controlId, onClose }: Props) 
                     </div>
                   )}
 
+                  {/* Adaptation rationale */}
+                  {p.rationale && (
+                    <div style={{
+                      margin: '6px 0', padding: '8px 10px', background: '#eef2ff',
+                      borderLeft: '3px solid #6366f1', borderRadius: 4, fontSize: 12,
+                      color: '#3730a3', lineHeight: 1.5,
+                    }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>
+                        Adaptation Rationale
+                      </div>
+                      {p.rationale}
+                    </div>
+                  )}
+
                   {/* Sparkline */}
                   {spark.length > 1 && (
                     <div style={{ display: 'flex', gap: 2, marginTop: 6 }}>

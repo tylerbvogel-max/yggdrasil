@@ -247,6 +247,7 @@ async def get_control_detail(framework: str, control_id: str):
                 "title": p.title,
                 "evidence_type": p.evidence_type.value,
                 "code_refs": p.code_refs,
+                "rationale": p.rationale,
             }
             for p in providers
         ],
@@ -285,6 +286,7 @@ async def list_providers(framework: str | None = Query(None)):
             "code_refs": p.code_refs,
             "controls": p.controls,
             "latest_result": latest.get(p.id),
+            "rationale": p.rationale,
         }
         for p in providers
     ]
@@ -360,12 +362,12 @@ async def dashboard():
 
     for fw in frameworks:
         controls = registry.get_controls(fw)
-        statuses = {"passed": 0, "failed": 0, "partial": 0, "attested": 0, "untested": 0}
+        statuses = {"passed": 0, "failed": 0, "partial": 0, "attested": 0, "acknowledged": 0, "untested": 0}
         for c in controls:
             status = registry.derive_control_status(fw, c.control_id, latest_results, latest_attestations)
             statuses[status] = statuses.get(status, 0) + 1
         total = len(controls)
-        compliance_pct = round((statuses["passed"] + statuses["attested"]) / total * 100, 1) if total else 0
+        compliance_pct = round((statuses["passed"] + statuses["attested"] + statuses["acknowledged"]) / total * 100, 1) if total else 0
         summary[fw] = {
             "total": total,
             **statuses,

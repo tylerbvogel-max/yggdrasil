@@ -33,6 +33,7 @@ class EvidenceProvider:
     test_fn: Callable[..., Awaitable[EvidenceResult]] | None
     code_refs: list[str]
     controls: dict[str, list[str]]  # framework → [control_ids]
+    rationale: str | None = None  # Why this rule was adapted for the architecture
 
 
 @dataclass

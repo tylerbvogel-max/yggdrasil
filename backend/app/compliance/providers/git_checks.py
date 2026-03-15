@@ -215,20 +215,39 @@ async def _test_power_of_ten_coverage() -> EvidenceResult:
     )
 
 
-_PROVIDERS = [
-    ("nasa-git-traceability", "Git commit traceability", "NPR-2: descriptive commits, no fixup/wip", _test_git_traceability, EvidenceType.config_check, {"nasa": ["NPR-2"]}),
-    ("nasa-formal-inspection", "Formal inspection policy", "NPR-4: review policy docs exist", _test_formal_inspection, EvidenceType.doc_artifact, {"nasa": ["NPR-4"]}),
-    ("nasa-test-coverage", "Test coverage verification", "NPR-5: sufficient test files and functions", _test_test_coverage, EvidenceType.config_check, {"nasa": ["NPR-5"]}),
-    ("nasa-software-classification", "Software classification docs", "NPR-6: system card with classification", _test_software_classification, EvidenceType.doc_artifact, {"nasa": ["NPR-6"]}),
-    ("nasa-dependency-pinning", "Dependencies pinned", "NPR-8: all deps use == pinning", _test_dependency_pinning, EvidenceType.config_check, {"nasa": ["NPR-8"]}),
-    ("nasa-power-of-ten-coverage", "Power of Ten full coverage", "NPR-10: all JPL-1 through JPL-10 have providers", _test_power_of_ten_coverage, EvidenceType.config_check, {"nasa": ["NPR-10"]}),
+_PROVIDERS: list[tuple[str, str, str, object, EvidenceType, dict, str | None]] = [
+    ("nasa-git-traceability", "Git commit traceability", "NPR-2: descriptive commits, no fixup/wip",
+     _test_git_traceability, EvidenceType.config_check, {"nasa": ["NPR-2"]}, None),
+    ("nasa-formal-inspection", "Formal inspection policy", "NPR-4: review policy docs exist",
+     _test_formal_inspection, EvidenceType.doc_artifact, {"nasa": ["NPR-4"]},
+     "NPR 7150.2D requires formal inspections per NASA-STD-8739.9 (in-person review boards with "
+     "defined roles). This project uses AI-assisted development with Claude Code, where every code "
+     "change is reviewed against the CLAUDE.md policy file and governance.md acceptance criteria "
+     "before integration. This check verifies those policy documents exist and contain review procedures."),
+    ("nasa-test-coverage", "Test coverage verification", "NPR-5: sufficient test files and functions",
+     _test_test_coverage, EvidenceType.config_check, {"nasa": ["NPR-5"]}, None),
+    ("nasa-software-classification", "Software classification docs", "NPR-6: system card with classification",
+     _test_software_classification, EvidenceType.doc_artifact, {"nasa": ["NPR-6"]},
+     "NPR 7150.2D classifies software into Classes A-F by mission criticality. This system is not "
+     "flight software but processes operational knowledge and influences decision-making. The system "
+     "card (docs/system-card.md) documents the classification rationale, treating it as safety-relevant "
+     "software warranting heightened review without the full Class A/B lifecycle overhead."),
+    ("nasa-dependency-pinning", "Dependencies pinned", "NPR-8: all deps use == pinning",
+     _test_dependency_pinning, EvidenceType.config_check, {"nasa": ["NPR-8"]}, None),
+    ("nasa-power-of-ten-coverage", "Power of Ten full coverage", "NPR-10: all JPL-1 through JPL-10 have providers",
+     _test_power_of_ten_coverage, EvidenceType.config_check, {"nasa": ["NPR-10"]},
+     "NPR 7150.2D Req 10 requires coding standards proportional to software classification. The JPL "
+     "Power of Ten rules were written for C flight software. This meta-check verifies that all 10 rules "
+     "have been considered and mapped to Python-adapted providers — some with direct equivalents, others "
+     "with documented rationales for architectural adaptation."),
 ]
 
-for pid, title, desc, fn, etype, controls in _PROVIDERS:
+for pid, title, desc, fn, etype, controls, rationale in _PROVIDERS:
     registry.register_provider(EvidenceProvider(
         id=pid, title=title, description=desc,
         evidence_type=etype,
         test_fn=fn,
         code_refs=["backend/app/compliance/providers/git_checks.py"],
         controls=controls,
+        rationale=rationale,
     ))

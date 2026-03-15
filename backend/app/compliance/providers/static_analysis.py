@@ -445,25 +445,49 @@ async def _test_zero_warnings() -> EvidenceResult:
     )
 
 
-_PROVIDERS = [
-    ("nasa-function-length", "No function exceeds 60 lines", "JPL Rule 4: functions must be short", _test_function_length, {"nasa": ["JPL-4"]}),
-    ("nasa-assertion-density", "Assertion density >= 2 per function", "JPL Rule 5: minimum assertion density", _test_assertion_density, {"nasa": ["JPL-5"]}),
-    ("nasa-no-recursion", "No recursive function calls", "JPL Rule 1: no direct recursion", _test_no_recursion, {"nasa": ["JPL-1"]}),
-    ("nasa-no-bare-except", "No bare except clauses", "NPR 7150.2D Req 3: secure coding", _test_no_bare_except, {"nasa": ["NPR-3"]}),
-    ("nasa-no-mutable-globals", "No public mutable globals", "JPL Rule 6: smallest scope for data", _test_no_mutable_globals, {"nasa": ["JPL-6"]}),
-    ("nasa-static-analysis-active", "Static analysis runs on codebase", "JPL Rule 10: code checked by static analysis tool", _test_function_length, {"nasa": ["JPL-10"]}),
-    ("nasa-bounded-loops", "All loops have fixed upper bounds", "JPL Rule 2: fixed upper bound for loops", _test_bounded_loops, {"nasa": ["JPL-2"]}),
-    ("nasa-no-dynamic-alloc", "No dynamic allocation after init", "JPL Rule 3: no exec/eval/__import__ in functions", _test_no_dynamic_alloc, {"nasa": ["JPL-3"]}),
-    ("nasa-check-return-values", "Return values checked", "JPL Rule 7: check return values of non-void functions", _test_check_return_values, {"nasa": ["JPL-7"]}),
-    ("nasa-no-metaprogramming", "No metaprogramming patterns", "JPL Rule 8: restricted preprocessor (Python: no metaprogramming)", _test_no_metaprogramming, {"nasa": ["JPL-8"]}),
-    ("nasa-zero-warnings", "Zero compile warnings", "JPL Rule 9: all code compiles with zero warnings", _test_zero_warnings, {"nasa": ["JPL-9"]}),
+_PROVIDERS: list[tuple[str, str, str, object, dict, str | None]] = [
+    ("nasa-function-length", "No function exceeds 60 lines", "JPL Rule 4: functions must be short",
+     _test_function_length, {"nasa": ["JPL-4"]}, None),
+    ("nasa-assertion-density", "Assertion density >= 2 per function", "JPL Rule 5: minimum assertion density",
+     _test_assertion_density, {"nasa": ["JPL-5"]}, None),
+    ("nasa-no-recursion", "No recursive function calls", "JPL Rule 1: no direct recursion",
+     _test_no_recursion, {"nasa": ["JPL-1"]}, None),
+    ("nasa-no-bare-except", "No bare except clauses", "NPR 7150.2D Req 3: secure coding",
+     _test_no_bare_except, {"nasa": ["NPR-3"]}, None),
+    ("nasa-no-mutable-globals", "No public mutable globals", "JPL Rule 6: smallest scope for data",
+     _test_no_mutable_globals, {"nasa": ["JPL-6"]}, None),
+    ("nasa-static-analysis-active", "Static analysis runs on codebase", "JPL Rule 10: code checked by static analysis tool",
+     _test_function_length, {"nasa": ["JPL-10"]}, None),
+    ("nasa-bounded-loops", "All loops have fixed upper bounds", "JPL Rule 2: fixed upper bound for loops",
+     _test_bounded_loops, {"nasa": ["JPL-2"]}, None),
+    ("nasa-no-dynamic-alloc", "No dynamic allocation after init", "JPL Rule 3: no exec/eval/__import__ in functions",
+     _test_no_dynamic_alloc, {"nasa": ["JPL-3"]},
+     "JPL Rule 3 targets C malloc/free after initialization. Python manages memory via garbage collection, "
+     "making literal dynamic allocation control inapplicable. This adapted check flags exec(), eval(), "
+     "__import__(), and importlib.import_module() inside function bodies — the Python equivalents of "
+     "unpredictable runtime resource creation that bypass static analysis."),
+    ("nasa-check-return-values", "Return values checked", "JPL Rule 7: check return values of non-void functions",
+     _test_check_return_values, {"nasa": ["JPL-7"]}, None),
+    ("nasa-no-metaprogramming", "No metaprogramming patterns", "JPL Rule 8: restricted preprocessor (Python: no metaprogramming)",
+     _test_no_metaprogramming, {"nasa": ["JPL-8"]},
+     "JPL Rule 8 restricts C preprocessor macros to simple includes and conditionals. Python has no "
+     "preprocessor, but offers equivalent code-obscuring mechanisms: exec/eval, 3-arg type() class "
+     "factories, __getattr__/__setattr__ overrides, sys._getframe, and inspect.stack. This check "
+     "flags these patterns as they make static analysis and code review unreliable."),
+    ("nasa-zero-warnings", "Zero compile warnings", "JPL Rule 9: all code compiles with zero warnings",
+     _test_zero_warnings, {"nasa": ["JPL-9"]},
+     "JPL Rule 9 requires zero compiler warnings with all warnings enabled. Python is interpreted, "
+     "not compiled, so there is no compiler warning phase. This adapted check compiles each .py file "
+     "with warnings.catch_warnings(record=True) to capture SyntaxWarning and DeprecationWarning during "
+     "bytecode compilation — the closest Python equivalent to a compiler warning pass."),
 ]
 
-for pid, title, desc, fn, controls in _PROVIDERS:
+for pid, title, desc, fn, controls, rationale in _PROVIDERS:
     registry.register_provider(EvidenceProvider(
         id=pid, title=title, description=desc,
         evidence_type=EvidenceType.static_analysis,
         test_fn=fn,
         code_refs=["backend/app/"],
         controls=controls,
+        rationale=rationale,
     ))

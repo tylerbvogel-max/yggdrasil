@@ -26,6 +26,7 @@ const STATUS_COLORS: Record<string, string> = {
   failed: '#ef4444',
   partial: '#eab308',
   attested: '#3b82f6',
+  acknowledged: '#6366f1',
   untested: '#94a3b8',
 };
 
@@ -241,7 +242,7 @@ export default function ComplianceDashboard() {
               <div style={{ fontSize: 11, color: 'var(--text-dim)', fontWeight: 600, letterSpacing: 0.5 }}>{FRAMEWORK_LABELS[fwKey] || fwKey}</div>
               <div style={{ fontSize: 28, fontWeight: 700, color, margin: '4px 0' }}>{d.compliance_pct}%</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, fontSize: 11 }}>
-                {(['passed', 'failed', 'partial', 'attested', 'untested'] as const).map(s => (
+                {(['passed', 'failed', 'partial', 'attested', 'acknowledged', 'untested'] as const).map(s => (
                   <span key={s} style={{ padding: '1px 6px', borderRadius: 4, background: STATUS_COLORS[s] + '22', color: STATUS_COLORS[s] }}>
                     {(d as Record<string, number>)[s]} {s}
                   </span>

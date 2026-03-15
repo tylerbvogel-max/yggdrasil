@@ -67,12 +67,12 @@ def generate_report(
     fw_summaries: list[dict] = []
     for fw in frameworks:
         controls = _relevant_controls(fw)
-        statuses = {"passed": 0, "failed": 0, "partial": 0, "attested": 0, "untested": 0}
+        statuses = {"passed": 0, "failed": 0, "partial": 0, "attested": 0, "acknowledged": 0, "untested": 0}
         for c in controls:
             s = registry.derive_control_status(fw, c.control_id, latest_results, attestation_map)
             statuses[s] = statuses.get(s, 0) + 1
         total = len(controls)
-        pct = round((statuses["passed"] + statuses["attested"]) / total * 100, 1) if total else 0
+        pct = round((statuses["passed"] + statuses["attested"] + statuses["acknowledged"]) / total * 100, 1) if total else 0
         fw_summaries.append({"name": fw, "total": total, "pct": pct, **statuses})
 
     # Failed controls detail
@@ -91,6 +91,28 @@ def generate_report(
                     "framework": fw, "control_id": c.control_id, "title": c.title,
                     "status": s, "providers": provider_details,
                 })
+
+    # Acknowledged controls (adapted rules with rationales)
+    acknowledged_controls: list[dict] = []
+    for fw in frameworks:
+        for c in _relevant_controls(fw):
+            s = registry.derive_control_status(fw, c.control_id, latest_results, attestation_map)
+            if s == "acknowledged":
+                providers = registry.get_providers_for_control(fw, c.control_id)
+                provider_rationales = []
+                for p in providers:
+                    if p.rationale:
+                        rm = result_map.get(p.id, {})
+                        provider_rationales.append({
+                            "id": p.id, "title": p.title,
+                            "rationale": p.rationale,
+                            "detail": rm.get("detail", {}),
+                        })
+                if provider_rationales:
+                    acknowledged_controls.append({
+                        "framework": fw, "control_id": c.control_id,
+                        "title": c.title, "providers": provider_rationales,
+                    })
 
     # Historical trend (skip for selective runs)
     trend_html = ""
@@ -124,6 +146,7 @@ def generate_report(
                 <span class="failed">{fw["failed"]} failed</span>
                 <span class="partial">{fw["partial"]} partial</span>
                 <span class="attested">{fw["attested"]} attested</span>
+                <span class="acknowledged">{fw["acknowledged"]} acknowledged</span>
                 <span class="untested">{fw["untested"]} untested</span>
             </div>
             <div class="total">{fw["total"]} controls</div>
@@ -170,6 +193,23 @@ def generate_report(
             {prov_html}
         </div>'''
 
+    # Acknowledged controls detail (adapted rules)
+    acknowledged_html = ""
+    for ac in acknowledged_controls:
+        prov_html = ""
+        for pd in ac["providers"]:
+            detail_str = json.dumps(pd["detail"], indent=2, default=str)[:300]
+            prov_html += f'''<div style="margin: 8px 0;">
+                <strong>{pd["id"]}</strong>: {pd["title"]}
+                <div class="rationale"><strong>Adaptation rationale:</strong> {pd["rationale"]}</div>
+                <pre style="font-size:11px;margin-top:4px;white-space:pre-wrap;color:#64748b">{detail_str}</pre>
+            </div>'''
+        acknowledged_html += f'''
+        <div style="background:white;border-radius:8px;padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.1);border-left:3px solid #6366f1">
+            <h4 style="font-size:14px;margin-bottom:8px">{ac["framework"].upper()} {ac["control_id"]} — {ac["title"]} <span class="badge badge-acknowledged">acknowledged</span></h4>
+            {prov_html}
+        </div>'''
+
     # Attestation status (skip for selective runs)
     attest_html = ""
     if attestations and not is_selective:
@@ -212,7 +252,10 @@ def generate_report(
     .failed {{ background: #fef2f2; color: #991b1b; }}
     .partial {{ background: #fefce8; color: #854d0e; }}
     .attested {{ background: #dbeafe; color: #1e40af; }}
+    .acknowledged {{ background: #e0e7ff; color: #3730a3; }}
     .untested {{ background: #f1f5f9; color: #475569; }}
+    .rationale {{ margin: 8px 0; padding: 10px 12px; background: #eef2ff; border-left: 3px solid #6366f1; border-radius: 4px; font-size: 12px; color: #3730a3; line-height: 1.5; }}
+    .rationale strong {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }}
     .total {{ font-size: 12px; color: #94a3b8; margin-top: 4px; }}
     table {{ width: 100%; border-collapse: collapse; margin-bottom: 24px; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }}
     th {{ background: #f1f5f9; text-align: left; padding: 10px 12px; font-size: 13px; font-weight: 600; }}
@@ -223,6 +266,7 @@ def generate_report(
     .badge-failed {{ background: #fef2f2; color: #991b1b; }}
     .badge-partial {{ background: #fefce8; color: #854d0e; }}
     .badge-attested {{ background: #dbeafe; color: #1e40af; }}
+    .badge-acknowledged {{ background: #e0e7ff; color: #3730a3; }}
     .badge-untested {{ background: #f1f5f9; color: #475569; }}
     .fw-section {{ margin-bottom: 32px; }}
     .failed-control {{ background: white; border-radius: 8px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }}
@@ -256,6 +300,8 @@ def generate_report(
 {control_tables}
 
 {f'<h2>Failed / Partial Controls</h2>{failed_html}' if failed_html else '<h2>Failed Controls</h2><p>None — all tested controls passed.</p>'}
+
+{f'<h2>Acknowledged Controls (Adapted for Architecture)</h2><p style="color:#64748b;font-size:13px;margin-bottom:16px">These controls have been reviewed and adapted for the Python/FastAPI architecture. The original standard was considered, an alternative check was implemented, and the rationale is documented below.</p>{acknowledged_html}' if acknowledged_html else ''}
 
 {attest_html}
 

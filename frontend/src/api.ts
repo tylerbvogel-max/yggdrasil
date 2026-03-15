@@ -1235,6 +1235,7 @@ export interface ControlDetailResponse {
     title: string;
     evidence_type: string;
     code_refs: string[];
+    rationale: string | null;
   }[];
   history: {
     provider_id: string;
