@@ -130,8 +130,6 @@ async def bootstrap_firings(
             by_dept[n["department"]].append(nid)
             by_dept_role[(n["department"], n["role_key"])].append(nid)
 
-    # Track all edges to create (deduplicated)
-    # Key: (min_id, max_id), Value: {weight, source_detail}
     edges_to_create: dict[tuple[int, int], dict] = {}
 
     def _add_edge(a: int, b: int, weight: float, pass_name: str):
@@ -142,67 +140,66 @@ async def bootstrap_firings(
         if existing is None or weight > existing["weight"]:
             edges_to_create[key] = {"weight": weight, "pass": pass_name}
 
-    # ═══════════════════════════════════════════
-    # Pass 1: Structural proximity (same parent)
-    # ═══════════════════════════════════════════
+    _pass1_structural(neurons, by_parent, _add_edge)
+    summary["pass_1_structural"]["edges_created"] = len(edges_to_create)
+    p1_count = len(edges_to_create)
+
+    _pass2_cross_dept(neurons, by_dept, _add_edge)
+    summary["pass_2_cross_dept"]["edges_created"] = len(edges_to_create) - p1_count
+
+    await _pass3_concept(db, _add_edge)
+    p3_start = p1_count + summary["pass_2_cross_dept"]["edges_created"]
+    summary["pass_3_concept"]["edges_created"] = len(edges_to_create) - p3_start
+
+    gap_count = await _pass4_gap_fill(db, neurons, by_dept, edges_to_create, _add_edge)
+    summary["pass_4_gap_fill"]["edges_created"] = gap_count
+
+    if not dry_run:
+        await _write_edges(db, edges_to_create)
+        summary["neurons_updated"] = await _estimate_invocations(db, neurons, by_parent)
+        await db.commit()
+
+    summary["total_edges"] = len(edges_to_create)
+    return summary
+
+
+def _pass1_structural(neurons, by_parent, _add_edge):
+    """Pass 1: Structural proximity — siblings sharing a parent get co-firing weight."""
     for parent_id, children in by_parent.items():
         if len(children) < 2:
             continue
         parent = neurons.get(parent_id)
-        # Siblings sharing a parent get baseline co-firing weight
-        # Weight scales by layer depth (deeper = more specific = stronger affinity)
-        base_w = 0.30  # enough to clear default visibility threshold
+        base_w = 0.30
         layer_bonus = (parent["layer"] / 5.0) * 0.15 if parent else 0.0
         sibling_weight = min(0.50, base_w + layer_bonus)
-
         for i, a in enumerate(children):
             for b in children[i + 1:]:
                 _add_edge(a, b, sibling_weight, "structural")
 
-    p1_count = len(edges_to_create)
-    summary["pass_1_structural"]["edges_created"] = p1_count
 
-    # ═══════════════════════════════════════════
-    # Pass 2: Cross-department affinity
-    # ═══════════════════════════════════════════
-    # For each department pair with affinity > 0.2, co-fire role-level (L1)
-    # and task-level (L2) neurons that share keyword overlap
+def _pass2_cross_dept(neurons, by_dept, _add_edge):
+    """Pass 2: Cross-department affinity — keyword overlap between L1/L2 neurons."""
+    stop_words = {"and", "or", "the", "of", "in", "to", "for", "a", "an", "&"}
     dept_list = list(by_dept.keys())
     for i, dept_a in enumerate(dept_list):
         for dept_b in dept_list[i + 1:]:
             affinity = _get_affinity(dept_a, dept_b)
             if affinity < 0.20:
                 continue
-
-            # Get role-level (L1) and task-level (L2) neurons for each department
             neurons_a = [nid for nid in by_dept[dept_a] if neurons[nid]["layer"] in (1, 2)]
             neurons_b = [nid for nid in by_dept[dept_b] if neurons[nid]["layer"] in (1, 2)]
-
             if not neurons_a or not neurons_b:
                 continue
-
-            # Cross-department edges: weight = affinity * 0.4 (conservative)
-            # Only connect neurons with keyword overlap for precision
             for na in neurons_a:
-                label_a = neurons[na]["label"].lower()
-                words_a = set(label_a.split())
+                words_a = set(neurons[na]["label"].lower().split())
                 for nb in neurons_b:
-                    label_b = neurons[nb]["label"].lower()
-                    words_b = set(label_b.split())
-                    # Check for meaningful word overlap (exclude common stop words)
-                    stop_words = {"and", "or", "the", "of", "in", "to", "for", "a", "an", "&"}
-                    shared = (words_a & words_b) - stop_words
-                    if shared:
-                        w = min(0.50, affinity * 0.6)
-                        _add_edge(na, nb, w, "cross_dept")
+                    words_b = set(neurons[nb]["label"].lower().split())
+                    if (words_a & words_b) - stop_words:
+                        _add_edge(na, nb, min(0.50, affinity * 0.6), "cross_dept")
 
-    p2_count = len(edges_to_create) - p1_count
-    summary["pass_2_cross_dept"]["edges_created"] = p2_count
 
-    # ═══════════════════════════════════════════
-    # Pass 3: Concept-linked co-firing
-    # ═══════════════════════════════════════════
-    # Neurons linked to the same concept should co-fire with each other
+async def _pass3_concept(db, _add_edge):
+    """Pass 3: Concept-linked co-firing — neurons sharing a concept get edges."""
     concept_result = await db.execute(text("""
         SELECT n.id FROM neurons n
         WHERE n.node_type = 'concept' AND n.layer = -1 AND n.is_active = true
@@ -210,8 +207,6 @@ async def bootstrap_firings(
     concept_ids = [r[0] for r in concept_result.all()]
 
     for cid in concept_ids:
-        # Get all neurons linked to this concept via instantiation edges
-        # Only role (L1) and task (L2) level — avoids combinatorial explosion at leaf layers
         linked_result = await db.execute(text("""
             SELECT CASE WHEN e.source_id = :cid THEN e.target_id ELSE e.source_id END AS linked_id,
                    n.department
@@ -223,129 +218,87 @@ async def bootstrap_firings(
               AND n.is_active = true
         """), {"cid": cid})
         linked = linked_result.all()
-
         if len(linked) < 2:
             continue
-
-        # Only cross-department pairs (same-dept already covered by Pass 1)
         concept_weight = min(0.40, 0.20 + len(linked) * 0.008)
         for i, (a, dept_a) in enumerate(linked):
             for b, dept_b in linked[i + 1:]:
-                if a == b or dept_a == dept_b:
-                    continue
-                _add_edge(a, b, concept_weight, "concept")
+                if a != b and dept_a != dept_b:
+                    _add_edge(a, b, concept_weight, "concept")
 
-    p3_count = len(edges_to_create) - p1_count - p2_count
-    summary["pass_3_concept"]["edges_created"] = p3_count
 
-    # ═══════════════════════════════════════════
-    # Pass 4: Gap fill — ensure every neuron has
-    # at least one edge >= visibility threshold
-    # ═══════════════════════════════════════════
-    VISIBILITY_THRESHOLD = 0.30
-
-    # Build set of neurons already covered by planned edges
+async def _pass4_gap_fill(db, neurons, by_dept, edges_to_create, _add_edge) -> int:
+    """Pass 4: Gap fill — ensure every neuron has at least one visible edge."""
+    visibility_threshold = 0.30
     covered = set()
     for (a, b), info in edges_to_create.items():
-        if info["weight"] >= VISIBILITY_THRESHOLD:
+        if info["weight"] >= visibility_threshold:
             covered.add(a)
             covered.add(b)
-
-    # Also check existing DB edges for coverage
-    existing_covered_result = await db.execute(text("""
+    existing_result = await db.execute(text("""
         SELECT DISTINCT unnest(ARRAY[source_id, target_id])
-        FROM neuron_edges
-        WHERE weight >= :thresh
-    """), {"thresh": VISIBILITY_THRESHOLD})
-    for row in existing_covered_result.all():
+        FROM neuron_edges WHERE weight >= :thresh
+    """), {"thresh": visibility_threshold})
+    for row in existing_result.all():
         covered.add(row[0])
 
-    # For each uncovered neuron, connect to parent (if exists) or first sibling
     gap_count = 0
     for nid, n in neurons.items():
         if nid in covered:
             continue
-        # Connect to parent
         pid = n["parent_id"]
         if pid and pid in neurons:
-            _add_edge(nid, pid, VISIBILITY_THRESHOLD, "gap_fill")
+            _add_edge(nid, pid, visibility_threshold, "gap_fill")
             gap_count += 1
             continue
-        # No parent — connect to first sibling in same department
-        dept_peers = by_dept.get(n["department"], [])
-        for peer in dept_peers:
+        for peer in by_dept.get(n["department"], []):
             if peer != nid and peer in covered:
-                _add_edge(nid, peer, VISIBILITY_THRESHOLD, "gap_fill")
+                _add_edge(nid, peer, visibility_threshold, "gap_fill")
                 gap_count += 1
                 break
+    return gap_count
 
-    summary["pass_4_gap_fill"]["edges_created"] = gap_count
 
-    # ═══════════════════════════════════════════
-    # Write edges
-    # ═══════════════════════════════════════════
-    if not dry_run:
-        created = 0
-        updated = 0
-        for (src, tgt), info in edges_to_create.items():
-            w = round(info["weight"], 4)
-            # Conservative co_fire_count: derive from weight (weight = co_fire_count / 20)
-            co_fire = max(1, round(w * 10))  # ~50% of organic equivalent
+async def _write_edges(db, edges_to_create):
+    """Write planned edges to database with upsert."""
+    for (src, tgt), info in edges_to_create.items():
+        w = round(info["weight"], 4)
+        co_fire = max(1, round(w * 10))
+        await db.execute(text(
+            "INSERT INTO neuron_edges (source_id, target_id, co_fire_count, weight, "
+            "  last_updated_query, edge_type, source, last_adjusted) "
+            "VALUES (:src, :tgt, :cfc, :w, 0, "
+            "  CASE WHEN (SELECT department FROM neurons WHERE id = :src) = "
+            "       (SELECT department FROM neurons WHERE id = :tgt) "
+            "  THEN 'stellate' ELSE 'pyramidal' END, "
+            "  'bootstrap', now()) "
+            "ON CONFLICT (source_id, target_id) DO UPDATE SET "
+            "  weight = GREATEST(neuron_edges.weight, :w), "
+            "  source = CASE WHEN neuron_edges.source = 'organic' THEN neuron_edges.source ELSE 'bootstrap' END, "
+            "  last_adjusted = now() "
+            "WHERE neuron_edges.source != 'organic'"
+        ), {"src": src, "tgt": tgt, "cfc": co_fire, "w": w})
 
-            result = await db.execute(text(
-                "INSERT INTO neuron_edges (source_id, target_id, co_fire_count, weight, "
-                "  last_updated_query, edge_type, source, last_adjusted) "
-                "VALUES (:src, :tgt, :cfc, :w, 0, "
-                "  CASE WHEN (SELECT department FROM neurons WHERE id = :src) = "
-                "       (SELECT department FROM neurons WHERE id = :tgt) "
-                "  THEN 'stellate' ELSE 'pyramidal' END, "
-                "  'bootstrap', now()) "
-                "ON CONFLICT (source_id, target_id) DO UPDATE SET "
-                "  weight = GREATEST(neuron_edges.weight, :w), "
-                "  source = CASE WHEN neuron_edges.source = 'organic' THEN neuron_edges.source ELSE 'bootstrap' END, "
-                "  last_adjusted = now() "
-                "WHERE neuron_edges.source != 'organic'"
-            ), {"src": src, "tgt": tgt, "cfc": co_fire, "w": w})
-            if result.rowcount > 0:
-                updated += 1
-            else:
-                created += 1
 
-        # ── Estimate invocations/utility for neurons with zero organic activity ──
-        # Use structural position + sibling average to set reasonable starting values
-        neuron_updates = 0
-        for nid, n in neurons.items():
-            if n["invocations"] > 0:
-                continue  # already has organic activity, skip
-
-            # Estimate based on layer (higher layers fire more often)
-            # L0: 20, L1: 15, L2: 10, L3: 6, L4: 4, L5: 2
-            layer_base = max(2, 20 - n["layer"] * 4)
-
-            # Check siblings' average invocations for calibration
-            siblings = by_parent.get(n["parent_id"], []) if n["parent_id"] else []
-            sibling_invocations = [neurons[s]["invocations"] for s in siblings if neurons[s]["invocations"] > 0]
-            if sibling_invocations:
-                # Use sibling average but cap at 50% to stay conservative
-                sibling_avg = sum(sibling_invocations) / len(sibling_invocations)
-                estimated = round(sibling_avg * 0.5)
-            else:
-                estimated = layer_base
-
-            # Set utility slightly below default to let organic performance overtake
-            estimated_utility = 0.45
-
-            await db.execute(text(
-                "UPDATE neurons SET invocations = :inv, avg_utility = :util "
-                "WHERE id = :nid AND invocations = 0"
-            ), {"nid": nid, "inv": estimated, "util": estimated_utility})
-            neuron_updates += 1
-
-        summary["neurons_updated"] = neuron_updates
-        await db.commit()
-
-    summary["total_edges"] = len(edges_to_create)
-    return summary
+async def _estimate_invocations(db, neurons, by_parent) -> int:
+    """Estimate invocations/utility for neurons with zero organic activity."""
+    neuron_updates = 0
+    for nid, n in neurons.items():
+        if n["invocations"] > 0:
+            continue
+        layer_base = max(2, 20 - n["layer"] * 4)
+        siblings = by_parent.get(n["parent_id"], []) if n["parent_id"] else []
+        sibling_invocations = [neurons[s]["invocations"] for s in siblings if neurons[s]["invocations"] > 0]
+        if sibling_invocations:
+            estimated = round(sum(sibling_invocations) / len(sibling_invocations) * 0.5)
+        else:
+            estimated = layer_base
+        await db.execute(text(
+            "UPDATE neurons SET invocations = :inv, avg_utility = :util "
+            "WHERE id = :nid AND invocations = 0"
+        ), {"nid": nid, "inv": estimated, "util": 0.45})
+        neuron_updates += 1
+    return neuron_updates
 
 
 async def get_bootstrap_stats(db: AsyncSession) -> dict:

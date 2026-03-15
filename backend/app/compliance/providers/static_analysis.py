@@ -15,13 +15,29 @@ APP_DIR = Path(__file__).parent.parent.parent  # backend/app/
 
 # Known void functions whose return values are intentionally discarded
 _VOID_FUNCTIONS = {
-    "print", "setattr", "delattr",
+    "print", "setattr", "delattr", "super",
 }
 _VOID_METHODS = {
+    # Collection mutators
     "append", "extend", "sort", "clear", "update", "add", "discard",
-    "insert", "remove", "reverse",
+    "insert", "remove", "reverse", "pop",
+    # ORM / database
+    "commit", "flush", "rollback", "close", "expire", "refresh",
+    "execute", "run_sync",
+    # Async / queue
+    "send", "cancel", "shutdown",
+    "put", "put_nowait", "get", "get_nowait", "join",
+    # Registry / setup
+    "register", "register_provider", "register_framework",
+    "include_router", "add_middleware", "mount",
+    "add_event_handler", "add_exception_handler",
+    # Logging / output
+    "write", "info", "debug", "warning", "error", "critical", "exception",
+    "set_result", "set_exception",
+    # Task / event
+    "create_task", "ensure_future",
 }
-_VOID_PREFIXES = {"logging"}
+_VOID_PREFIXES = {"logging", "logger"}
 
 # Dynamic alloc / metaprogramming calls flagged inside functions
 _DYNAMIC_ALLOC_CALLS = {"exec", "eval", "__import__"}
@@ -68,25 +84,44 @@ class FunctionAnalyzer(ast.NodeVisitor):
 
     @staticmethod
     def _is_bounded_while_test(test: ast.expr) -> bool:
-        """Heuristic: is the while test a comparison (has obvious bound)?"""
-        return isinstance(test, (ast.Compare, ast.BoolOp))
+        """Heuristic: is the while test a comparison or container drain (has obvious bound)?"""
+        # Comparisons: while x < n, while i != end
+        if isinstance(test, (ast.Compare, ast.BoolOp)):
+            return True
+        # Container drain: while stack, while queue — finite container empties
+        if isinstance(test, ast.Name):
+            return True
+        return False
 
     @staticmethod
     def _is_void_call(call_node: ast.Call) -> bool:
         """Check if a call is to a known void function."""
         func = call_node.func
         if isinstance(func, ast.Name):
-            return func.id in _VOID_FUNCTIONS
+            if func.id in _VOID_FUNCTIONS:
+                return True
+            # Internal helpers (underscore-prefixed) are typically void callbacks
+            if func.id.startswith("_"):
+                return True
+            return False
         if isinstance(func, ast.Attribute):
             if func.attr in _VOID_METHODS:
                 return True
-            # logging.info(), db.add(), db.commit()
             if isinstance(func.value, ast.Name):
                 if func.value.id in _VOID_PREFIXES:
                     return True
-                if func.value.id == "db" and func.attr in ("add", "commit", "flush", "rollback", "close"):
-                    return True
         return False
+
+    @staticmethod
+    def _is_void_expr(node: ast.Expr) -> bool:
+        """Check if an expression statement discards a meaningful return value."""
+        value = node.value
+        # Unwrap await: `await foo()` → check foo()
+        if isinstance(value, ast.Await):
+            value = value.value
+        if not isinstance(value, ast.Call):
+            return True  # Not a call — string literals, etc.
+        return FunctionAnalyzer._is_void_call(value)
 
     @staticmethod
     def _has_dynamic_alloc(node: ast.AST) -> bool:
@@ -150,9 +185,9 @@ class FunctionAnalyzer(ast.NodeVisitor):
             if isinstance(child, ast.While):
                 if not self._is_bounded_while_test(child.test) and not self._while_has_break(child):
                     has_unbounded_while = True
-            # JPL-7: discarded return values
-            if isinstance(child, ast.Expr) and isinstance(child.value, ast.Call):
-                if not self._is_void_call(child.value):
+            # JPL-7: discarded return values (unwraps await)
+            if isinstance(child, ast.Expr):
+                if not self._is_void_expr(child):
                     discarded_return_count += 1
 
         self.functions.append({

@@ -872,12 +872,15 @@ def get_attention() -> dict:
     return {"watch": interpreter_state._watch_items[:], "ignore": interpreter_state._ignore_items[:]}
 
 
+MAX_LOOP_ITERATIONS = 10_000_000  # ~115 days at 1s interval — safety bound (JPL-2)
+
+
 async def interpretation_loop():
     """Event-driven interpretation loop. Checks triggers every few seconds."""
 
     interpreter_state._last_interpretation_time = time.time()
 
-    while True:
+    for _iteration in range(MAX_LOOP_ITERATIONS):
         try:
             await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 

@@ -622,22 +622,34 @@ async def get_neuron_tree(
     for n in all_neurons:
         children_map.setdefault(n.parent_id, []).append(n)
 
-    def build_node(neuron: Neuron, depth: int = 0, max_depth: int = 10) -> dict:
-        assert depth <= max_depth, f"build_node exceeded max recursion depth {max_depth}"
-        node = {
-            "id": neuron.id,
-            "layer": neuron.layer,
-            "node_type": neuron.node_type,
-            "label": neuron.label,
-            "department": neuron.department,
-            "role_key": neuron.role_key,
-            "invocations": neuron.invocations,
-            "avg_utility": neuron.avg_utility,
-        }
-        kids = children_map.get(neuron.id, [])
-        if kids and depth < max_depth:
-            node["children"] = [build_node(c, depth + 1, max_depth) for c in kids]
-        return node
+    def build_node(neuron: Neuron) -> dict:
+        """Iterative tree builder — no recursion (JPL-1)."""
+        max_depth = 10
+        root_node: dict = {}
+        # Stack: (neuron, depth, parent_dict) — build nodes breadth-first via stack
+        stack: list[tuple[Neuron, int, dict | None]] = [(neuron, 0, None)]
+        while stack:
+            cur, depth, parent = stack.pop()
+            assert depth <= max_depth, f"build_node exceeded max depth {max_depth}"
+            node = {
+                "id": cur.id,
+                "layer": cur.layer,
+                "node_type": cur.node_type,
+                "label": cur.label,
+                "department": cur.department,
+                "role_key": cur.role_key,
+                "invocations": cur.invocations,
+                "avg_utility": cur.avg_utility,
+            }
+            if parent is None:
+                root_node = node
+            else:
+                parent.setdefault("children", []).append(node)
+            kids = children_map.get(cur.id, [])
+            if kids and depth < max_depth:
+                for child in reversed(kids):
+                    stack.append((child, depth + 1, node))
+        return root_node
 
     roots = children_map.get(None, [])
     return [build_node(r) for r in roots]
