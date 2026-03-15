@@ -99,6 +99,7 @@ class SuiteRunner:
         run_record = ComplianceSuiteRun(
             started_at=started_at,
             framework_filter=framework,
+            provider_filter=json.dumps(provider_ids) if provider_ids else None,
             total_providers=total,
             triggered_by=triggered_by,
         )

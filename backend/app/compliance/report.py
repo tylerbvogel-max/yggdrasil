@@ -38,9 +38,9 @@ def generate_report(
             if a.re_attestation_due is None or a.re_attestation_due > now:
                 attestation_map[a.provider_id] = True
 
-    # Determine which providers were actually run
+    # Determine if this was a selective run (explicit provider_ids)
     ran_provider_ids = set(result_map.keys())
-    is_selective = len(ran_provider_ids) < registry.provider_count
+    is_selective = run.provider_filter is not None
 
     # Scope controls to only those with providers in this run
     def _relevant_controls(fw: str):
@@ -92,9 +92,9 @@ def generate_report(
                     "status": s, "providers": provider_details,
                 })
 
-    # Historical trend
+    # Historical trend (skip for selective runs)
     trend_html = ""
-    if historical_runs:
+    if historical_runs and not is_selective:
         bars = []
         for hr in reversed(historical_runs[:10]):
             total = hr.total_providers or 1
@@ -169,9 +169,9 @@ def generate_report(
             {prov_html}
         </div>'''
 
-    # Attestation status
+    # Attestation status (skip for selective runs)
     attest_html = ""
-    if attestations:
+    if attestations and not is_selective:
         attest_rows = ""
         for a in attestations:
             expired = a.re_attestation_due and a.re_attestation_due < now

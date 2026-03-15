@@ -334,6 +334,7 @@ async def _migrate_compliance_suite_tables(engine):
                         started_at TIMESTAMPTZ NOT NULL,
                         completed_at TIMESTAMPTZ,
                         framework_filter VARCHAR(50),
+                        provider_filter TEXT,
                         total_providers INTEGER DEFAULT 0,
                         passed INTEGER DEFAULT 0,
                         failed INTEGER DEFAULT 0,
@@ -401,6 +402,16 @@ async def _migrate_compliance_suite_tables(engine):
                     ))
         except SQLAlchemyError:
             pass  # Already migrated or table doesn't exist yet
+
+    # Add provider_filter column for selective runs
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(text(
+                "ALTER TABLE compliance_suite_runs ADD COLUMN provider_filter TEXT"
+            ))
+            print("Migrated: added provider_filter column to compliance_suite_runs")
+        except SQLAlchemyError:
+            pass  # Already exists
 
 
 async def _run_migrations(engine):

@@ -15,6 +15,7 @@ class ComplianceSuiteRun(Base):
     started_at: Mapped[datetime.datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     completed_at: Mapped[datetime.datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     framework_filter: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    provider_filter: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of provider IDs, null = full run
     total_providers: Mapped[int] = mapped_column(Integer, default=0)
     passed: Mapped[int] = mapped_column(Integer, default=0)
     failed: Mapped[int] = mapped_column(Integer, default=0)

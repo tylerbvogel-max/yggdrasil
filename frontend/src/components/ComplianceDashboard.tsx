@@ -51,6 +51,7 @@ export default function ComplianceDashboard() {
   const [showHistory, setShowHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [reportUrl, setReportUrl] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -151,18 +152,22 @@ export default function ComplianceDashboard() {
               Last run: {new Date(dashboard.latest_run.started_at).toLocaleString()} — {dashboard.latest_run.passed}P / {dashboard.latest_run.failed}F
             </span>
           )}
-          <a
-            href={dashboard?.latest_run ? `/admin/compliance/runs/${dashboard.latest_run.id}/report${selectedFw !== 'all' ? `?framework=${selectedFw}` : ''}` : '#'}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            onClick={() => {
+              if (dashboard?.latest_run) {
+                const url = `/admin/compliance/runs/${dashboard.latest_run.id}/report${selectedFw !== 'all' ? `?framework=${selectedFw}` : ''}`;
+                setReportUrl(url);
+              }
+            }}
+            disabled={!dashboard?.latest_run}
             style={{
               padding: '6px 12px', fontSize: 13, background: 'var(--bg-card)', border: '1px solid var(--border)',
-              borderRadius: 6, color: 'var(--text)', textDecoration: 'none', cursor: dashboard?.latest_run ? 'pointer' : 'default',
+              borderRadius: 6, color: 'var(--text)', cursor: dashboard?.latest_run ? 'pointer' : 'default',
               opacity: dashboard?.latest_run ? 1 : 0.5,
             }}
           >
-            Download Report
-          </a>
+            View Report
+          </button>
           {selected.size > 0 && (
             <button
               onClick={handleRunSelected}
@@ -360,7 +365,7 @@ export default function ComplianceDashboard() {
                     <td style={{ padding: '4px 12px', color: '#ef4444' }}>{r.failed}</td>
                     <td style={{ padding: '4px 12px', color: 'var(--text-dim)' }}>{r.duration_ms}ms</td>
                     <td style={{ padding: '4px 12px' }}>
-                      <a href={`/admin/compliance/runs/${r.id}/report`} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontSize: 12 }}>View</a>
+                      <button onClick={() => setReportUrl(`/admin/compliance/runs/${r.id}/report`)} style={{ color: '#3b82f6', fontSize: 12, background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>View</button>
                     </td>
                   </tr>
                 ))}
@@ -377,6 +382,22 @@ export default function ComplianceDashboard() {
           controlId={selectedControl.controlId}
           onClose={() => setSelectedControl(null)}
         />
+      )}
+
+      {/* Report viewer modal */}
+      {reportUrl && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setReportUrl(null)}>
+          <div style={{ background: 'white', borderRadius: 12, width: '92%', height: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #e2e8f0' }}>
+              <span style={{ fontWeight: 600, fontSize: 14, color: '#1a1a2e' }}>Compliance Report</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <a href={reportUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#3b82f6', textDecoration: 'none' }}>Open in new tab</a>
+                <button onClick={() => setReportUrl(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: '#64748b', padding: '0 4px' }}>&times;</button>
+              </div>
+            </div>
+            <iframe src={reportUrl} style={{ flex: 1, border: 'none', borderRadius: '0 0 12px 12px' }} title="Compliance Report" />
+          </div>
+        </div>
       )}
     </div>
   );

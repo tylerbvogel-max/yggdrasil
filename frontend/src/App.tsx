@@ -13,7 +13,7 @@ import MonetizationPage from './components/MonetizationPage'
 import SampleQueries from './components/SampleQueries'
 import DeptChordDiagram from './components/DeptChordDiagram'
 import GettingStartedPage from './components/GettingStartedPage'
-import ComplianceAuditPage from './components/ComplianceAuditPage'
+
 import QualityPage from './components/QualityPage'
 import FairnessPage from './components/FairnessPage'
 import PerformancePage from './components/PerformancePage'
@@ -30,7 +30,7 @@ import ComplianceDashboard from './components/ComplianceDashboard'
 import HomePage from './components/HomePage'
 import SystemUseBanner from './components/SystemUseBanner'
 
-type Tab = 'home' | 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'arch-plan' | 'getting-started' | 'monetization' | 'compliance-audit' | 'compliance-dashboard' | 'quality' | 'fairness' | 'performance' | 'perf-explain' | 'method-risks' | 'mgmt-reviews' | 'corvus-feed' | 'corvus-observations';
+type Tab = 'home' | 'explorer' | 'graph' | 'universe' | 'dashboard' | 'cofiring' | 'layer-heatmap' | 'query' | 'samples' | 'pipeline' | 'evaluation' | 'refinements' | 'autopilot' | 'emergent-queue' | 'nextsteps' | 'about' | 'arch-plan' | 'getting-started' | 'monetization' | 'compliance-dashboard' | 'quality' | 'fairness' | 'performance' | 'perf-explain' | 'method-risks' | 'mgmt-reviews' | 'corvus-feed' | 'corvus-observations';
 
 type Theme = 'corvus-native' | 'yggdrasil-dark' | 'yggdrasil-light' | 'high-contrast' | 'colorblind';
 
@@ -96,7 +96,6 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: 'Compliance',
     items: [
       { key: 'compliance-dashboard', label: 'Dashboard' },
-      { key: 'compliance-audit', label: 'Audit Scan' },
       { key: 'mgmt-reviews', label: 'Reviews' },
     ],
   },
@@ -275,7 +274,7 @@ export default function App() {
         {tab === 'arch-plan' && <ArchitecturePlanPage />}
         {tab === 'monetization' && <MonetizationPage />}
         {tab === 'compliance-dashboard' && <ComplianceDashboard />}
-        {tab === 'compliance-audit' && <ComplianceAuditPage />}
+
         {tab === 'mgmt-reviews' && <ManagementReviewPage />}
         {tab === 'quality' && <QualityPage />}
         {tab === 'fairness' && <FairnessPage />}

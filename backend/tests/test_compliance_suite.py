@@ -198,6 +198,7 @@ class TestReportGeneration:
         run.total_providers = 2
         run.passed = 1
         run.failed = 1
+        run.provider_filter = None  # full run, not selective
 
         result1 = MagicMock()
         result1.provider_id = "p-1"
