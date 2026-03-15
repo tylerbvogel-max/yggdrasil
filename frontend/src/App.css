@@ -2160,6 +2160,28 @@ details summary:hover { color: var(--text); }
   cursor: pointer;
 }
 
+.home-neuron-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.home-neuron-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #22c55e;
+  cursor: pointer;
+  margin: 0;
+}
+
+.home-neuron-toggle-label {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
 .home-input {
   flex: 1;
   background: none;

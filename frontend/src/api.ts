@@ -23,6 +23,7 @@ import type {
   ObservationDetail,
   ObservationEvalResponse,
   ObservationApplyResponse,
+  NeuronScoreResponse,
 } from './types';
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
@@ -73,6 +74,21 @@ export function sendChat(message: string, model: string = 'haiku', history: Chat
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, model, history }),
   });
+}
+
+export async function sendNeuronChat(message: string, model: string = 'haiku'): Promise<ChatResponse & { neurons_activated: number; neuron_scores: NeuronScoreResponse[] }> {
+  const slot: SlotSpec = { mode: `${model}_neuron`, token_budget: 2048, top_k: 12 };
+  const res = await submitQuery(message, [slot]);
+  const slotResult = res.slots[0];
+  return {
+    response: slotResult?.response ?? '',
+    model,
+    input_tokens: (res.classify_input_tokens || 0) + (slotResult?.input_tokens || 0),
+    output_tokens: (res.classify_output_tokens || 0) + (slotResult?.output_tokens || 0),
+    cost_usd: res.total_cost || 0,
+    neurons_activated: res.neurons_activated,
+    neuron_scores: res.neuron_scores,
+  };
 }
 
 export function fetchTree(department?: string, maxDepth?: number): Promise<TreeNode[]> {

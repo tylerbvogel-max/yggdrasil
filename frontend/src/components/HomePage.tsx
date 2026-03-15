@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { sendChat, type ChatMessage, type ChatResponse } from '../api';
+import { sendChat, sendNeuronChat, type ChatMessage, type ChatResponse } from '../api';
+import type { NeuronScoreResponse } from '../types';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -7,6 +8,8 @@ interface Message {
   model?: string;
   tokens?: { input: number; output: number };
   cost?: number;
+  neurons_activated?: number;
+  neuron_scores?: NeuronScoreResponse[];
 }
 
 export default function HomePage({ onNavigate }: { onNavigate: (tab: string) => void }) {
@@ -14,6 +17,7 @@ export default function HomePage({ onNavigate }: { onNavigate: (tab: string) => 
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [model, setModel] = useState<'haiku' | 'sonnet' | 'opus'>('haiku');
+  const [useNeurons, setUseNeurons] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   async function handleSend() {
@@ -25,15 +29,29 @@ export default function HomePage({ onNavigate }: { onNavigate: (tab: string) => 
     setLoading(true);
 
     try {
-      const history: ChatMessage[] = messages.map(m => ({ role: m.role, text: m.text }));
-      const res: ChatResponse = await sendChat(text, model, history);
-      const assistantMsg: Message = {
-        role: 'assistant',
-        text: res.response,
-        model: res.model,
-        tokens: { input: res.input_tokens, output: res.output_tokens },
-        cost: res.cost_usd,
-      };
+      let assistantMsg: Message;
+      if (useNeurons) {
+        const res = await sendNeuronChat(text, model);
+        assistantMsg = {
+          role: 'assistant',
+          text: res.response,
+          model: res.model,
+          tokens: { input: res.input_tokens, output: res.output_tokens },
+          cost: res.cost_usd,
+          neurons_activated: res.neurons_activated,
+          neuron_scores: res.neuron_scores,
+        };
+      } else {
+        const history: ChatMessage[] = messages.map(m => ({ role: m.role, text: m.text }));
+        const res: ChatResponse = await sendChat(text, model, history);
+        assistantMsg = {
+          role: 'assistant',
+          text: res.response,
+          model: res.model,
+          tokens: { input: res.input_tokens, output: res.output_tokens },
+          cost: res.cost_usd,
+        };
+      }
       setMessages(prev => [...prev, assistantMsg]);
     } catch (e) {
       setMessages(prev => [...prev, { role: 'assistant', text: `Error: ${e instanceof Error ? e.message : 'Failed'}` }]);
@@ -96,7 +114,8 @@ export default function HomePage({ onNavigate }: { onNavigate: (tab: string) => 
                 <div className="home-chat-text">{msg.text}</div>
                 {msg.role === 'assistant' && msg.model && (
                   <div className="home-chat-meta">
-                    <span>{msg.model}</span>
+                    <span>{msg.model}{msg.neurons_activated != null ? ' + neurons' : ''}</span>
+                    {msg.neurons_activated != null && <span>{msg.neurons_activated} neurons</span>}
                     {msg.tokens && <span>{msg.tokens.input + msg.tokens.output} tokens</span>}
                     {msg.cost != null && <span>${msg.cost.toFixed(4)}</span>}
                   </div>
@@ -126,6 +145,14 @@ export default function HomePage({ onNavigate }: { onNavigate: (tab: string) => 
             <option value="sonnet">Sonnet</option>
             <option value="opus">Opus</option>
           </select>
+          <label className="home-neuron-toggle" title="Use neuron-enriched context from the knowledge graph">
+            <input
+              type="checkbox"
+              checked={useNeurons}
+              onChange={e => setUseNeurons(e.target.checked)}
+            />
+            <span className="home-neuron-toggle-label">Neurons</span>
+          </label>
           <textarea
             className="home-input"
             placeholder="Ask anything..."
@@ -139,7 +166,7 @@ export default function HomePage({ onNavigate }: { onNavigate: (tab: string) => 
           </button>
         </div>
         {!hasMessages && (
-          <p className="home-input-hint">Chat directly without invoking the neuron pipeline</p>
+          <p className="home-input-hint">{useNeurons ? 'Responses enriched with knowledge graph context' : 'Direct LLM chat without neuron pipeline'}</p>
         )}
       </div>
     </div>
