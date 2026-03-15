@@ -2133,6 +2133,15 @@ details summary:hover { color: var(--text); }
   position: sticky;
 }
 
+.home-input-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 640px;
+  margin-bottom: 6px;
+}
+
 .home-input-row {
   display: flex;
   align-items: flex-end;
@@ -2160,26 +2169,37 @@ details summary:hover { color: var(--text); }
   cursor: pointer;
 }
 
-.home-neuron-toggle {
+.home-neuron-pill {
   display: flex;
   align-items: center;
   gap: 4px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.home-neuron-toggle input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  accent-color: #22c55e;
-  cursor: pointer;
-  margin: 0;
-}
-
-.home-neuron-toggle-label {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3px 10px 3px 6px;
   font-size: 0.7rem;
   color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
   white-space: nowrap;
+}
+
+.home-neuron-pill:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.home-neuron-pill--active {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.home-neuron-pill-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
 }
 
 .home-input {

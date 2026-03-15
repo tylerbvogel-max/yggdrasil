@@ -135,7 +135,7 @@ export default function HomePage({ onNavigate }: { onNavigate: (tab: string) => 
       )}
 
       <div className={`home-input-area${hasMessages ? ' home-input-area--bottom' : ''}`}>
-        <div className="home-input-row">
+        <div className="home-input-controls">
           <select
             className="home-model-select"
             value={model}
@@ -145,14 +145,26 @@ export default function HomePage({ onNavigate }: { onNavigate: (tab: string) => 
             <option value="sonnet">Sonnet</option>
             <option value="opus">Opus</option>
           </select>
-          <label className="home-neuron-toggle" title="Use neuron-enriched context from the knowledge graph">
-            <input
-              type="checkbox"
-              checked={useNeurons}
-              onChange={e => setUseNeurons(e.target.checked)}
-            />
-            <span className="home-neuron-toggle-label">Neurons</span>
-          </label>
+          <button
+            className={`home-neuron-pill${useNeurons ? ' home-neuron-pill--active' : ''}`}
+            onClick={() => setUseNeurons(v => !v)}
+            title="Toggle neuron-enriched context from the knowledge graph"
+          >
+            <svg className="home-neuron-pill-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="8" cy="8" r="3" />
+              <line x1="8" y1="1" x2="8" y2="4" />
+              <line x1="8" y1="12" x2="8" y2="15" />
+              <line x1="1" y1="8" x2="4" y2="8" />
+              <line x1="12" y1="8" x2="15" y2="8" />
+              <line x1="3.5" y1="3.5" x2="5.5" y2="5.5" />
+              <line x1="10.5" y1="10.5" x2="12.5" y2="12.5" />
+              <line x1="3.5" y1="12.5" x2="5.5" y2="10.5" />
+              <line x1="10.5" y1="5.5" x2="12.5" y2="3.5" />
+            </svg>
+            Neurons
+          </button>
+        </div>
+        <div className="home-input-row">
           <textarea
             className="home-input"
             placeholder="Ask anything..."
@@ -165,9 +177,6 @@ export default function HomePage({ onNavigate }: { onNavigate: (tab: string) => 
             &#10148;
           </button>
         </div>
-        {!hasMessages && (
-          <p className="home-input-hint">{useNeurons ? 'Responses enriched with knowledge graph context' : 'Direct LLM chat without neuron pipeline'}</p>
-        )}
       </div>
     </div>
   );
