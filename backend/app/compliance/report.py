@@ -145,7 +145,8 @@ def generate_report(
                 badge = _status_badge(s)
                 providers = registry.get_providers_for_control(fw, c.control_id)
                 types = ", ".join(sorted(set(p.evidence_type.value for p in providers))) if providers else "—"
-                rows += f'<tr><td>{c.control_id}</td><td>{c.title}</td><td>{badge}</td><td>{types}</td></tr>'
+                desc_html = f'<div style="color:#64748b;font-size:11px;margin-top:2px;line-height:1.3">{c.description}</div>' if c.description else ''
+                rows += f'<tr><td>{c.control_id}</td><td>{c.title}{desc_html}</td><td>{badge}</td><td>{types}</td></tr>'
 
         control_tables += f'''
         <div class="fw-section">

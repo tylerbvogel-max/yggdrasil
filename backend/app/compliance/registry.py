@@ -116,7 +116,7 @@ def load_all() -> None:
     from app.compliance.providers import (  # noqa: F401
         security_headers, audit_log, error_handling, config_checks,
         static_analysis, code_artifacts, doc_artifacts, system_banner,
-        cors_check, manual, audit_scan,
+        cors_check, manual, audit_scan, git_checks,
     )
     logger.info(
         "Compliance registry loaded: %d frameworks, %d controls, %d providers",

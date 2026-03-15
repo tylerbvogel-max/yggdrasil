@@ -315,12 +315,17 @@ export default function ComplianceDashboard() {
                       type="checkbox"
                       checked={selected.has(rowKey)}
                       onChange={() => toggleSelect(rowKey)}
-                      style={{ cursor: 'pointer' }}
+                      disabled={c.provider_count === 0}
+                      title={c.provider_count === 0 ? 'No providers — cannot run' : undefined}
+                      style={{ cursor: c.provider_count === 0 ? 'not-allowed' : 'pointer', opacity: c.provider_count === 0 ? 0.3 : 1 }}
                     />
                   </td>
                   {selectedFw === 'all' && <td style={{ padding: '6px 12px', color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase' }} onClick={() => setSelectedControl({ framework: c.framework, controlId: c.control_id })}>{c.framework}</td>}
                   <td style={{ padding: '6px 12px', color: 'var(--text)', fontFamily: 'monospace' }} onClick={() => setSelectedControl({ framework: c.framework, controlId: c.control_id })}>{c.control_id}</td>
-                  <td style={{ padding: '6px 12px', color: 'var(--text)' }} onClick={() => setSelectedControl({ framework: c.framework, controlId: c.control_id })}>{c.title}</td>
+                  <td style={{ padding: '6px 12px' }} onClick={() => setSelectedControl({ framework: c.framework, controlId: c.control_id })}>
+                    <div style={{ color: 'var(--text)' }}>{c.title}</div>
+                    {c.description && <div style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 2, lineHeight: 1.3 }}>{c.description}</div>}
+                  </td>
                   <td style={{ padding: '6px 12px', color: 'var(--text-dim)' }} onClick={() => setSelectedControl({ framework: c.framework, controlId: c.control_id })}>{c.family}</td>
                   <td style={{ padding: '6px 12px' }} onClick={() => setSelectedControl({ framework: c.framework, controlId: c.control_id })}>
                     <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>

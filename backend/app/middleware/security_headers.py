@@ -24,8 +24,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Prevent MIME-type sniffing (SC-28)
         response.headers["X-Content-Type-Options"] = "nosniff"
 
-        # Prevent clickjacking (SC-10)
-        response.headers["X-Frame-Options"] = "DENY"
+        # Prevent clickjacking (SC-10) — SAMEORIGIN allows inline report viewer
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
 
         # XSS protection (legacy browsers)
         response.headers["X-XSS-Protection"] = "1; mode=block"
@@ -41,7 +41,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "img-src 'self' data: blob:; "
             "connect-src 'self'; "
             "font-src 'self'; "
-            "frame-ancestors 'none'"
+            "frame-ancestors 'self'"
         )
 
         # Permissions policy — restrict browser features

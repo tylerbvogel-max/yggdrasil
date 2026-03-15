@@ -70,7 +70,7 @@ async def _test_session_timeout() -> EvidenceResult:
 
 
 _HEADERS = [
-    ("sec-header-x-frame-options", "X-Frame-Options", "DENY", "X-Frame-Options header set to DENY",
+    ("sec-header-x-frame-options", "X-Frame-Options", "SAMEORIGIN", "X-Frame-Options set to SAMEORIGIN",
      {"fedramp": ["SC-10"], "cmmc": ["3.13.9"], "soc2": ["CC6.1"]}),
     ("sec-header-hsts", "Strict-Transport-Security", "max-age=", "HSTS header present",
      {"fedramp": ["SC-8"], "cmmc": ["3.13.8"]}),
