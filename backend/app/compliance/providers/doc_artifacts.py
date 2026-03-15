@@ -7,7 +7,7 @@ from pathlib import Path
 from app.compliance.registry import registry
 from app.compliance.types import EvidenceProvider, EvidenceResult, EvidenceType
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # yggdrasil/backend -> yggdrasil/
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent  # providers -> compliance -> app -> backend -> yggdrasil/
 DOCS_DIR = PROJECT_ROOT / "docs"
 
 
